@@ -1,0 +1,759 @@
+//! Process-wide Android controller runtime bridging Auth, Signal, LAN Discovery, SessionHandle,
+//! and File / Terminal / PortMap tool engines.
+
+use std::collections::VecDeque;
+use std::net::SocketAddr;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use rc_client_core::auth_client::AuthSessionManager;
+use rc_client_core::cert_manager::CertManager;
+use rc_client_core::lan_discovery::{discover_local_lan_ipv4s, LanDiscoveryHandle};
+use rc_client_core::model::parse_connect_target;
+use rc_client_core::server_config::{
+    format_host_port, parse_device_id_input, ServerConfig, ServerConnectionState,
+    ServerStatusSnapshot,
+};
+use rc_client_core::session_bridge::{
+    SessionCommand, SessionHandle, SessionMtlsBundle, SessionUpdate, UiSessionConfig,
+};
+use rc_client_core::signal_client::{
+    ConnectGrant, DeviceStatusEvent, SignalClientHandle, SignalClientOptions,
+};
+use rc_input::{InputEvent, MouseButton};
+use rc_session::auth::OwnerTicketSigner;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+
+use crate::ndk_media::{
+    media_diagnostics, request_keyframe, reset_media_diagnostics, set_codec_candidates,
+    CodecCandidate,
+};
+use crate::platform_android::{
+    drain_inbound_clipboard_texts, push_local_clipboard_text, push_silent_ime_text,
+    register_android_hooks,
+};
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenSessionRequest {
+    /// Either a 9-digit device code or `ip:port`.
+    pub target: String,
+    pub password: Option<String>,
+    pub watch_only: bool,
+    #[serde(default)]
+    pub force_relay: bool,
+    #[serde(default = "default_true")]
+    pub encrypt_connection: bool,
+    #[serde(default = "default_true")]
+    pub audio_enabled: bool,
+    #[serde(default = "default_true")]
+    pub clipboard_enabled: bool,
+    /// Optional explicit stream override; when 0, route-aware defaults are chosen.
+    #[serde(default)]
+    pub width: u32,
+    #[serde(default)]
+    pub height: u32,
+    #[serde(default)]
+    pub fps: u32,
+    #[serde(default)]
+    pub bitrate_bps: u32,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum SignalUiEvent {
+    Status(ServerStatusSnapshot),
+    DeviceStatus(DeviceStatusEvent),
+    Kicked { reason: String },
+}
+
+pub struct AndroidRuntime {
+    device_name: Mutex<String>,
+    pub auth: AuthSessionManager,
+    cert_mgr: Arc<CertManager>,
+    signal: Mutex<Option<Arc<SignalClientHandle>>>,
+    signal_events: Arc<Mutex<VecDeque<SignalUiEvent>>>,
+    signal_snapshot: Arc<Mutex<ServerStatusSnapshot>>,
+    lan: Mutex<Option<LanDiscoveryHandle>>,
+    session: Mutex<Option<SessionHandle>>,
+    session_epoch: AtomicU64,
+}
+
+static RUNTIME: OnceLock<Arc<AndroidRuntime>> = OnceLock::new();
+
+pub fn global_runtime() -> Option<Arc<AndroidRuntime>> {
+    RUNTIME.get().cloned()
+}
+
+pub fn init_runtime(
+    files_dir: PathBuf,
+    device_name: String,
+    codecs: Vec<CodecCandidate>,
+) -> Result<Arc<AndroidRuntime>, String> {
+    register_android_hooks();
+    set_codec_candidates(codecs);
+
+    if let Some(rt) = RUNTIME.get() {
+        *rt.device_name.lock().unwrap_or_else(|e| e.into_inner()) = device_name;
+        return Ok(Arc::clone(rt));
+    }
+
+    let certs_dir = files_dir.join("certs");
+    let cert_mgr = Arc::new(CertManager::load_or_init(certs_dir)?);
+    let auth_path = files_dir.join("auth.json");
+    let auth = AuthSessionManager::new(ServerConfig::default(), auth_path, Arc::clone(&cert_mgr));
+    let instance_id = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(1);
+    let lan = LanDiscoveryHandle::spawn(instance_id, device_name.clone());
+
+    let rt = Arc::new(AndroidRuntime {
+        device_name: Mutex::new(device_name),
+        auth,
+        cert_mgr,
+        signal: Mutex::new(None),
+        signal_events: Arc::new(Mutex::new(VecDeque::with_capacity(64))),
+        signal_snapshot: Arc::new(Mutex::new(ServerConfig::default().disabled_snapshot())),
+        lan: Mutex::new(Some(lan)),
+        session: Mutex::new(None),
+        session_epoch: AtomicU64::new(0),
+    });
+
+    let _ = RUNTIME.set(Arc::clone(&rt));
+    Ok(RUNTIME.get().cloned().unwrap_or(rt))
+}
+
+impl AndroidRuntime {
+    pub fn cert_manager(&self) -> Arc<CertManager> {
+        Arc::clone(&self.cert_mgr)
+    }
+
+    pub fn device_name(&self) -> String {
+        self.device_name
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// Stable 64-char hex device key derived deterministically from this device's Ed25519 pubkey.
+    pub fn device_key(&self) -> String {
+        self.cert_mgr.device_pubkey_hex()
+    }
+
+    pub fn ensure_signal_started(&self) {
+        let cfg = self.auth.server_config();
+        if !cfg.is_configured() {
+            return;
+        }
+        let Some(sess) = self.auth.current_session() else {
+            return;
+        };
+        if sess.must_change_password {
+            return;
+        }
+
+        let mut sig_guard = self.signal.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(existing) = sig_guard.as_ref() {
+            let st = existing.status();
+            if st.enabled
+                && st.server_host == cfg.server_host
+                && matches!(
+                    st.state,
+                    ServerConnectionState::Connected | ServerConnectionState::Connecting
+                )
+            {
+                return;
+            }
+        }
+        if let Some(old) = sig_guard.take() {
+            old.request_stop();
+        }
+
+        let preferred: Vec<SocketAddr> = cfg
+            .signal_addr()
+            .and_then(|s| s.parse::<SocketAddr>().ok())
+            .into_iter()
+            .collect();
+        let lan_addrs: Vec<String> = discover_local_lan_ipv4s(&preferred)
+            .into_iter()
+            .map(|ip| ip.to_string())
+            .collect();
+
+        // Clone an Arc-backed token provider that queries the singleton runtime.
+        let token_provider = Arc::new(|| {
+            let rt = global_runtime().ok_or_else(|| "runtime uninitialized".to_string())?;
+            rt.auth
+                .ensure_valid_access_token()
+                .map_err(|e| e.to_string())
+        });
+
+        let opts = SignalClientOptions {
+            token_provider: Some(token_provider),
+            device_pubkey: Some(self.cert_mgr.device_pubkey_hex()),
+            allow_remote_assist: false,
+            dynamic_lan_discovery: true,
+        };
+
+        let events_tx = Arc::clone(&self.signal_events);
+        let snap_store = Arc::clone(&self.signal_snapshot);
+        let handle = SignalClientHandle::spawn_with_options(
+            cfg,
+            self.device_name(),
+            lan_addrs,
+            opts,
+            move |snapshot| {
+                *snap_store.lock().unwrap_or_else(|e| e.into_inner()) = snapshot.clone();
+                if snapshot.state == ServerConnectionState::Connected {
+                    if let Some(ref did) = snapshot.device_id {
+                        let did_bg = did.clone();
+                        let _ = std::thread::Builder::new()
+                            .name("rc-cert-ensure".to_string())
+                            .spawn(move || {
+                                if let Some(rt) = global_runtime() {
+                                    let _ = rt.auth.ensure_device_cert(&did_bg);
+                                }
+                            });
+                    }
+                }
+                let mut q = events_tx.lock().unwrap_or_else(|e| e.into_inner());
+                if q.len() >= 128 {
+                    q.pop_front();
+                }
+                q.push_back(SignalUiEvent::Status(snapshot));
+            },
+        );
+        *sig_guard = Some(Arc::new(handle));
+    }
+
+    pub fn stop_signal_and_session(&self) {
+        self.disconnect_session(false);
+        let mut sig_guard = self.signal.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(old) = sig_guard.take() {
+            old.request_stop();
+        }
+        *self.signal_snapshot.lock().unwrap_or_else(|e| e.into_inner()) =
+            ServerConfig::default().disabled_snapshot();
+    }
+
+    pub fn poll_signal_events(&self) -> Value {
+        let mut out = Vec::new();
+        {
+            let mut q = self.signal_events.lock().unwrap_or_else(|e| e.into_inner());
+            while let Some(ev) = q.pop_front() {
+                out.push(ev);
+            }
+        }
+        let sig_guard = self.signal.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(sig) = sig_guard.as_ref() {
+            while let Some(dev) = sig.try_recv_device_status() {
+                out.push(SignalUiEvent::DeviceStatus(dev));
+            }
+            if let Some(kicked) = sig.try_recv_kicked_reason() {
+                out.push(SignalUiEvent::Kicked { reason: kicked });
+            }
+        }
+        let snapshot = self
+            .signal_snapshot
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if let Some(ref did) = snapshot.device_id {
+            if let Some(lan) = self.lan.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+                lan.set_local_device_id(Some(did.clone()));
+            }
+        }
+        let session_tokens = self.auth.current_session().map(|s| {
+            json!({
+                "access_token": s.access_token,
+                "refresh_token": s.refresh_token,
+                "access_expires_at_unix_sec": s.access_expires_at_unix_sec,
+                "user": {
+                    "id": s.user_id,
+                    "email": s.email,
+                    "display_name": s.display_name,
+                    "role": s.role,
+                    "must_change_password": s.must_change_password,
+                }
+            })
+        });
+        json!({
+            "snapshot": snapshot,
+            "events": out,
+            "sessionTokens": session_tokens,
+        })
+    }
+
+    fn build_mtls_bundle(
+        &self,
+        expected_peer_device_id: Option<String>,
+        expected_peer_user_id: Option<String>,
+    ) -> Option<SessionMtlsBundle> {
+        let cfg = self.auth.server_config();
+        let ca_cert_pem = cfg.ca_cert_pem?;
+        let current_uid = self.auth.current_session()?.user_id;
+        let (cert_pem, meta) = self.cert_mgr.load_device_cert()?;
+        if !meta.user_id.eq_ignore_ascii_case(current_uid.trim()) {
+            return None;
+        }
+        let key_pem = self.cert_mgr.tls_key_pem().ok()?;
+        Some(SessionMtlsBundle {
+            ca_cert_pem,
+            cert_pem,
+            key_pem,
+            local_user_id: meta.user_id,
+            expected_peer_device_id,
+            expected_peer_user_id,
+        })
+    }
+
+    pub fn open_session(&self, req: OpenSessionRequest) -> Result<Value, String> {
+        let my_epoch = self.session_epoch.fetch_add(1, Ordering::AcqRel) + 1;
+        let trimmed = req.target.trim();
+
+        let (connect_addr, relay_grant, lan_direct_addr, target_device_id): (
+            SocketAddr,
+            Option<ConnectGrant>,
+            Option<SocketAddr>,
+            Option<String>,
+        ) = if let Some(did) = parse_device_id_input(trimmed) {
+            // Ensure signal is running and wait briefly if currently connecting.
+            self.ensure_signal_started();
+            let sig_clone = {
+                let g = self.signal.lock().unwrap_or_else(|e| e.into_inner());
+                g.clone()
+            };
+            let sig = sig_clone.ok_or_else(|| "信令尚未连接，请先登录并等待服务器连接就绪".to_string())?;
+            let wait_deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while sig.status().state != ServerConnectionState::Connected {
+                if self.session_epoch.load(Ordering::Acquire) != my_epoch {
+                    return Ok(json!({ "cancelled": true }));
+                }
+                if std::time::Instant::now() >= wait_deadline {
+                    let st = sig.status();
+                    let detail = st
+                        .error_message
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or_else(|| format!("{:?}", st.state));
+                    return Err(format!("服务器信令未就绪（{detail}）"));
+                }
+                std::thread::sleep(Duration::from_millis(150));
+            }
+
+            let grant = sig.request_connect(&did, Duration::from_secs(12))?;
+            if self.session_epoch.load(Ordering::Acquire) != my_epoch {
+                return Ok(json!({ "cancelled": true }));
+            }
+
+            let lan_addr = if !req.force_relay {
+                self.lan
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .as_ref()
+                    .and_then(|h| h.lookup_lan_addr(&did))
+            } else {
+                None
+            };
+            (
+                SocketAddr::from(([0, 0, 0, 0], 0)),
+                Some(grant),
+                lan_addr,
+                Some(did),
+            )
+        } else {
+            let addr = parse_connect_target(trimmed)?;
+            (addr, None, None, None)
+        };
+
+        let is_direct_ip = target_device_id.is_none();
+        let encrypt_connection = if is_direct_ip {
+            false
+        } else {
+            req.encrypt_connection
+        };
+
+        let owner_grant = relay_grant.as_ref().and_then(|g| g.owner_grant.clone());
+        let owner_signer = match owner_grant.as_ref() {
+            Some(grant) => Some(Arc::new(
+                self.cert_mgr
+                    .create_owner_ticket_signer(grant.clone())
+                    .map_err(|e| format!("构造自控签名器失败：{e}"))?,
+            ) as Arc<dyn OwnerTicketSigner>),
+            None => None,
+        };
+
+        let expected_peer_user_id = if owner_grant.is_some() {
+            self.auth.current_session().map(|s| s.user_id)
+        } else {
+            None
+        };
+
+        // Ensure device cert is issued before building mTLS bundle when possible.
+        let mut cert_err: Option<String> = None;
+        if let Some(did) = self
+            .signal_snapshot
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .device_id
+            .clone()
+        {
+            if let Err(e) = self.auth.ensure_device_cert(&did) {
+                cert_err = Some(e.to_string());
+            }
+        }
+
+        let mtls_config = self.build_mtls_bundle(target_device_id.clone(), expected_peer_user_id);
+        if encrypt_connection && mtls_config.is_none() {
+            return Err(match cert_err {
+                Some(e) => format!("本机设备证书签发失败：{e}"),
+                None => "本机设备证书未就绪，请重新登录或检查服务器证书".to_string(),
+            });
+        }
+
+        // Route-aware stream defaults: LAN / direct IP defaults to 4K 120fps high-bitrate;
+        // P2P / Relay starts at 1080p 60fps 12Mbps for snappy startup and can be switched up anytime.
+        let is_lan_route = is_direct_ip || lan_direct_addr.is_some();
+        let (default_w, default_h, default_fps, default_bps) = if is_lan_route {
+            (3840, 2160, 120, 35_000_000)
+        } else {
+            (1920, 1080, 60, 12_000_000)
+        };
+
+        let ui_cfg = UiSessionConfig {
+            connect_addr,
+            password: req.password.filter(|p| !p.is_empty()),
+            watch_only: req.watch_only,
+            width: if req.width > 0 { req.width } else { default_w },
+            height: if req.height > 0 { req.height } else { default_h },
+            fps: if req.fps > 0 { req.fps } else { default_fps },
+            bitrate_bps: if req.bitrate_bps > 0 {
+                req.bitrate_bps
+            } else {
+                default_bps
+            },
+            prefer_hardware: true,
+            clipboard_enabled: req.clipboard_enabled,
+            audio_enabled: req.audio_enabled,
+            relay_grant,
+            force_relay: req.force_relay,
+            encrypt_connection,
+            mtls_config,
+            owner_grant,
+            owner_signer,
+            lan_direct_addr,
+        };
+
+        // Disconnect any previous session cleanly before spawning the new one.
+        self.close_active_session_only(false);
+        if self.session_epoch.load(Ordering::Acquire) != my_epoch {
+            return Ok(json!({ "cancelled": true }));
+        }
+
+        reset_media_diagnostics();
+        let handle = SessionHandle::spawn_with_surface(ui_cfg, None);
+        *self.session.lock().unwrap_or_else(|e| e.into_inner()) = Some(handle);
+
+        Ok(json!({
+            "started": true,
+            "epoch": my_epoch,
+            "lanHint": is_lan_route,
+            "targetLabel": target_device_id
+                .unwrap_or_else(|| format_host_port(&connect_addr.ip().to_string(), connect_addr.port())),
+        }))
+    }
+
+    fn close_active_session_only(&self, lock_remote: bool) {
+        let old = self.session.lock().unwrap_or_else(|e| e.into_inner()).take();
+        if let Some(handle) = old {
+            if lock_remote {
+                handle.request_lock_on_disconnect();
+            }
+            let _ = handle.tools().detach_all_terminals();
+            handle.join();
+        }
+    }
+
+    pub fn disconnect_session(&self, lock_remote: bool) {
+        self.session_epoch.fetch_add(1, Ordering::AcqRel);
+        self.close_active_session_only(lock_remote);
+    }
+
+    pub fn send_command(&self, cmd_json: &Value) -> Result<(), String> {
+        let g = self.session.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(handle) = g.as_ref() else {
+            return Err("当前无活动会话".to_string());
+        };
+        let kind = cmd_json["type"].as_str().unwrap_or("");
+        match kind {
+            "disconnect" => {
+                drop(g);
+                self.disconnect_session(cmd_json["lockRemote"].as_bool().unwrap_or(false));
+            }
+            "set_watch_only" => {
+                let enabled = cmd_json["enabled"].as_bool().unwrap_or(false);
+                handle.set_watch_only(enabled);
+            }
+            "set_bitrate" => {
+                let bps = cmd_json["bps"].as_u64().unwrap_or(0) as u32;
+                handle.send(SessionCommand::SetBitrate { bps });
+            }
+            "set_stream_params" => {
+                let width = cmd_json["width"].as_u64().unwrap_or(0) as u32;
+                let height = cmd_json["height"].as_u64().unwrap_or(0) as u32;
+                let fps = cmd_json["fps"].as_u64().unwrap_or(0) as u32;
+                handle.send(SessionCommand::SetStreamParams { width, height, fps });
+            }
+            "set_clipboard_enabled" => {
+                let enabled = cmd_json["enabled"].as_bool().unwrap_or(true);
+                handle.send(SessionCommand::SetClipboardEnabled { enabled });
+            }
+            "set_audio_muted" => {
+                let muted = cmd_json["muted"].as_bool().unwrap_or(false);
+                handle.send(SessionCommand::SetAudioMuted { muted });
+            }
+            "lock_remote_screen" => {
+                handle.send(SessionCommand::LockRemoteScreen);
+            }
+            "request_idr" => {
+                request_keyframe();
+            }
+            other => return Err(format!("未知会话指令: {other}")),
+        }
+        Ok(())
+    }
+
+    pub fn send_input_event(&self, ev: InputEvent) {
+        let g = self.session.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(handle) = g.as_ref() {
+            handle.send_input(ev);
+        }
+    }
+
+    pub fn poll_session_updates(&self) -> Value {
+        let mut updates: Vec<Value> = Vec::new();
+        let running;
+        {
+            let g = self.session.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(handle) = g.as_ref() {
+                running = handle.is_running();
+                while let Some(u) = handle.try_recv_update() {
+                    if let Ok(v) = serde_json::to_value(&u) {
+                        updates.push(v);
+                    }
+                    if matches!(u, SessionUpdate::Ended { .. }) {
+                        break;
+                    }
+                }
+            } else {
+                running = false;
+            }
+        }
+        let clipboard_texts = drain_inbound_clipboard_texts();
+        let media = media_diagnostics();
+        json!({
+            "running": running,
+            "updates": updates,
+            "clipboardTexts": clipboard_texts,
+            "media": media,
+        })
+    }
+
+    pub fn push_clipboard_local(&self, text: String) {
+        push_local_clipboard_text(text);
+    }
+
+    pub fn push_ime_silent(&self, text: String) {
+        push_silent_ime_text(text);
+    }
+
+    pub fn tool_call(&self, req: &Value) -> Result<Value, String> {
+        let g = self.session.lock().unwrap_or_else(|e| e.into_inner());
+        let handle = g.as_ref().ok_or_else(|| "请先建立远控会话".to_string())?;
+        let tools = handle.tools();
+        let action = req["action"].as_str().unwrap_or("");
+        match action {
+            // ── File Transfer ──
+            "file_list_remote" => {
+                let path = req["path"].as_str().map(str::to_string);
+                tools.file_list_remote(path)?;
+                Ok(json!({ "ok": true }))
+            }
+            "file_mkdir_remote" => {
+                let parent = req["parent"].as_str().unwrap_or("").to_string();
+                let name = req["name"].as_str().unwrap_or("").to_string();
+                tools.file_mkdir_remote(parent, name)?;
+                Ok(json!({ "ok": true }))
+            }
+            "file_upload" => {
+                let local_path = req["localPath"].as_str().unwrap_or("");
+                let remote_dir = req["remoteDir"].as_str().unwrap_or("");
+                let id = tools.file_upload(local_path, remote_dir)?;
+                Ok(json!({ "id": id }))
+            }
+            "file_download" => {
+                let remote_path = req["remotePath"].as_str().unwrap_or("");
+                let local_dir = req["localDir"].as_str().unwrap_or("");
+                let id = tools.file_download(remote_path, local_dir)?;
+                Ok(json!({ "id": id }))
+            }
+            "file_cancel" => {
+                let id = req["id"].as_u64().unwrap_or(0);
+                tools.file_cancel(id)?;
+                Ok(json!({ "ok": true }))
+            }
+            "file_list_transfers" => Ok(json!({ "transfers": tools.file_list_transfers() })),
+            "file_clear_finished" => {
+                tools.file_clear_finished()?;
+                Ok(json!({ "ok": true }))
+            }
+            "file_remove_transfer" => {
+                let id = req["id"].as_u64().unwrap_or(0);
+                tools.file_remove_transfer(id)?;
+                Ok(json!({ "ok": true }))
+            }
+            "file_poll_events" => {
+                let mut events = Vec::new();
+                while let Some(ev) = handle.try_recv_file_event() {
+                    if let Ok(v) = serde_json::to_value(ev) {
+                        events.push(v);
+                    }
+                }
+                Ok(json!({ "events": events }))
+            }
+
+            // ── Terminal ──
+            "terminal_list" => {
+                tools.terminal_list()?;
+                Ok(json!({ "ok": true }))
+            }
+            "terminal_open" => {
+                let cols = req["cols"].as_u64().unwrap_or(80) as u16;
+                let rows = req["rows"].as_u64().unwrap_or(24) as u16;
+                let name = req["name"].as_str().map(str::to_string);
+                let attach = req["attach"].as_bool().unwrap_or(true);
+                let id = tools.terminal_open_with_options(cols, rows, name, attach)?;
+                Ok(json!({ "termId": id }))
+            }
+            "terminal_attach" => {
+                let term_id = req["termId"].as_u64().unwrap_or(0) as u32;
+                let cols = req["cols"].as_u64().unwrap_or(80) as u16;
+                let rows = req["rows"].as_u64().unwrap_or(24) as u16;
+                tools.terminal_attach(term_id, cols, rows)?;
+                Ok(json!({ "ok": true }))
+            }
+            "terminal_detach" => {
+                let term_id = req["termId"].as_u64().unwrap_or(0) as u32;
+                tools.terminal_detach(term_id)?;
+                Ok(json!({ "ok": true }))
+            }
+            "terminal_rename" => {
+                let term_id = req["termId"].as_u64().unwrap_or(0) as u32;
+                let name = req["name"].as_str().unwrap_or("");
+                tools.terminal_rename(term_id, name)?;
+                Ok(json!({ "ok": true }))
+            }
+            "terminal_input" => {
+                let term_id = req["termId"].as_u64().unwrap_or(0) as u32;
+                let b64 = req["dataBase64"].as_str().unwrap_or("");
+                use base64::Engine as _;
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(b64)
+                    .map_err(|e| format!("无效终端输入编码: {e}"))?;
+                tools.terminal_input(term_id, &bytes)?;
+                Ok(json!({ "ok": true }))
+            }
+            "terminal_resize" => {
+                let term_id = req["termId"].as_u64().unwrap_or(0) as u32;
+                let cols = req["cols"].as_u64().unwrap_or(80) as u16;
+                let rows = req["rows"].as_u64().unwrap_or(24) as u16;
+                tools.terminal_resize(term_id, cols, rows)?;
+                Ok(json!({ "ok": true }))
+            }
+            "terminal_close" => {
+                let term_id = req["termId"].as_u64().unwrap_or(0) as u32;
+                tools.terminal_close(term_id)?;
+                Ok(json!({ "ok": true }))
+            }
+            "terminal_poll_events" => {
+                let mut events = Vec::new();
+                while let Some(ev) = handle.try_recv_terminal_event() {
+                    if let Ok(v) = serde_json::to_value(ev) {
+                        events.push(v);
+                    }
+                }
+                Ok(json!({ "events": events }))
+            }
+
+            // ── PortMap ──
+            "portmap_list" => Ok(json!({ "rules": tools.portmap_list() })),
+            "portmap_add" => {
+                let name = req["name"].as_str().unwrap_or("").to_string();
+                let local_port = req["localPort"].as_u64().unwrap_or(0) as u16;
+                let target_addr = req["targetAddr"].as_str().unwrap_or("127.0.0.1").to_string();
+                let target_port = req["targetPort"].as_u64().unwrap_or(0) as u16;
+                let (rule, all) = tools.portmap_add(name, local_port, target_addr, target_port)?;
+                Ok(json!({ "rule": rule, "rules": all }))
+            }
+            "portmap_toggle" => {
+                let id = req["id"].as_u64().unwrap_or(0);
+                let enabled = req["enabled"].as_bool().unwrap_or(true);
+                let (rule, all) = tools.portmap_toggle(id, enabled)?;
+                Ok(json!({ "rule": rule, "rules": all }))
+            }
+            "portmap_delete" => {
+                let id = req["id"].as_u64().unwrap_or(0);
+                let all = tools.portmap_delete(id)?;
+                Ok(json!({ "rules": all }))
+            }
+            "portmap_poll_updates" => {
+                let update = handle.take_portmap_update();
+                Ok(json!({ "rules": update }))
+            }
+            other => Err(format!("未知工具命令: {other}")),
+        }
+    }
+}
+
+pub fn decode_mouse_button(code: i32) -> Option<MouseButton> {
+    match code {
+        0 => Some(MouseButton::Left),
+        1 => Some(MouseButton::Right),
+        2 => Some(MouseButton::Middle),
+        3 => Some(MouseButton::X1),
+        4 => Some(MouseButton::X2),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn close_active_session_only_preserves_epoch() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "rc-runtime-epoch-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let rt = init_runtime(temp_dir.clone(), "test-android".to_string(), Vec::new())
+            .expect("init_runtime");
+        let my_epoch = rt.session_epoch.fetch_add(1, Ordering::AcqRel) + 1;
+        rt.close_active_session_only(false);
+        assert_eq!(rt.session_epoch.load(Ordering::Acquire), my_epoch);
+
+        rt.disconnect_session(false);
+        assert_eq!(rt.session_epoch.load(Ordering::Acquire), my_epoch + 1);
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+}

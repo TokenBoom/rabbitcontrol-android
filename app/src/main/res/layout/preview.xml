@@ -1,0 +1,15 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root" android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="vertical">
+    <TextView android:id="@+id/codecStatus" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:paddingHorizontal="16dp" android:paddingVertical="8dp" android:fontFamily="monospace" android:textSize="14sp" android:textColor="@color/rc_stage_muted"
+        android:text="@string/opening_decoder" />
+    <FrameLayout android:id="@+id/stage" android:layout_width="match_parent" android:layout_height="0dp"
+        android:layout_weight="1" android:background="@color/rc_stage" />
+    <TextView android:id="@+id/inputStatus" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:paddingHorizontal="16dp" android:paddingTop="8dp" android:textColor="@color/rc_stage_text" android:textSize="16sp"
+        android:text="@string/input_title" />
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:paddingHorizontal="16dp" android:paddingBottom="8dp" android:textSize="14sp" android:textColor="@color/rc_stage_muted"
+        android:text="@string/gesture_help" />
+</LinearLayout>

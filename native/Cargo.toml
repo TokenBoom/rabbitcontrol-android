@@ -1,0 +1,29 @@
+[package]
+name = "rabbitcontrol-android"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+
+[lib]
+name = "rabbitcontrol_android"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+base64 = "0.22"
+jni = "0.21.1"
+rc-audio = { path = "../rabbitcontrol-core/crates/rc-audio" }
+rc-capture = { path = "../rabbitcontrol-core/crates/rc-capture" }
+rc-client-core = { path = "../rabbitcontrol-core/crates/rc-client-core" }
+rc-decode = { path = "../rabbitcontrol-core/crates/rc-decode" }
+rc-input = { path = "../rabbitcontrol-core/crates/rc-input" }
+rc-pipeline = { path = "../rabbitcontrol-core/crates/rc-pipeline" }
+rc-render = { path = "../rabbitcontrol-core/crates/rc-render" }
+rc-session = { path = "../rabbitcontrol-core/crates/rc-session" }
+rc-tools = { path = "../rabbitcontrol-core/crates/rc-tools" }
+rc-types = { path = "../rabbitcontrol-core/crates/rc-types" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+lto = "thin"
+strip = "symbols"

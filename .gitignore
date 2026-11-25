@@ -1,0 +1,8 @@
+.gradle/
+.kotlin/
+**/build/
+native/target/
+local.properties
+rabbitcontrol-core/
+rabbitcontrol-macos/
+rabbitcontrol-server/

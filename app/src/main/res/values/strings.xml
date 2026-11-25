@@ -1,0 +1,17 @@
+<resources>
+    <string name="app_name">RabbitControl</string>
+    <string name="server_title">服务器</string>
+    <string name="api_hint">主机名或 IP，默认端口 21118</string>
+    <string name="pin_hint">64 位 SHA-256 指纹</string>
+    <string name="probe_server">检测服务器</string>
+    <string name="preview_title">本机画面与操控</string>
+    <string name="preview_summary">播放 720p60 动态样片，检查解码器、送显帧率和触控映射。</string>
+    <string name="start_preview">开始本地校验</string>
+    <string name="opening_decoder">正在打开解码器…</string>
+    <string name="input_title">本地操控校验</string>
+    <string name="gesture_help">轻点左键 · 长按右键 · 单指拖动 · 双指滚动</string>
+    <string name="probing">正在探测 HTTPS 服务…</string>
+    <string name="input_result">本地 · %1$s · %2$d 字节</string>
+    <string name="address_label">服务器地址</string>
+    <string name="pin_label">CA 指纹（可选）</string>
+</resources>
