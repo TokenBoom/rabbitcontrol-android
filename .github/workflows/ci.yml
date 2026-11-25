@@ -40,13 +40,11 @@ jobs:
       - name: Run Rust unit tests
         run: cargo test --locked --manifest-path native/Cargo.toml
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Install Android SDK & NDK packages
         run: |
-          yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358"
+          SDKMANAGER=$(ls -d "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager | head -n 1)
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358"
 
       - name: Install cargo-ndk
         run: cargo install cargo-ndk --version 4.1.2 --locked
