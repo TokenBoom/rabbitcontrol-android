@@ -25,6 +25,20 @@ fn opt_field<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
     args[key].as_str().map(str::trim).filter(|s| !s.is_empty())
 }
 
+fn opt_port(args: &Value, key: &str) -> Result<Option<u16>, AuthClientError> {
+    let val = &args[key];
+    if val.is_null() {
+        return Ok(None);
+    }
+    let port = val
+        .as_u64()
+        .ok_or_else(|| AuthClientError::Config(format!("无效端口号：{key}")))?;
+    if port == 0 || port > u16::MAX as u64 {
+        return Err(AuthClientError::Config(format!("端口号超出范围：{key}")));
+    }
+    Ok(Some(port as u16))
+}
+
 fn now_unix_sec() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -32,22 +46,26 @@ fn now_unix_sec() -> u64 {
         .unwrap_or(0)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_server_config(
     address: &str,
     ca_pem: &str,
     ca_pin: Option<&str>,
     auth_pubkey_hex: Option<String>,
+    api_port_override: Option<u16>,
+    signal_port_override: Option<u16>,
+    relay_port_override: Option<u16>,
     device_key: String,
     cached_device_id: Option<String>,
 ) -> Result<ServerConfig, AuthClientError> {
-    let (host, port) =
+    let (host, parsed_api_port) =
         parse_server_input(address, DEFAULT_API_PORT).map_err(AuthClientError::Config)?;
     Ok(ServerConfig {
         enabled: true,
         server_host: host,
-        signal_port: DEFAULT_SIGNAL_PORT,
-        relay_port: DEFAULT_RELAY_PORT,
-        api_port: port,
+        signal_port: signal_port_override.unwrap_or(DEFAULT_SIGNAL_PORT),
+        relay_port: relay_port_override.unwrap_or(DEFAULT_RELAY_PORT),
+        api_port: api_port_override.unwrap_or(parsed_api_port),
         use_https: true,
         ca_fingerprint_sha256: ca_pin.map(|s| s.to_ascii_lowercase()),
         ca_cert_pem: Some(ca_pem.to_string()),
@@ -79,11 +97,15 @@ fn to_stored_session(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn sync_runtime_session(
     address: &str,
     ca_pem: &str,
     ca_pin: Option<&str>,
     auth_pubkey_hex: Option<String>,
+    api_port_override: Option<u16>,
+    signal_port_override: Option<u16>,
+    relay_port_override: Option<u16>,
     tokens: &Value,
     cached_device_id: Option<String>,
     is_restore: bool,
@@ -91,9 +113,10 @@ fn sync_runtime_session(
     let Some(rt) = runtime::global_runtime() else {
         return;
     };
-    let Ok((host, api_port)) = parse_server_input(address, DEFAULT_API_PORT) else {
+    let Ok((host, parsed_api_port)) = parse_server_input(address, DEFAULT_API_PORT) else {
         return;
     };
+    let api_port = api_port_override.unwrap_or(parsed_api_port);
     let existing_cfg = rt.auth.server_config();
     let dev_id = tokens["device"]["device_id"]
         .as_str()
@@ -107,6 +130,9 @@ fn sync_runtime_session(
         ca_pem,
         ca_pin,
         resolved_auth_pubkey,
+        Some(api_port),
+        signal_port_override,
+        relay_port_override,
         device_key,
         dev_id.clone(),
     ) else {
@@ -146,17 +172,35 @@ fn sync_runtime_session(
         let stored = to_stored_session(&host, api_port, access, refresh, access_expires_at, &user);
         rt.apply_and_persist_session(stored);
         if !user.must_change_password {
-            if let Some(ref did) = dev_id {
-                let _ = rt.auth.ensure_device_cert(did);
+            if is_restore {
+                let _ = std::thread::Builder::new()
+                    .name("rc-restore-bg".to_string())
+                    .spawn(move || {
+                        if let Some(bg_rt) = runtime::global_runtime() {
+                            if let Some(ref did) = dev_id {
+                                let _ = bg_rt.auth.ensure_device_cert(did);
+                            }
+                            bg_rt.ensure_signal_started();
+                        }
+                    });
+            } else {
+                if let Some(ref did) = dev_id {
+                    let _ = rt.auth.ensure_device_cert(did);
+                }
+                rt.ensure_signal_started();
             }
-            rt.ensure_signal_started();
         }
     }
 }
 
-fn probe(address: &str, fingerprint: &str) -> Result<Value, AuthClientError> {
-    let (host, port) =
+fn probe(
+    address: &str,
+    fingerprint: &str,
+    api_port_override: Option<u16>,
+) -> Result<Value, AuthClientError> {
+    let (host, parsed_port) =
         parse_server_input(address, DEFAULT_API_PORT).map_err(AuthClientError::Config)?;
+    let port = api_port_override.unwrap_or(parsed_port);
     let pin = fingerprint.trim();
     if !pin.is_empty() && (pin.len() != 64 || !pin.bytes().all(|b| b.is_ascii_hexdigit())) {
         return Err(AuthClientError::Config(
@@ -172,6 +216,7 @@ fn probe(address: &str, fingerprint: &str) -> Result<Value, AuthClientError> {
         "status": result.health.status,
         "version": result.health.version,
         "elapsedMs": result.latency_ms,
+        "apiPort": port,
         "caSha256": ca.ca_fingerprint_sha256,
         "caPem": ca.ca_cert_pem,
         "authPubkeyHex": ca.auth_pubkey_hex,
@@ -189,14 +234,18 @@ fn request(args: &Value) -> Result<Value, AuthClientError> {
         return Ok(json!({ "ok": true }));
     }
     let address = field(args, "address")?;
+    let api_port_override = opt_port(args, "apiPort")?;
+    let signal_port_override = opt_port(args, "signalPort")?;
+    let relay_port_override = opt_port(args, "relayPort")?;
     if action == "probe" {
-        return probe(address, field(args, "pin")?);
+        return probe(address, field(args, "pin")?, api_port_override);
     }
     let ca_pem = field(args, "ca")?;
     let ca_pin = opt_field(args, "pin");
     let auth_pubkey_hex = opt_field(args, "authPubkeyHex").map(str::to_string);
-    let (host, port) =
+    let (host, parsed_port) =
         parse_server_input(address, DEFAULT_API_PORT).map_err(AuthClientError::Config)?;
+    let port = api_port_override.unwrap_or(parsed_port);
     let client = AuthHttpClient::new(host, port, true, Some(ca_pem.into()))?;
 
     let rt_info = runtime::global_runtime().map(|rt| {
@@ -236,7 +285,18 @@ fn request(args: &Value) -> Result<Value, AuthClientError> {
             let mut val = json!(tokens);
             let expires_at = now_unix_sec().saturating_add(tokens.expires_in_sec);
             val["access_expires_at_unix_sec"] = json!(expires_at);
-            sync_runtime_session(address, ca_pem, ca_pin, auth_pubkey_hex, &val, None, false);
+            sync_runtime_session(
+                address,
+                ca_pem,
+                ca_pin,
+                auth_pubkey_hex,
+                api_port_override,
+                signal_port_override,
+                relay_port_override,
+                &val,
+                None,
+                false,
+            );
             Ok(val)
         }
         "login" => {
@@ -255,13 +315,35 @@ fn request(args: &Value) -> Result<Value, AuthClientError> {
             let mut val = json!(tokens);
             let expires_at = now_unix_sec().saturating_add(tokens.expires_in_sec);
             val["access_expires_at_unix_sec"] = json!(expires_at);
-            sync_runtime_session(address, ca_pem, ca_pin, auth_pubkey_hex, &val, None, false);
+            sync_runtime_session(
+                address,
+                ca_pem,
+                ca_pin,
+                auth_pubkey_hex,
+                api_port_override,
+                signal_port_override,
+                relay_port_override,
+                &val,
+                None,
+                false,
+            );
             Ok(val)
         }
         "restore" => {
             let tokens = &args["tokens"];
             let cached_did = opt_field(args, "deviceId").map(str::to_string);
-            sync_runtime_session(address, ca_pem, ca_pin, auth_pubkey_hex, tokens, cached_did, true);
+            sync_runtime_session(
+                address,
+                ca_pem,
+                ca_pin,
+                auth_pubkey_hex,
+                api_port_override,
+                signal_port_override,
+                relay_port_override,
+                tokens,
+                cached_did,
+                true,
+            );
             Ok(json!({ "ok": true }))
         }
         "refresh" => {
@@ -274,6 +356,9 @@ fn request(args: &Value) -> Result<Value, AuthClientError> {
                 ca_pem,
                 ca_pin,
                 auth_pubkey_hex,
+                api_port_override,
+                signal_port_override,
+                relay_port_override,
                 &val,
                 opt_field(args, "deviceId").map(str::to_string),
                 false,
@@ -294,6 +379,9 @@ fn request(args: &Value) -> Result<Value, AuthClientError> {
                 ca_pem,
                 ca_pin,
                 auth_pubkey_hex,
+                api_port_override,
+                signal_port_override,
+                relay_port_override,
                 &val,
                 opt_field(args, "deviceId").map(str::to_string),
                 false,
@@ -362,9 +450,29 @@ mod tests {
 
     #[test]
     fn malformed_pin_is_rejected_before_network_io() {
-        assert!(probe("localhost", "12")
+        assert!(probe("localhost", "12", None)
             .unwrap_err()
             .to_string()
             .contains("64"));
+    }
+
+    #[test]
+    fn build_server_config_applies_custom_ports_and_defaults() {
+        let cfg = build_server_config(
+            "example.com",
+            "ca-pem",
+            None,
+            None,
+            Some(31118),
+            Some(31116),
+            None,
+            "dev-key".to_string(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(cfg.server_host, "example.com");
+        assert_eq!(cfg.api_port, 31118);
+        assert_eq!(cfg.signal_port, 31116);
+        assert_eq!(cfg.relay_port, DEFAULT_RELAY_PORT);
     }
 }

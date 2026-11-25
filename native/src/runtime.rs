@@ -5,7 +5,7 @@ use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rc_client_core::auth_client::{
@@ -36,8 +36,8 @@ use serde_json::{json, Value};
 use crate::host_android;
 
 use crate::ndk_media::{
-    media_diagnostics, request_keyframe, reset_media_diagnostics, set_codec_candidates,
-    CodecCandidate,
+    check_unreported_first_frame, media_diagnostics, request_keyframe, reset_media_diagnostics,
+    set_codec_candidates, CodecCandidate,
 };
 use crate::platform_android::{
     drain_inbound_clipboard_texts, push_local_clipboard_text, push_silent_ime_text,
@@ -100,10 +100,14 @@ pub struct AndroidRuntime {
     signal: Mutex<Option<Arc<SignalClientHandle>>>,
     signal_events: Arc<Mutex<VecDeque<SignalUiEvent>>>,
     signal_snapshot: Arc<Mutex<ServerStatusSnapshot>>,
+    signal_dirty: Arc<AtomicBool>,
+    last_reported_refresh: Mutex<String>,
     lan: Mutex<Option<LanDiscoveryHandle>>,
-    session: Mutex<Option<SessionHandle>>,
+    session: RwLock<Option<SessionHandle>>,
+    last_session_running: AtomicBool,
     session_epoch: AtomicU64,
     host: Mutex<Option<HostHandle>>,
+    last_host_running: AtomicBool,
     host_allow_remote_assist: AtomicBool,
 }
 
@@ -144,10 +148,14 @@ pub fn init_runtime(
         signal: Mutex::new(None),
         signal_events: Arc::new(Mutex::new(VecDeque::with_capacity(64))),
         signal_snapshot: Arc::new(Mutex::new(ServerConfig::default().disabled_snapshot())),
+        signal_dirty: Arc::new(AtomicBool::new(true)),
+        last_reported_refresh: Mutex::new(String::new()),
         lan: Mutex::new(Some(lan)),
-        session: Mutex::new(None),
+        session: RwLock::new(None),
+        last_session_running: AtomicBool::new(false),
         session_epoch: AtomicU64::new(0),
         host: Mutex::new(None),
+        last_host_running: AtomicBool::new(false),
         host_allow_remote_assist: AtomicBool::new(false),
     });
 
@@ -178,6 +186,7 @@ impl AndroidRuntime {
         let _file_lock = acquire_file_lock(&self.auth_path, Duration::from_secs(5));
         let _ = save_auth_session(&self.auth_path, &stored);
         self.auth.apply_external_session(stored);
+        self.signal_dirty.store(true, Ordering::Release);
     }
 
     pub fn ensure_signal_started(&self) {
@@ -197,6 +206,8 @@ impl AndroidRuntime {
             let st = existing.status();
             if st.enabled
                 && st.server_host == cfg.server_host
+                && st.signal_port == cfg.signal_port
+                && st.relay_port == cfg.relay_port
                 && matches!(
                     st.state,
                     ServerConnectionState::Connected | ServerConnectionState::Connecting
@@ -236,6 +247,7 @@ impl AndroidRuntime {
 
         let events_tx = Arc::clone(&self.signal_events);
         let snap_store = Arc::clone(&self.signal_snapshot);
+        let dirty_flag = Arc::clone(&self.signal_dirty);
         let handle = SignalClientHandle::spawn_with_options(
             cfg,
             self.device_name(),
@@ -243,6 +255,7 @@ impl AndroidRuntime {
             opts,
             move |snapshot| {
                 *snap_store.lock().unwrap_or_else(|e| e.into_inner()) = snapshot.clone();
+                dirty_flag.store(true, Ordering::Release);
                 if snapshot.state == ServerConnectionState::Connected {
                     if let Some(ref did) = snapshot.device_id {
                         let did_bg = did.clone();
@@ -263,6 +276,7 @@ impl AndroidRuntime {
             },
         );
         *sig_guard = Some(Arc::new(handle));
+        self.signal_dirty.store(true, Ordering::Release);
     }
 
     pub fn stop_signal_and_session(&self) {
@@ -274,6 +288,7 @@ impl AndroidRuntime {
         }
         *self.signal_snapshot.lock().unwrap_or_else(|e| e.into_inner()) =
             ServerConfig::default().disabled_snapshot();
+        self.signal_dirty.store(true, Ordering::Release);
     }
 
     fn pump_incoming_relay(&self) {
@@ -306,7 +321,7 @@ impl AndroidRuntime {
         }
     }
 
-    pub fn poll_signal_events(&self) -> Value {
+    pub fn poll_signal_events(&self) -> Option<Value> {
         self.pump_incoming_relay();
         let mut out = Vec::new();
         {
@@ -315,15 +330,41 @@ impl AndroidRuntime {
                 out.push(ev);
             }
         }
-        let sig_guard = self.signal.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(sig) = sig_guard.as_ref() {
-            while let Some(dev) = sig.try_recv_device_status() {
-                out.push(SignalUiEvent::DeviceStatus(dev));
-            }
-            if let Some(kicked) = sig.try_recv_kicked_reason() {
-                out.push(SignalUiEvent::Kicked { reason: kicked });
+        {
+            let sig_guard = self.signal.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(sig) = sig_guard.as_ref() {
+                while let Some(dev) = sig.try_recv_device_status() {
+                    out.push(SignalUiEvent::DeviceStatus(dev));
+                }
+                if let Some(kicked) = sig.try_recv_kicked_reason() {
+                    out.push(SignalUiEvent::Kicked { reason: kicked });
+                }
             }
         }
+
+        let cur_session = self.auth.current_session();
+        let cur_refresh = cur_session
+            .as_ref()
+            .map(|s| s.refresh_token.as_str())
+            .unwrap_or("");
+        let refresh_changed = {
+            let mut last_ref = self
+                .last_reported_refresh
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if last_ref.as_str() != cur_refresh {
+                *last_ref = cur_refresh.to_string();
+                true
+            } else {
+                false
+            }
+        };
+
+        let dirty = self.signal_dirty.swap(false, Ordering::AcqRel);
+        if !dirty && out.is_empty() && !refresh_changed {
+            return None;
+        }
+
         let snapshot = self
             .signal_snapshot
             .lock()
@@ -334,7 +375,7 @@ impl AndroidRuntime {
                 lan.set_local_device_id(Some(did.clone()));
             }
         }
-        let session_tokens = self.auth.current_session().map(|s| {
+        let session_tokens = cur_session.map(|s| {
             json!({
                 "access_token": s.access_token,
                 "refresh_token": s.refresh_token,
@@ -348,11 +389,11 @@ impl AndroidRuntime {
                 }
             })
         });
-        json!({
+        Some(json!({
             "snapshot": snapshot,
             "events": out,
             "sessionTokens": session_tokens,
-        })
+        }))
     }
 
     fn build_mtls_bundle(
@@ -481,13 +522,13 @@ impl AndroidRuntime {
             });
         }
 
-        // Route-aware stream defaults: LAN / direct IP defaults to 4K 120fps high-bitrate;
-        // P2P / Relay starts at 1080p 60fps 12Mbps for snappy startup and can be switched up anytime.
+        // Ultra-low-latency route-aware defaults: LAN / direct IP defaults to 1080p@120fps,
+        // P2P / Relay starts at 1080p@60fps; higher resolutions can be selected anytime in Display.
         let is_lan_route = is_direct_ip || lan_direct_addr.is_some();
         let (default_w, default_h, default_fps, default_bps) = if is_lan_route {
-            (3840, 2160, 120, 35_000_000)
+            (1920, 1080, 120, 20_000_000)
         } else {
-            (1920, 1080, 60, 12_000_000)
+            (1920, 1080, 60, 10_000_000)
         };
 
         let ui_cfg = UiSessionConfig {
@@ -522,7 +563,8 @@ impl AndroidRuntime {
 
         reset_media_diagnostics();
         let handle = SessionHandle::spawn_with_surface(ui_cfg, None);
-        *self.session.lock().unwrap_or_else(|e| e.into_inner()) = Some(handle);
+        *self.session.write().unwrap_or_else(|e| e.into_inner()) = Some(handle);
+        self.last_session_running.store(true, Ordering::Release);
 
         Ok(json!({
             "started": true,
@@ -534,7 +576,12 @@ impl AndroidRuntime {
     }
 
     fn close_active_session_only(&self, lock_remote: bool) {
-        let old = self.session.lock().unwrap_or_else(|e| e.into_inner()).take();
+        let old = self
+            .session
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        self.last_session_running.store(false, Ordering::Release);
         if let Some(handle) = old {
             if lock_remote {
                 handle.request_lock_on_disconnect();
@@ -550,7 +597,7 @@ impl AndroidRuntime {
     }
 
     pub fn send_command(&self, cmd_json: &Value) -> Result<(), String> {
-        let g = self.session.lock().unwrap_or_else(|e| e.into_inner());
+        let g = self.session.read().unwrap_or_else(|e| e.into_inner());
         let Some(handle) = g.as_ref() else {
             return Err("当前无活动会话".to_string());
         };
@@ -593,18 +640,22 @@ impl AndroidRuntime {
         Ok(())
     }
 
+    #[inline]
     pub fn send_input_event(&self, ev: InputEvent) {
-        let g = self.session.lock().unwrap_or_else(|e| e.into_inner());
+        let g = self.session.read().unwrap_or_else(|e| e.into_inner());
         if let Some(handle) = g.as_ref() {
             handle.send_input(ev);
         }
     }
 
-    pub fn poll_session_updates(&self) -> Value {
+    pub fn poll_session_updates(&self, include_media: bool) -> Option<Value> {
         let mut updates: Vec<Value> = Vec::new();
+        let mut file_events: Vec<Value> = Vec::new();
+        let mut terminal_events: Vec<Value> = Vec::new();
+        let mut portmap_rules = None;
         let running;
         {
-            let g = self.session.lock().unwrap_or_else(|e| e.into_inner());
+            let g = self.session.read().unwrap_or_else(|e| e.into_inner());
             if let Some(handle) = g.as_ref() {
                 running = handle.is_running();
                 while let Some(u) = handle.try_recv_update() {
@@ -615,18 +666,67 @@ impl AndroidRuntime {
                         break;
                     }
                 }
+                while let Some(ev) = handle.try_recv_file_event() {
+                    if let Ok(v) = serde_json::to_value(ev) {
+                        file_events.push(v);
+                    }
+                }
+                while let Some(ev) = handle.try_recv_terminal_event() {
+                    if let Ok(v) = serde_json::to_value(ev) {
+                        terminal_events.push(v);
+                    }
+                }
+                portmap_rules = handle.take_portmap_update();
             } else {
                 running = false;
             }
         }
         let clipboard_texts = drain_inbound_clipboard_texts();
-        let media = media_diagnostics();
-        json!({
-            "running": running,
-            "updates": updates,
-            "clipboardTexts": clipboard_texts,
-            "media": media,
-        })
+        let prev_running = self.last_session_running.swap(running, Ordering::AcqRel);
+        let running_changed = prev_running != running;
+        let emit_media = include_media || check_unreported_first_frame();
+
+        if !running_changed
+            && updates.is_empty()
+            && clipboard_texts.is_empty()
+            && file_events.is_empty()
+            && terminal_events.is_empty()
+            && portmap_rules.is_none()
+            && !emit_media
+        {
+            return None;
+        }
+
+        let mut out = serde_json::Map::with_capacity(7);
+        out.insert("running".to_string(), Value::Bool(running));
+        if !updates.is_empty() {
+            out.insert("updates".to_string(), Value::Array(updates));
+        }
+        if !clipboard_texts.is_empty() {
+            out.insert(
+                "clipboardTexts".to_string(),
+                serde_json::to_value(clipboard_texts).unwrap_or(Value::Null),
+            );
+        }
+        if !file_events.is_empty() {
+            out.insert("fileEvents".to_string(), Value::Array(file_events));
+        }
+        if !terminal_events.is_empty() {
+            out.insert("terminalEvents".to_string(), Value::Array(terminal_events));
+        }
+        if let Some(rules) = portmap_rules {
+            out.insert(
+                "portmapRules".to_string(),
+                serde_json::to_value(rules).unwrap_or(Value::Null),
+            );
+        }
+        if emit_media {
+            out.insert(
+                "media".to_string(),
+                serde_json::to_value(media_diagnostics()).unwrap_or(Value::Null),
+            );
+        }
+        Some(Value::Object(out))
     }
 
     pub fn push_clipboard_local(&self, text: String) {
@@ -638,7 +738,7 @@ impl AndroidRuntime {
     }
 
     pub fn tool_call(&self, req: &Value) -> Result<Value, String> {
-        let g = self.session.lock().unwrap_or_else(|e| e.into_inner());
+        let g = self.session.read().unwrap_or_else(|e| e.into_inner());
         let handle = g.as_ref().ok_or_else(|| "请先建立远控会话".to_string())?;
         let tools = handle.tools();
         let action = req["action"].as_str().unwrap_or("");
@@ -871,6 +971,7 @@ impl AndroidRuntime {
         let handle = HostHandle::spawn(ui_cfg)?;
         let listen_addr = handle.listen_addr().to_string();
         *self.host.lock().unwrap_or_else(|e| e.into_inner()) = Some(handle);
+        self.last_host_running.store(true, Ordering::Release);
 
         Ok(json!({
             "started": true,
@@ -883,6 +984,7 @@ impl AndroidRuntime {
 
     pub fn stop_host(&self) {
         self.host_allow_remote_assist.store(false, Ordering::Release);
+        self.last_host_running.store(false, Ordering::Release);
         if let Some(sig) = self.signal.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
             let _ = sig.set_allow_remote_assist(false);
         }
@@ -946,7 +1048,7 @@ impl AndroidRuntime {
         }
     }
 
-    pub fn poll_host_events(&self) -> Value {
+    pub fn poll_host_events(&self) -> Option<Value> {
         self.pump_incoming_relay();
         let mut updates = Vec::new();
         let running;
@@ -965,12 +1067,20 @@ impl AndroidRuntime {
         }
         let encoder_cmds = host_android::drain_host_encoder_commands();
         let input_events = host_android::drain_host_input_events();
-        json!({
+        let prev_running = self.last_host_running.swap(running, Ordering::AcqRel);
+        if prev_running == running
+            && updates.is_empty()
+            && encoder_cmds.is_empty()
+            && input_events.is_empty()
+        {
+            return None;
+        }
+        Some(json!({
             "running": running,
             "updates": updates,
             "encoderCommands": encoder_cmds,
             "inputEvents": input_events,
-        })
+        }))
     }
 }
 
@@ -1036,10 +1146,14 @@ mod tests {
             signal: Mutex::new(None),
             signal_events: Arc::new(Mutex::new(VecDeque::new())),
             signal_snapshot: Arc::new(Mutex::new(ServerConfig::default().disabled_snapshot())),
+            signal_dirty: Arc::new(AtomicBool::new(true)),
+            last_reported_refresh: Mutex::new(String::new()),
             lan: Mutex::new(None),
-            session: Mutex::new(None),
+            session: RwLock::new(None),
+            last_session_running: AtomicBool::new(false),
             session_epoch: AtomicU64::new(0),
             host: Mutex::new(None),
+            last_host_running: AtomicBool::new(false),
             host_allow_remote_assist: AtomicBool::new(false),
         };
 

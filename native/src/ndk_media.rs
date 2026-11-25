@@ -1,7 +1,10 @@
 #![cfg_attr(not(target_os = "android"), allow(dead_code))]
-//! Zero-copy Android NDK AMediaCodec + ANativeWindow decoder and surface renderer.
+//! Zero-copy Android NDK AMediaCodec + ANativeWindow decoder and surface renderer
+//! with a dedicated low-latency output-drain worker thread.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+#[cfg(target_os = "android")]
+use std::sync::{Arc, Condvar};
 use std::sync::{Mutex, OnceLock};
 
 use rc_capture::FrameTexture;
@@ -40,6 +43,7 @@ static DIAG_LOW_LATENCY: AtomicBool = AtomicBool::new(false);
 static DIAG_DECODED: AtomicU64 = AtomicU64::new(0);
 static DIAG_RENDERED: AtomicU64 = AtomicU64::new(0);
 static DIAG_DROPPED: AtomicU64 = AtomicU64::new(0);
+static FIRST_FRAME_REPORTED: AtomicBool = AtomicBool::new(false);
 static FORCE_KEYFRAME: AtomicBool = AtomicBool::new(false);
 
 pub fn set_codec_candidates(candidates: Vec<CodecCandidate>) {
@@ -68,9 +72,24 @@ pub fn reset_media_diagnostics() {
     DIAG_DECODED.store(0, Ordering::Release);
     DIAG_RENDERED.store(0, Ordering::Release);
     DIAG_DROPPED.store(0, Ordering::Release);
+    FIRST_FRAME_REPORTED.store(false, Ordering::Release);
+}
+
+/// Returns true exactly once per session when the first decoded frame is rendered onto SurfaceView.
+pub fn check_unreported_first_frame() -> bool {
+    if DIAG_RENDERED.load(Ordering::Acquire) > 0
+        && !FIRST_FRAME_REPORTED.swap(true, Ordering::AcqRel)
+    {
+        return true;
+    }
+    false
 }
 
 pub fn media_diagnostics() -> MediaDiagnostics {
+    let rendered = DIAG_RENDERED.load(Ordering::Acquire);
+    if rendered > 0 {
+        FIRST_FRAME_REPORTED.store(true, Ordering::Release);
+    }
     let codec_name = DIAG_CODEC_NAME
         .get_or_init(|| Mutex::new(String::new()))
         .lock()
@@ -81,7 +100,7 @@ pub fn media_diagnostics() -> MediaDiagnostics {
         hardware: DIAG_HARDWARE.load(Ordering::Acquire),
         low_latency: DIAG_LOW_LATENCY.load(Ordering::Acquire),
         decoded_frames: DIAG_DECODED.load(Ordering::Acquire),
-        rendered_frames: DIAG_RENDERED.load(Ordering::Acquire),
+        rendered_frames: rendered,
         dropped_frames: DIAG_DROPPED.load(Ordering::Acquire),
         surface_attached: has_attached_surface(),
     }
@@ -273,11 +292,168 @@ pub fn has_attached_surface() -> bool {
     false
 }
 
+/// Dedicated background output drainer for `AMediaCodec`.
+/// Immediately releases the newest decoded frame onto `ANativeWindow` as soon as hardware
+/// decoding completes, preventing 1-frame pipeline lag and stranded final frames on static screens,
+/// while sleeping at 0% CPU when idle and joining cleanly before `flush`/`stop`/`delete`.
+#[cfg(target_os = "android")]
+struct CodecOutputDrainer {
+    stop: Arc<AtomicBool>,
+    wake: Arc<(Mutex<u64>, Condvar)>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+#[cfg(target_os = "android")]
+impl CodecOutputDrainer {
+    fn spawn(codec: *mut sys::AMediaCodec) -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        let wake = Arc::new((Mutex::new(0u64), Condvar::new()));
+        let stop_bg = Arc::clone(&stop);
+        let wake_bg = Arc::clone(&wake);
+        let codec_addr = codec as usize;
+
+        let handle = std::thread::Builder::new()
+            .name("rc-avc-drain".to_string())
+            .spawn(move || {
+                let codec_ptr = codec_addr as *mut sys::AMediaCodec;
+                let mut seen_seq = 0u64;
+                let mut idle_polls_left = 0u32;
+                let mut info = sys::AMediaCodecBufferInfo::default();
+
+                while !stop_bg.load(Ordering::Acquire) {
+                    if idle_polls_left == 0 {
+                        let (lock, cvar) = &*wake_bg;
+                        let guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+                        let guard = cvar
+                            .wait_while(guard, |seq| {
+                                *seq == seen_seq && !stop_bg.load(Ordering::Acquire)
+                            })
+                            .unwrap_or_else(|e| e.into_inner());
+                        if stop_bg.load(Ordering::Acquire) {
+                            break;
+                        }
+                        seen_seq = *guard;
+                        idle_polls_left = 20; // ~60ms active drain window after last queued input
+                    }
+
+                    let idx = unsafe {
+                        sys::AMediaCodec_dequeueOutputBuffer(codec_ptr, &mut info, 3_000)
+                    };
+                    if idx >= 0 {
+                        let mut newest_idx: Option<usize> = None;
+                        let mut dropped = 0u64;
+
+                        if info.size > 0 {
+                            newest_idx = Some(idx as usize);
+                        } else {
+                            unsafe {
+                                let _ =
+                                    sys::AMediaCodec_releaseOutputBuffer(codec_ptr, idx as usize, false);
+                            }
+                        }
+
+                        // Drain any additional ready buffers non-blockingly so only the freshest frame renders
+                        loop {
+                            let next_idx = unsafe {
+                                sys::AMediaCodec_dequeueOutputBuffer(codec_ptr, &mut info, 0)
+                            };
+                            if next_idx >= 0 {
+                                let u_idx = next_idx as usize;
+                                if info.size > 0 {
+                                    if let Some(prev) = newest_idx.replace(u_idx) {
+                                        unsafe {
+                                            let _ = sys::AMediaCodec_releaseOutputBuffer(
+                                                codec_ptr, prev, false,
+                                            );
+                                        }
+                                        dropped += 1;
+                                    }
+                                } else {
+                                    unsafe {
+                                        let _ = sys::AMediaCodec_releaseOutputBuffer(
+                                            codec_ptr, u_idx, false,
+                                        );
+                                    }
+                                }
+                            } else if next_idx == sys::AMEDIACODEC_INFO_OUTPUT_FORMAT_CHANGED
+                                || next_idx == sys::AMEDIACODEC_INFO_OUTPUT_BUFFERS_CHANGED
+                            {
+                                continue;
+                            } else {
+                                break;
+                            }
+                        }
+
+                        if dropped > 0 {
+                            DIAG_DROPPED.fetch_add(dropped, Ordering::Relaxed);
+                        }
+                        if let Some(render_idx) = newest_idx {
+                            unsafe {
+                                let _ = sys::AMediaCodec_releaseOutputBuffer(
+                                    codec_ptr, render_idx, true,
+                                );
+                            }
+                            DIAG_RENDERED.fetch_add(1, Ordering::Release);
+                        }
+
+                        let cur_seq = *wake_bg.0.lock().unwrap_or_else(|e| e.into_inner());
+                        if cur_seq != seen_seq {
+                            seen_seq = cur_seq;
+                            idle_polls_left = 20;
+                        } else {
+                            idle_polls_left = idle_polls_left.max(6);
+                        }
+                    } else if idx == sys::AMEDIACODEC_INFO_OUTPUT_FORMAT_CHANGED
+                        || idx == sys::AMEDIACODEC_INFO_OUTPUT_BUFFERS_CHANGED
+                    {
+                        continue;
+                    } else {
+                        let cur_seq = *wake_bg.0.lock().unwrap_or_else(|e| e.into_inner());
+                        if cur_seq != seen_seq {
+                            seen_seq = cur_seq;
+                            idle_polls_left = 20;
+                        } else {
+                            idle_polls_left = idle_polls_left.saturating_sub(1);
+                        }
+                    }
+                }
+            })
+            .ok();
+
+        Self { stop, wake, handle }
+    }
+
+    #[inline]
+    fn notify_input_queued(&self) {
+        let (lock, cvar) = &*self.wake;
+        let mut seq = lock.lock().unwrap_or_else(|e| e.into_inner());
+        *seq = seq.wrapping_add(1);
+        drop(seq);
+        cvar.notify_one();
+    }
+
+    fn stop_and_join(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        self.wake.1.notify_all();
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+impl Drop for CodecOutputDrainer {
+    fn drop(&mut self) {
+        self.stop_and_join();
+    }
+}
+
 #[cfg(target_os = "android")]
 pub struct AndroidSurfaceDecoder {
     width: u32,
     height: u32,
     codec: *mut sys::AMediaCodec,
+    drainer: Option<CodecOutputDrainer>,
     active_generation: u64,
     last_sps: Option<Vec<u8>>,
     last_pps: Option<Vec<u8>>,
@@ -295,6 +471,7 @@ impl AndroidSurfaceDecoder {
             width: width.max(2),
             height: height.max(2),
             codec: std::ptr::null_mut(),
+            drainer: None,
             active_generation: 0,
             last_sps: None,
             last_pps: None,
@@ -304,6 +481,9 @@ impl AndroidSurfaceDecoder {
     }
 
     fn release_codec(&mut self) {
+        if let Some(mut d) = self.drainer.take() {
+            d.stop_and_join();
+        }
         if !self.codec.is_null() {
             unsafe {
                 let _ = sys::AMediaCodec_stop(self.codec);
@@ -394,10 +574,16 @@ impl AndroidSurfaceDecoder {
                         sys::AMediaFormat_setInt32(fmt, k_prio.as_ptr(), 0);
                         sys::AMediaFormat_setInt32(fmt, k_rate.as_ptr(), 120);
                         if vendor_keys {
-                            let k_qti = CString::new("vendor.qti-ext-dec-low-latency.enable").unwrap();
-                            let k_vlow = CString::new("vendor.low-latency.enable").unwrap();
-                            sys::AMediaFormat_setInt32(fmt, k_qti.as_ptr(), 1);
-                            sys::AMediaFormat_setInt32(fmt, k_vlow.as_ptr(), 1);
+                            for key_str in [
+                                "vendor.qti-ext-dec-low-latency.enable",
+                                "vendor.mtk-ext-dec-low-latency.enable",
+                                "vendor.rtc-ext-dec-low-latency.enable",
+                                "vendor.low-latency.enable",
+                                "vendor.hisi-ext-low-latency-video-dec.video-scene-for-low-latency-req",
+                            ] {
+                                let k = CString::new(key_str).unwrap();
+                                sys::AMediaFormat_setInt32(fmt, k.as_ptr(), 1);
+                            }
                         }
                     }
                 }
@@ -440,6 +626,7 @@ impl AndroidSurfaceDecoder {
                 };
 
                 self.codec = codec;
+                self.drainer = Some(CodecOutputDrainer::spawn(codec));
                 set_diag_codec(actual_name, cand.hardware, low_lat);
                 return Ok(());
             }
@@ -447,69 +634,19 @@ impl AndroidSurfaceDecoder {
         Err(last_err)
     }
 
+    #[inline]
     fn dummy_frame(&self, decode_done_ts: Timestamp) -> DecodedFrame {
         DecodedFrame {
             texture: FrameTexture::Cpu(CpuFrame {
-                width: 1,
-                height: 1,
+                width: 0,
+                height: 0,
                 format: PixelFormat::Bgra8,
-                stride: 4,
-                data: vec![0; 4],
+                stride: 0,
+                data: Vec::new(), // Zero heap allocation
             }),
             decode_done_ts,
             width: self.width,
             height: self.height,
-        }
-    }
-
-    fn drain_outputs(&mut self) -> bool {
-        let mut info = sys::AMediaCodecBufferInfo::default();
-        let mut newest_idx: Option<usize> = None;
-        let mut dropped = 0u64;
-        let mut timeout_us = if DIAG_RENDERED.load(Ordering::Relaxed) == 0 {
-            8_000
-        } else {
-            1_500
-        };
-
-        loop {
-            let idx =
-                unsafe { sys::AMediaCodec_dequeueOutputBuffer(self.codec, &mut info, timeout_us) };
-            if idx >= 0 {
-                timeout_us = 0;
-                let u_idx = idx as usize;
-                if info.size > 0 {
-                    if let Some(prev) = newest_idx.replace(u_idx) {
-                        unsafe {
-                            let _ = sys::AMediaCodec_releaseOutputBuffer(self.codec, prev, false);
-                        }
-                        dropped += 1;
-                    }
-                } else {
-                    unsafe {
-                        let _ = sys::AMediaCodec_releaseOutputBuffer(self.codec, u_idx, false);
-                    }
-                }
-            } else if idx == sys::AMEDIACODEC_INFO_OUTPUT_FORMAT_CHANGED
-                || idx == sys::AMEDIACODEC_INFO_OUTPUT_BUFFERS_CHANGED
-            {
-                continue;
-            } else {
-                break;
-            }
-        }
-
-        if dropped > 0 {
-            DIAG_DROPPED.fetch_add(dropped, Ordering::Relaxed);
-        }
-        if let Some(idx) = newest_idx {
-            unsafe {
-                let _ = sys::AMediaCodec_releaseOutputBuffer(self.codec, idx, true);
-            }
-            DIAG_RENDERED.fetch_add(1, Ordering::Relaxed);
-            true
-        } else {
-            false
         }
     }
 }
@@ -545,7 +682,6 @@ impl Decoder for AndroidSurfaceDecoder {
     ) -> Result<DecodeOutput> {
         let info = inspect_annexb(data);
         if !info.has_vcl && !info.has_csd() {
-            // Host likely has no screen permission and is sending non-H264 FakeEncoder data.
             self.needs_keyframe = true;
             return Ok(DecodeOutput::Nothing);
         }
@@ -567,9 +703,6 @@ impl Decoder for AndroidSurfaceDecoder {
         let window_ptr = window_guard.0;
 
         if window_ptr.is_null() {
-            // Surface detached (e.g. user opened File Transfer / Terminal / backgrounded).
-            // Release codec immediately to save power, and return a placeholder frame so
-            // session_bridge does not misclassify detached UI as a persistent host decode error.
             if !self.codec.is_null() {
                 self.release_codec();
             }
@@ -614,17 +747,23 @@ impl Decoder for AndroidSurfaceDecoder {
             return Ok(DecodeOutput::NeedKeyframe);
         }
 
-        let in_idx = unsafe { sys::AMediaCodec_dequeueInputBuffer(self.codec, 2_000) };
+        // Fast non-blocking / micro-timeout input dequeue; wake output drainer and retry once if full
+        let mut in_idx = unsafe { sys::AMediaCodec_dequeueInputBuffer(self.codec, 1_500) };
         if in_idx < 0 {
-            // Codec busy: drain pending outputs and ask for IDR if reference chain breaks.
-            let _ = self.drain_outputs();
-            self.needs_keyframe = true;
-            DIAG_DROPPED.fetch_add(1, Ordering::Relaxed);
-            return Ok(DecodeOutput::NeedKeyframe);
+            if let Some(ref d) = self.drainer {
+                d.notify_input_queued();
+            }
+            in_idx = unsafe { sys::AMediaCodec_dequeueInputBuffer(self.codec, 3_500) };
+            if in_idx < 0 {
+                self.needs_keyframe = true;
+                DIAG_DROPPED.fetch_add(1, Ordering::Relaxed);
+                return Ok(DecodeOutput::NeedKeyframe);
+            }
         }
 
         let mut cap = 0usize;
-        let buf_ptr = unsafe { sys::AMediaCodec_getInputBuffer(self.codec, in_idx as usize, &mut cap) };
+        let buf_ptr =
+            unsafe { sys::AMediaCodec_getInputBuffer(self.codec, in_idx as usize, &mut cap) };
         if buf_ptr.is_null() || cap < data.len() {
             self.needs_keyframe = true;
             return Ok(DecodeOutput::NeedKeyframe);
@@ -661,7 +800,9 @@ impl Decoder for AndroidSurfaceDecoder {
             self.needs_keyframe = false;
         }
         DIAG_DECODED.fetch_add(1, Ordering::Relaxed);
-        let _ = self.drain_outputs();
+        if let Some(ref d) = self.drainer {
+            d.notify_input_queued();
+        }
 
         Ok(DecodeOutput::Frame(self.dummy_frame(deadline_ts)))
     }
@@ -672,9 +813,13 @@ impl Decoder for AndroidSurfaceDecoder {
 
     fn flush(&mut self) -> Result<()> {
         if !self.codec.is_null() {
+            if let Some(mut d) = self.drainer.take() {
+                d.stop_and_join();
+            }
             unsafe {
                 let _ = sys::AMediaCodec_flush(self.codec);
             }
+            self.drainer = Some(CodecOutputDrainer::spawn(self.codec));
         }
         self.needs_keyframe = true;
         Ok(())
@@ -704,11 +849,11 @@ impl Decoder for AndroidSurfaceDecoder {
     ) -> Result<DecodeOutput> {
         Ok(DecodeOutput::Frame(DecodedFrame {
             texture: FrameTexture::Cpu(CpuFrame {
-                width: 1,
-                height: 1,
+                width: 0,
+                height: 0,
                 format: PixelFormat::Bgra8,
-                stride: 4,
-                data: vec![0; 4],
+                stride: 0,
+                data: Vec::new(),
             }),
             decode_done_ts: deadline_ts,
             width: self.width,

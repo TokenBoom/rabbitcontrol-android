@@ -171,9 +171,12 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_pollSignalEven
     _: JObject,
 ) -> jstring {
     let Some(rt) = runtime::global_runtime() else {
-        return string_to_jstr(&mut env, "{\"snapshot\":{\"enabled\":false,\"state\":\"disabled\"},\"events\":[]}");
+        return ptr::null_mut();
     };
-    string_to_jstr(&mut env, &rt.poll_signal_events().to_string())
+    match rt.poll_signal_events() {
+        Some(val) => string_to_jstr(&mut env, &val.to_string()),
+        None => ptr::null_mut(),
+    }
 }
 
 #[no_mangle]
@@ -238,11 +241,15 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_sendSessionCom
 pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_pollSessionUpdates(
     mut env: JNIEnv,
     _: JObject,
+    include_media: jboolean,
 ) -> jstring {
     let Some(rt) = runtime::global_runtime() else {
-        return string_to_jstr(&mut env, "{\"running\":false,\"updates\":[],\"clipboardTexts\":[]}");
+        return ptr::null_mut();
     };
-    string_to_jstr(&mut env, &rt.poll_session_updates().to_string())
+    match rt.poll_session_updates(include_media != 0) {
+        Some(val) => string_to_jstr(&mut env, &val.to_string()),
+        None => ptr::null_mut(),
+    }
 }
 
 #[no_mangle]
@@ -449,12 +456,12 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_pollHostEvents
     _: JObject,
 ) -> jstring {
     let Some(rt) = runtime::global_runtime() else {
-        return string_to_jstr(
-            &mut env,
-            "{\"running\":false,\"updates\":[],\"encoderCommands\":[],\"inputEvents\":[]}",
-        );
+        return ptr::null_mut();
     };
-    string_to_jstr(&mut env, &rt.poll_host_events().to_string())
+    match rt.poll_host_events() {
+        Some(val) => string_to_jstr(&mut env, &val.to_string()),
+        None => ptr::null_mut(),
+    }
 }
 
 #[no_mangle]
