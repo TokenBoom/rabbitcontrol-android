@@ -237,9 +237,16 @@ impl AndroidRuntime {
                 .ensure_valid_access_token()
                 .map_err(|e| e.to_string())
         });
+        let token_refresher = Arc::new(|failed_token: &str| {
+            let rt = global_runtime().ok_or_else(|| "runtime uninitialized".to_string())?;
+            rt.auth
+                .refresh_after_unauthorized(failed_token)
+                .map_err(|e| e.to_string())
+        });
 
         let opts = SignalClientOptions {
             token_provider: Some(token_provider),
+            token_refresher: Some(token_refresher),
             device_pubkey: Some(self.cert_mgr.device_pubkey_hex()),
             allow_remote_assist: self.host_allow_remote_assist.load(Ordering::Acquire),
             dynamic_lan_discovery: true,
