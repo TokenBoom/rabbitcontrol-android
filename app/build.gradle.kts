@@ -1,7 +1,20 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
 }
+
+val keystorePropsFile = rootProject.file("keystore.properties")
+val keystoreProps = Properties().apply {
+    if (keystorePropsFile.isFile) {
+        keystorePropsFile.inputStream().use { load(it) }
+    }
+}
+
+fun signingProp(envKey: String, propKey: String): String? =
+    System.getenv(envKey)?.takeIf { it.isNotBlank() }
+        ?: keystoreProps.getProperty(propKey)?.takeIf { it.isNotBlank() }
 
 android {
     namespace = "io.rabbitcontrol.android"
@@ -12,9 +25,31 @@ android {
         applicationId = "io.rabbitcontrol.android"
         minSdk = 29
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 2
+        versionName = (project.findProperty("versionName") as String?)?.takeIf { it.isNotBlank() } ?: "0.2.0"
         ndk.abiFilters += "arm64-v8a"
+    }
+
+    signingConfigs {
+        create("release") {
+            val path = signingProp("RELEASE_STORE_FILE", "storeFile")
+            if (path != null) {
+                storeFile = file(path)
+                storePassword = signingProp("RELEASE_STORE_PASSWORD", "storePassword")
+                keyAlias = signingProp("RELEASE_KEY_ALIAS", "keyAlias")
+                keyPassword = signingProp("RELEASE_KEY_PASSWORD", "keyPassword")
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            val releaseSigning = signingConfigs.getByName("release")
+            if (releaseSigning.storeFile?.exists() == true) {
+                signingConfig = releaseSigning
+            }
+        }
     }
 
     buildFeatures {
