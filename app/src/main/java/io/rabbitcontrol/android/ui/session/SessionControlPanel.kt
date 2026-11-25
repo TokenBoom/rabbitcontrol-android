@@ -114,13 +114,13 @@ fun SessionControlPanel(
     onDismiss: () -> Unit,
 ) {
     val state by viewModel.sessionState.collectAsStateWithLifecycle()
+    val diag by viewModel.media.collectAsStateWithLifecycle()
     val prefs by viewModel.prefs.collectAsStateWithLifecycle()
     val sidebarConfig by viewModel.sidebarConfig.collectAsStateWithLifecycle()
     val keymapState by viewModel.keymapState.collectAsStateWithLifecycle()
     var activeTab by remember(initialTab) { mutableStateOf(initialTab) }
 
     val neg = state.negotiated
-    val diag = state.media
     val devTitle = state.deviceName.ifBlank { "控制中心" }
     val telemetry = if (neg != null) {
         val hwTag = if (diag.hardware) "硬解" else "软解"

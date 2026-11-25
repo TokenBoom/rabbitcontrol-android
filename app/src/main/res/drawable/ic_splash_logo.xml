@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 显式声明 288dp 固有画布尺寸，防止 Android 12+ SplashScreen 将内部 PNG 按容器比例放大 -->
+    <item
+        android:width="288dp"
+        android:height="288dp"
+        android:gravity="center">
+        <shape android:shape="rectangle">
+            <size
+                android:width="288dp"
+                android:height="288dp" />
+            <solid android:color="@android:color/transparent" />
+        </shape>
+    </item>
+
+    <!-- 104dp 主品牌图标，位于 160dp/192dp 安全圆区之内，圆角完整且比例克制 -->
+    <item
+        android:width="104dp"
+        android:height="104dp"
+        android:drawable="@drawable/rabbitcontrol"
+        android:gravity="center" />
+</layer-list>

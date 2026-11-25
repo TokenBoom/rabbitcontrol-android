@@ -4,6 +4,7 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import io.rabbitcontrol.android.core.nativebridge.NativeRuntimeBootstrap
 import io.rabbitcontrol.android.core.nativebridge.RemoteDevice
 import io.rabbitcontrol.android.core.nativebridge.ServerConfigModel
 import io.rabbitcontrol.android.core.nativebridge.SignalStatusSnapshot
@@ -11,11 +12,13 @@ import io.rabbitcontrol.android.core.nativebridge.UserProfile
 import io.rabbitcontrol.android.session.Core
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -28,11 +31,23 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
+data class ServerProbeCheck(
+    val healthy: Boolean,
+    val latencyMs: Long,
+    val status: String,
+)
+
 class AccountRepository(context: Context) {
-    private val prefs = context.getSharedPreferences("rabbitcontrol_account", Context.MODE_PRIVATE)
+    private val appContext = context.applicationContext
+    private val prefs = appContext.getSharedPreferences("rabbitcontrol_account", Context.MODE_PRIVATE)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private var tokens: JSONObject? = null
+    @Volatile
+    private var pendingNativeRestoreJob: Job? = null
+    private val appInForeground = MutableStateFlow(true)
+    private val backgroundKeepAlive = MutableStateFlow(false)
+    private val shouldPollSignal = MutableStateFlow(true)
     private val _servers = MutableStateFlow<List<ServerConfigModel>>(emptyList())
     val servers: StateFlow<List<ServerConfigModel>> = _servers.asStateFlow()
 
@@ -66,71 +81,85 @@ class AccountRepository(context: Context) {
         startSignalPoller()
     }
 
+    fun onAppForegroundChanged(inForeground: Boolean) {
+        appInForeground.value = inForeground
+        shouldPollSignal.value = inForeground || backgroundKeepAlive.value
+    }
+
+    fun setBackgroundKeepAlive(keepAlive: Boolean) {
+        backgroundKeepAlive.value = keepAlive
+        shouldPollSignal.value = appInForeground.value || keepAlive
+    }
+
     private fun startSignalPoller() {
         scope.launch {
+            NativeRuntimeBootstrap.ensureReady(appContext)
             while (isActive) {
+                shouldPollSignal.first { it }
                 runCatching {
-                    val raw = JSONObject(Core.pollSignalEvents())
-                    val snapObj = raw.optJSONObject("snapshot")
-                    if (snapObj != null) {
-                        val snap = SignalStatusSnapshot(
-                            enabled = snapObj.optBoolean("enabled", false),
-                            state = snapObj.optString("state", "disabled"),
-                            deviceId = snapObj.optString("deviceId", snapObj.optString("device_id"))
-                                .takeIf { it.isNotBlank() && it != "null" },
-                            deviceIdFormatted = snapObj.optString("deviceIdFormatted", snapObj.optString("device_id_formatted"))
-                                .takeIf { it.isNotBlank() && it != "null" },
-                            lastError = snapObj.optString("errorMessage", snapObj.optString("last_error"))
-                                .takeIf { it.isNotBlank() && it != "null" },
-                        )
-                        val prev = _signalStatus.value
-                        _signalStatus.value = snap
+                    val rawStr = Core.pollSignalEvents()
+                    if (rawStr != null) {
+                        val raw = JSONObject(rawStr)
+                        val snapObj = raw.optJSONObject("snapshot")
+                        if (snapObj != null) {
+                            val snap = SignalStatusSnapshot(
+                                enabled = snapObj.optBoolean("enabled", false),
+                                state = snapObj.optString("state", "disabled"),
+                                deviceId = snapObj.optString("deviceId", snapObj.optString("device_id"))
+                                    .takeIf { it.isNotBlank() && it != "null" },
+                                deviceIdFormatted = snapObj.optString("deviceIdFormatted", snapObj.optString("device_id_formatted"))
+                                    .takeIf { it.isNotBlank() && it != "null" },
+                                lastError = snapObj.optString("errorMessage", snapObj.optString("last_error"))
+                                    .takeIf { it.isNotBlank() && it != "null" },
+                            )
+                            val prev = _signalStatus.value
+                            if (snap != prev) {
+                                _signalStatus.value = snap
+                            }
+                            val active = _server.value
+                            if (!snap.deviceId.isNullOrBlank() && snap.deviceId != prev.deviceId && active != null) {
+                                prefs.edit().putString(deviceIdKey(active), snap.deviceId).apply()
+                            }
+                        }
+                        val rotatedTokens = raw.optJSONObject("sessionTokens")
                         val active = _server.value
-                        if (!snap.deviceId.isNullOrBlank() && active != null) {
-                            prefs.edit().putString(deviceIdKey(active), snap.deviceId).apply()
+                        if (rotatedTokens != null && active != null) {
+                            val curRefresh = tokens?.optString("refresh_token")
+                            val newRefresh = rotatedTokens.optString("refresh_token")
+                            if (newRefresh.isNotBlank() && newRefresh != curRefresh) {
+                                runCatching { saveTokens(rotatedTokens, active) }
+                            }
                         }
-                        if (snap != prev) {
-                            android.util.Log.i("RC_DIAG", "signal snap: state=${snap.state} did=${snap.deviceId} err=${snap.lastError}")
-                        }
-                    }
-                    val rotatedTokens = raw.optJSONObject("sessionTokens")
-                    val active = _server.value
-                    if (rotatedTokens != null && active != null) {
-                        val curRefresh = tokens?.optString("refresh_token")
-                        val newRefresh = rotatedTokens.optString("refresh_token")
-                        if (newRefresh.isNotBlank() && newRefresh != curRefresh) {
-                            runCatching { saveTokens(rotatedTokens, active) }
-                        }
-                    }
-                    val events = raw.optJSONArray("events")
-                    if (events != null && events.length() > 0) {
-                        for (i in 0 until events.length()) {
-                            val ev = events.getJSONObject(i)
-                            when (ev.optString("kind")) {
-                                "device_status" -> {
-                                    val did = ev.optString("device_id")
-                                    val online = ev.optBoolean("online")
-                                    val allowAssist = ev.optBoolean("allow_remote_assist")
-                                    val alias = ev.optString("alias")
-                                    val hostname = ev.optString("hostname")
-                                    val os = ev.optString("os")
-                                    _devices.value = _devices.value.map { d ->
-                                        if (d.id == did) {
-                                            d.copy(
-                                                online = online,
-                                                allowRemoteAssist = allowAssist,
-                                                name = alias.ifBlank { hostname.ifBlank { d.name } },
-                                                os = os.ifBlank { d.os },
-                                            )
-                                        } else {
-                                            d
+                        val events = raw.optJSONArray("events")
+                        if (events != null && events.length() > 0) {
+                            for (i in 0 until events.length()) {
+                                val ev = events.getJSONObject(i)
+                                when (ev.optString("kind")) {
+                                    "device_status" -> {
+                                        val did = ev.optString("device_id")
+                                        val online = ev.optBoolean("online")
+                                        val allowAssist = ev.optBoolean("allow_remote_assist")
+                                        val alias = ev.optString("alias")
+                                        val hostname = ev.optString("hostname")
+                                        val os = ev.optString("os")
+                                        _devices.value = _devices.value.map { d ->
+                                            if (d.id == did) {
+                                                d.copy(
+                                                    online = online,
+                                                    allowRemoteAssist = allowAssist,
+                                                    name = alias.ifBlank { hostname.ifBlank { d.name } },
+                                                    os = os.ifBlank { d.os },
+                                                )
+                                            } else {
+                                                d
+                                            }
                                         }
                                     }
-                                }
-                                "kicked" -> {
-                                    val reason = ev.optString("reason")
-                                    if (reason.isNotBlank()) {
-                                        _kickedNotice.value = reason
+                                    "kicked" -> {
+                                        val reason = ev.optString("reason")
+                                        if (reason.isNotBlank()) {
+                                            _kickedNotice.value = reason
+                                        }
                                     }
                                 }
                             }
@@ -162,6 +191,9 @@ class AccountRepository(context: Context) {
         .put("name", name)
         .put("allowRegistration", allowRegistration)
         .put("authPubkeyHex", authPubkeyHex)
+        .put("apiPort", apiPort)
+        .put("signalPort", signalPort)
+        .put("relayPort", relayPort)
 
     private fun parseServerJson(obj: JSONObject): ServerConfigModel? = runCatching {
         ServerConfigModel(
@@ -171,6 +203,12 @@ class AccountRepository(context: Context) {
             name = obj.optString("name", ""),
             allowRegistration = obj.optBoolean("allowRegistration", true),
             authPubkeyHex = obj.optString("authPubkeyHex", ""),
+            apiPort = obj.optInt("apiPort", ServerConfigModel.DEFAULT_API_PORT)
+                .takeIf { it in 1..65535 } ?: ServerConfigModel.DEFAULT_API_PORT,
+            signalPort = obj.optInt("signalPort", ServerConfigModel.DEFAULT_SIGNAL_PORT)
+                .takeIf { it in 1..65535 } ?: ServerConfigModel.DEFAULT_SIGNAL_PORT,
+            relayPort = obj.optInt("relayPort", ServerConfigModel.DEFAULT_RELAY_PORT)
+                .takeIf { it in 1..65535 } ?: ServerConfigModel.DEFAULT_RELAY_PORT,
         )
     }.getOrNull()
 
@@ -278,12 +316,21 @@ class AccountRepository(context: Context) {
                 .put("address", selected.address)
                 .put("pin", selected.fingerprint)
                 .put("ca", selected.caPem)
+                .put("apiPort", selected.apiPort)
+                .put("signalPort", selected.signalPort)
+                .put("relayPort", selected.relayPort)
                 .put("tokens", parsed)
             if (selected.authPubkeyHex.isNotBlank()) req.put("authPubkeyHex", selected.authPubkeyHex)
             prefs.getString(deviceIdKey(selected), null)?.let { req.put("deviceId", it) }
-            runCatching { Core.account(req.toString()) }
-                .onSuccess { android.util.Log.i("RC_DIAG", "Core.account(restore) ok: $it") }
-                .onFailure { android.util.Log.e("RC_DIAG", "Core.account(restore) failed", it) }
+
+            // Sync tokens into Native Rust asynchronously so SplashScreen dismisses immediately
+            val reqJson = req.toString()
+            pendingNativeRestoreJob?.cancel()
+            pendingNativeRestoreJob = scope.launch {
+                NativeRuntimeBootstrap.ensureReady(appContext)
+                runCatching { Core.account(reqJson) }
+                    .onFailure { android.util.Log.e("RC_DIAG", "Core.account(restore) failed", it) }
+            }
             prof != null
         } catch (e: Exception) {
             android.util.Log.e("RC_DIAG", "restoreForServer(${selected.address}) failed", e)
@@ -296,14 +343,22 @@ class AccountRepository(context: Context) {
         address: String,
         expectedPin: String,
         name: String = "",
+        apiPort: Int? = null,
+        signalPort: Int = ServerConfigModel.DEFAULT_SIGNAL_PORT,
+        relayPort: Int = ServerConfigModel.DEFAULT_RELAY_PORT,
     ): Pair<ServerConfigModel, String> = withContext(Dispatchers.IO) {
         val known = _servers.value.firstOrNull { it.address.equals(address, ignoreCase = true) }
-        val response = request(
-            "probe",
-            null,
-            "address" to address,
-            "pin" to expectedPin.ifBlank { known?.fingerprint.orEmpty() },
-        )
+        val req = JSONObject()
+            .put("action", "probe")
+            .put("address", address)
+            .put("pin", expectedPin.ifBlank { known?.fingerprint.orEmpty() })
+        if (apiPort != null) {
+            req.put("apiPort", apiPort)
+        }
+        NativeRuntimeBootstrap.ensureReady(appContext)
+        val response = JSONObject(Core.account(req.toString()))
+        val resolvedApiPort = response.optInt("apiPort", apiPort ?: ServerConfigModel.DEFAULT_API_PORT)
+            .takeIf { it in 1..65535 } ?: ServerConfigModel.DEFAULT_API_PORT
         val model = ServerConfigModel(
             address = address,
             fingerprint = response.getString("caSha256"),
@@ -311,35 +366,96 @@ class AccountRepository(context: Context) {
             name = name.trim(),
             allowRegistration = response.optBoolean("allowRegistration", true),
             authPubkeyHex = response.optString("authPubkeyHex", ""),
+            apiPort = resolvedApiPort,
+            signalPort = signalPort.takeIf { it in 1..65535 } ?: ServerConfigModel.DEFAULT_SIGNAL_PORT,
+            relayPort = relayPort.takeIf { it in 1..65535 } ?: ServerConfigModel.DEFAULT_RELAY_PORT,
         )
         val health = if (response.getString("status") == "ok") "连接正常" else "服务状态异常"
         val report = "$health · ${response.getLong("elapsedMs")} ms"
         model to report
     }
 
-    /** Upserts [selected] into the saved servers list, switches to it, and returns true if login was restored. */
-    suspend fun saveServer(selected: ServerConfigModel): Boolean = withContext(Dispatchers.IO) {
-        val existingIdx = _servers.value.indexOfFirst { it.address.equals(selected.address, ignoreCase = true) }
-        val updated = _servers.value.toMutableList()
-        if (existingIdx >= 0) {
-            val prev = updated[existingIdx]
-            if (prev.id != selected.id) {
-                prefs.edit()
-                    .remove(tokenKey(prev))
-                    .remove(deviceIdKey(prev))
-                    .remove(emailKey(prev))
-                    .apply()
-            }
-            updated[existingIdx] = selected
-        } else {
-            updated.add(selected)
+    /** Tests connectivity and latency to [target] without modifying active session or saved tokens. */
+    suspend fun testServerConnection(target: ServerConfigModel): ServerProbeCheck =
+        withContext(Dispatchers.IO) {
+            val req = JSONObject()
+                .put("action", "probe")
+                .put("address", target.address)
+                .put("pin", target.fingerprint)
+                .put("apiPort", target.apiPort)
+            NativeRuntimeBootstrap.ensureReady(appContext)
+        val response = JSONObject(Core.account(req.toString()))
+            val status = response.optString("status", "ok")
+            ServerProbeCheck(
+                healthy = status == "ok",
+                latencyMs = response.optLong("elapsedMs", 0L),
+                status = status,
+            )
         }
+
+    /** Upserts [selected] into the saved servers list, switches to it, and returns true if login was restored. */
+    suspend fun saveServer(selected: ServerConfigModel, replaceTargetId: String? = null): Boolean =
+        withContext(Dispatchers.IO) {
+            val existingIdx = _servers.value.indexOfFirst {
+                (replaceTargetId != null && it.id == replaceTargetId) ||
+                    it.address.equals(selected.address, ignoreCase = true)
+            }
+            val updated = _servers.value.toMutableList()
+            if (existingIdx >= 0) {
+                val prev = updated[existingIdx]
+                if (prev.id != selected.id) {
+                    prefs.edit()
+                        .remove(tokenKey(prev))
+                        .remove(deviceIdKey(prev))
+                        .remove(emailKey(prev))
+                        .apply()
+                }
+                updated[existingIdx] = selected
+            } else {
+                updated.add(selected)
+            }
+            persistServers(updated)
+            switchServer(selected)
+        }
+
+    /** Updates metadata and non-API ports for an existing server without re-probing or clearing login tokens. */
+    suspend fun updateServerMetadata(
+        original: ServerConfigModel,
+        name: String,
+        signalPort: Int,
+        relayPort: Int,
+    ) = withContext(Dispatchers.IO) {
+        val next = original.copy(
+            name = name.trim(),
+            signalPort = signalPort.takeIf { it in 1..65535 } ?: ServerConfigModel.DEFAULT_SIGNAL_PORT,
+            relayPort = relayPort.takeIf { it in 1..65535 } ?: ServerConfigModel.DEFAULT_RELAY_PORT,
+        )
+        val updated = _servers.value.map { if (it.id == original.id) next else it }
         persistServers(updated)
-        switchServer(selected)
+        if (_server.value?.id == original.id) {
+            _server.value = next
+            val currentTokens = tokens
+            if (currentTokens != null) {
+                val syncReq = JSONObject()
+                    .put("action", "restore")
+                    .put("address", next.address)
+                    .put("pin", next.fingerprint)
+                    .put("ca", next.caPem)
+                    .put("apiPort", next.apiPort)
+                    .put("signalPort", next.signalPort)
+                    .put("relayPort", next.relayPort)
+                    .put("tokens", currentTokens)
+                if (next.authPubkeyHex.isNotBlank()) syncReq.put("authPubkeyHex", next.authPubkeyHex)
+                prefs.getString(deviceIdKey(next), null)?.let { syncReq.put("deviceId", it) }
+                runCatching { Core.account(syncReq.toString()) }
+            }
+        }
     }
 
     /** Switches active server, stops previous signal/session, and attempts to restore saved tokens for [target]. */
     suspend fun switchServer(target: ServerConfigModel): Boolean = withContext(Dispatchers.IO) {
+        pendingNativeRestoreJob?.cancel()
+        NativeRuntimeBootstrap.ensureReady(appContext)
         runCatching { Core.account(JSONObject().put("action", "disconnect").toString()) }
         prefs.edit().putString(KEY_ACTIVE_SERVER_ID, target.id).commit()
         tokens = null
@@ -417,7 +533,7 @@ class AccountRepository(context: Context) {
         }
 
     suspend fun refreshDevices(): List<RemoteDevice> = withContext(Dispatchers.IO) {
-        android.util.Log.i("RC_DIAG", "refreshDevices start")
+        pendingNativeRestoreJob?.join()
         val selected = checkNotNull(_server.value) { "请先配置服务器" }
         val raw = authenticated {
             request("devices", selected, "access" to it.getString("access_token"))
@@ -507,6 +623,9 @@ class AccountRepository(context: Context) {
                 .put("address", selected.address)
                 .put("pin", selected.fingerprint)
                 .put("ca", selected.caPem)
+                .put("apiPort", selected.apiPort)
+                .put("signalPort", selected.signalPort)
+                .put("relayPort", selected.relayPort)
                 .put("tokens", refreshed)
             prefs.getString(deviceIdKey(selected), null)?.let { syncReq.put("deviceId", it) }
             runCatching { Core.account(syncReq.toString()) }
@@ -515,9 +634,15 @@ class AccountRepository(context: Context) {
     }
 
     private fun request(action: String, selected: ServerConfigModel?, vararg args: Pair<String, String>): JSONObject {
+        NativeRuntimeBootstrap.ensureReady(appContext)
         val req = JSONObject().put("action", action)
         selected?.let {
-            req.put("address", it.address).put("ca", it.caPem).put("pin", it.fingerprint)
+            req.put("address", it.address)
+                .put("ca", it.caPem)
+                .put("pin", it.fingerprint)
+                .put("apiPort", it.apiPort)
+                .put("signalPort", it.signalPort)
+                .put("relayPort", it.relayPort)
             if (it.authPubkeyHex.isNotBlank()) req.put("authPubkeyHex", it.authPubkeyHex)
             prefs.getString(deviceIdKey(it), null)?.let { did -> req.put("deviceId", did) }
         }

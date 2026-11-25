@@ -1,6 +1,7 @@
 package io.rabbitcontrol.android.core.data
 
 import android.content.Context
+import androidx.compose.runtime.Immutable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -28,6 +29,7 @@ enum class AppThemeMode(val label: String) {
     Dark("深色"),
 }
 
+@Immutable
 data class InteractionPrefs(
     val touchMode: TouchInputMode = TouchInputMode.Trackpad,
     val pointerSensitivity: Float = 1.15f,

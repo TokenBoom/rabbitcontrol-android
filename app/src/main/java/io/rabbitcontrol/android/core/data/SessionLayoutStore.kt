@@ -1,6 +1,7 @@
 package io.rabbitcontrol.android.core.data
 
 import android.content.Context
+import androidx.compose.runtime.Immutable
 import io.rabbitcontrol.android.core.input.ScancodeMapper
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -54,6 +55,7 @@ enum class QuickActionKind(
     Empty("空槽位 (点击配置)", "自定义", QuickActionCategory.Other),
 }
 
+@Immutable
 data class SidebarConfig(
     val leftSlots: List<QuickActionKind> = listOf(
         QuickActionKind.HoldRightClick,
@@ -78,6 +80,7 @@ enum class VirtualKeyKind {
     QuickAction,
 }
 
+@Immutable
 data class VirtualKeyItem(
     val id: String,
     val label: String,
@@ -92,12 +95,14 @@ data class VirtualKeyItem(
     val sizeDp: Int = 54,
 )
 
+@Immutable
 data class KeyMapProfile(
     val id: String,
     val name: String,
     val items: List<VirtualKeyItem>,
 )
 
+@Immutable
 data class KeyMapState(
     val enabled: Boolean = false,
     val opacity: Float = 0.62f,

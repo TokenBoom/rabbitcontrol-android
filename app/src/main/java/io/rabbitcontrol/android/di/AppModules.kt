@@ -9,6 +9,7 @@ import io.rabbitcontrol.android.core.data.WallpaperCache
 import io.rabbitcontrol.android.core.host.HostManager
 import io.rabbitcontrol.android.core.session.ClipboardSyncBridge
 import io.rabbitcontrol.android.core.session.SessionManager
+import io.rabbitcontrol.android.core.update.AppUpdateManager
 import io.rabbitcontrol.android.ui.screens.auth.AuthViewModel
 import io.rabbitcontrol.android.ui.screens.detail.DeviceDetailViewModel
 import io.rabbitcontrol.android.ui.screens.home.HomeViewModel
@@ -27,6 +28,7 @@ val dataModule = module {
     single { WallpaperCache(androidContext()) }
     single { InteractionPrefsStore(androidContext()) }
     single { SessionLayoutStore(androidContext()) }
+    single { AppUpdateManager(androidContext()) }
 }
 
 val sessionModule = module {

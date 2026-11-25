@@ -1,6 +1,7 @@
 package io.rabbitcontrol.android.ui.screens.auth
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -27,6 +28,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Label
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Badge
@@ -34,14 +36,20 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Dns
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Key
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.NetworkCheck
 import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -59,29 +67,28 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.rabbitcontrol.android.R
 import io.rabbitcontrol.android.core.nativebridge.ServerConfigModel
+import io.rabbitcontrol.android.ui.components.ProvideRabbitTextToolbar
 import io.rabbitcontrol.android.ui.components.RabbitCard
 import io.rabbitcontrol.android.ui.components.RabbitDialog
 import io.rabbitcontrol.android.ui.components.RabbitPrimaryButton
 import io.rabbitcontrol.android.ui.components.RabbitSecondaryButton
-import io.rabbitcontrol.android.ui.components.RabbitSegmentedControl
 import io.rabbitcontrol.android.ui.components.RabbitStatusPill
 import io.rabbitcontrol.android.ui.components.RabbitTextField
+import io.rabbitcontrol.android.ui.components.RabbitToast
+import io.rabbitcontrol.android.ui.components.RabbitToastModalOverlay
 import io.rabbitcontrol.android.ui.components.RabbitTopBar
 import io.rabbitcontrol.android.ui.components.StatusTone
 import io.rabbitcontrol.android.ui.theme.LocalRabbitPalette
+import io.rabbitcontrol.android.ui.theme.RabbitElevation
 import io.rabbitcontrol.android.ui.theme.RabbitRadius
 import io.rabbitcontrol.android.ui.theme.RabbitSpacing
 import org.koin.androidx.compose.koinViewModel
-
-private enum class AuthTabOption(val label: String) {
-    Login("账号登录"),
-    Register("注册新账号"),
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -100,8 +107,8 @@ fun AuthScreen(
     val savedEmails by viewModel.savedAccountEmails.collectAsStateWithLifecycle()
 
     var pendingDeleteServer by remember { mutableStateOf<ServerConfigModel?>(null) }
-    var showAddServerSheet by remember { mutableStateOf(false) }
-    var expandCaPin by remember { mutableStateOf(false) }
+    var showServerSheet by remember { mutableStateOf(false) }
+    var expandAdvanced by remember { mutableStateOf(false) }
 
     LaunchedEffect(initialStep) {
         viewModel.init(initialStep)
@@ -109,21 +116,26 @@ fun AuthScreen(
 
     LaunchedEffect(state.step) {
         if (state.step != AuthStep.Server) {
-            showAddServerSheet = false
+            showServerSheet = false
         }
     }
 
-    val (topTitle, topSubtitle) = when (state.step) {
-        AuthStep.Server -> "服务器管理" to if (servers.isNotEmpty()) {
-            "共 ${servers.size} 台 · 点击切换服务器"
-        } else {
-            "连接控制服务端以同步设备"
+    LaunchedEffect(state.error) {
+        val err = state.error
+        if (!err.isNullOrBlank()) {
+            RabbitToast.error(err)
+            viewModel.clearError()
         }
-        AuthStep.Trust -> "确认服务器指纹" to (state.candidateServer?.address ?: "")
-        AuthStep.Login -> "账号登录" to "登录以同步设备与免密凭证"
-        AuthStep.Register -> "注册新账号" to "注册后将自动登录并绑定本机"
-        AuthStep.Password -> "设置新密码" to "首次登录需修改初始密码"
     }
+
+    LaunchedEffect(state.step, state.allowRegistration) {
+        if (state.step == AuthStep.Register && !state.allowRegistration) {
+            RabbitToast.warning("管理员已关闭自助注册，请联系管理员开通")
+        }
+    }
+
+    val isCredentialStep = state.step == AuthStep.Login || state.step == AuthStep.Register
+    val isEmptyServerOnboarding = state.step == AuthStep.Server && servers.isEmpty()
 
     Column(
         modifier = Modifier
@@ -136,7 +148,7 @@ fun AuthScreen(
             state.step == AuthStep.Trust -> {
                 {
                     viewModel.backFromTrust()
-                    if (servers.isNotEmpty()) showAddServerSheet = true
+                    if (servers.isNotEmpty()) showServerSheet = true
                 }
             }
             canNavigateBack -> onBack
@@ -153,31 +165,162 @@ fun AuthScreen(
             topBarBack?.invoke()
         }
 
-        RabbitTopBar(
-            title = topTitle,
-            subtitle = topSubtitle.takeIf { it.isNotBlank() },
-            onBack = topBarBack,
-            actions = {
-                if (state.step == AuthStep.Server && servers.isNotEmpty()) {
-                    Row(
-                        modifier = Modifier
-                            .height(34.dp)
-                            .clip(RoundedCornerShape(RabbitRadius.Pill))
-                            .background(palette.primarySoft)
-                            .clickable {
-                                viewModel.clearError()
-                                showAddServerSheet = true
-                            }
-                            .padding(horizontal = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        if (isCredentialStep || isEmptyServerOnboarding) {
+            val srvLabel = if (isCredentialStep) {
+                activeServer?.displayName ?: state.savedServerAddress
+            } else {
+                null
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .defaultMinSize(minHeight = 56.dp)
+                    .padding(horizontal = RabbitSpacing.Sm, vertical = RabbitSpacing.Xs),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (topBarBack != null) {
+                    IconButton(
+                        onClick = topBarBack,
+                        modifier = Modifier.size(48.dp),
                     ) {
-                        Icon(Icons.Rounded.Add, null, tint = palette.primaryText, modifier = Modifier.size(16.dp))
-                        Text("添加", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = palette.primaryText)
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                            contentDescription = "返回",
+                            tint = palette.text,
+                        )
                     }
                 }
-            },
-        )
+                Spacer(modifier = Modifier.weight(1f))
+                if (!srvLabel.isNullOrBlank()) {
+                    Surface(
+                        onClick = viewModel::goToServerEdit,
+                        shape = RoundedCornerShape(RabbitRadius.Pill),
+                        color = palette.surface,
+                        tonalElevation = 0.dp,
+                        shadowElevation = RabbitElevation.Card,
+                        border = BorderStroke(1.dp, palette.line),
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Dns,
+                                contentDescription = null,
+                                tint = palette.primaryText,
+                                modifier = Modifier.size(15.dp),
+                            )
+                            Text(
+                                text = srvLabel,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = palette.text,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.widthIn(max = 180.dp),
+                            )
+                            Icon(
+                                imageVector = Icons.Rounded.KeyboardArrowDown,
+                                contentDescription = "切换服务器",
+                                tint = palette.muted,
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.width(RabbitSpacing.Sm))
+                }
+            }
+        } else {
+            val (topTitle, topSubtitle) = when (state.step) {
+                AuthStep.Server -> "服务器管理" to if (servers.isNotEmpty()) {
+                    "共 ${servers.size} 台 · 点击切换服务器"
+                } else {
+                    "连接控制服务端以同步设备"
+                }
+                AuthStep.Trust -> "确认服务器指纹" to (state.candidateServer?.let { srv ->
+                    if (srv.apiPort != ServerConfigModel.DEFAULT_API_PORT) "${srv.address} · API ${srv.apiPort}" else srv.address
+                } ?: "")
+                AuthStep.Password -> "设置新密码" to "首次登录需修改初始密码"
+                else -> "" to ""
+            }
+
+            RabbitTopBar(
+                title = topTitle,
+                subtitle = topSubtitle.takeIf { it.isNotBlank() },
+                onBack = topBarBack,
+                actions = {
+                    if (state.step == AuthStep.Server && servers.isNotEmpty()) {
+                        val anyTesting = state.serverTests.values.any { it is ServerTestState.Testing }
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .height(34.dp)
+                                    .clip(RoundedCornerShape(RabbitRadius.Pill))
+                                    .background(palette.surface)
+                                    .border(1.dp, palette.line, RoundedCornerShape(RabbitRadius.Pill))
+                                    .clickable(enabled = !anyTesting) {
+                                        viewModel.testAllServers { ok, total ->
+                                            if (ok == total) {
+                                                RabbitToast.success("测速完成 · $ok/$total 台可用")
+                                            } else if (ok > 0) {
+                                                RabbitToast.warning("测速完成 · $ok/$total 台可用")
+                                            } else {
+                                                RabbitToast.error("全部服务器连接失败，请检查网络")
+                                            }
+                                        }
+                                    }
+                                    .padding(horizontal = 11.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                if (anyTesting) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(13.dp),
+                                        color = palette.primaryText,
+                                        strokeWidth = 1.6.dp,
+                                    )
+                                } else {
+                                    Icon(
+                                        Icons.Rounded.NetworkCheck,
+                                        null,
+                                        tint = palette.text,
+                                        modifier = Modifier.size(15.dp),
+                                    )
+                                }
+                                Text(
+                                    text = if (anyTesting) "测速中" else "测速",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = palette.text,
+                                )
+                            }
+
+                            Row(
+                                modifier = Modifier
+                                    .height(34.dp)
+                                    .clip(RoundedCornerShape(RabbitRadius.Pill))
+                                    .background(palette.primarySoft)
+                                    .clickable {
+                                        viewModel.startAddServer()
+                                        expandAdvanced = false
+                                        showServerSheet = true
+                                    }
+                                    .padding(horizontal = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Icon(Icons.Rounded.Add, null, tint = palette.primaryText, modifier = Modifier.size(16.dp))
+                                Text("添加", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = palette.primaryText)
+                            }
+                        }
+                    }
+                },
+            )
+        }
 
         Column(
             modifier = Modifier
@@ -199,6 +342,8 @@ fun AuthScreen(
                                 servers.forEach { srv ->
                                     val isActive = srv.id == activeServer?.id
                                     val email = savedEmails[srv.id]
+                                    val testState = state.serverTests[srv.id]
+                                    val isTesting = testState is ServerTestState.Testing
                                     RabbitCard(
                                         onClick = if (!state.busy) {
                                             { viewModel.selectSavedServer(srv, onAuthenticated) }
@@ -206,7 +351,7 @@ fun AuthScreen(
                                             null
                                         },
                                         borderColor = if (isActive) palette.primary else palette.line,
-                                        contentPadding = PaddingValues(start = 14.dp, end = 6.dp, top = 12.dp, bottom = 12.dp),
+                                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
                                         modifier = Modifier.fillMaxWidth(),
                                     ) {
                                         Row(
@@ -257,6 +402,17 @@ fun AuthScreen(
                                                         overflow = TextOverflow.Ellipsis,
                                                     )
                                                 }
+                                                srv.customPortsSummary()?.let { portSummary ->
+                                                    Spacer(modifier = Modifier.height(2.dp))
+                                                    Text(
+                                                        text = portSummary,
+                                                        fontSize = 11.sp,
+                                                        fontFamily = FontFamily.Monospace,
+                                                        color = palette.muted,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis,
+                                                    )
+                                                }
                                                 Spacer(modifier = Modifier.height(2.dp))
                                                 Text(
                                                     text = email ?: "点击登录此服务器",
@@ -266,77 +422,188 @@ fun AuthScreen(
                                                     overflow = TextOverflow.Ellipsis,
                                                 )
                                             }
-                                            IconButton(
-                                                onClick = { pendingDeleteServer = srv },
-                                                modifier = Modifier.size(40.dp),
+                                        }
+
+                                        Spacer(modifier = Modifier.height(10.dp))
+                                        HorizontalDivider(color = palette.line, thickness = 1.dp)
+                                        Spacer(modifier = Modifier.height(8.dp))
+
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            Box(modifier = Modifier.weight(1f)) {
+                                                when (testState) {
+                                                    is ServerTestState.Testing -> {
+                                                        Row(
+                                                            verticalAlignment = Alignment.CenterVertically,
+                                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                        ) {
+                                                            CircularProgressIndicator(
+                                                                modifier = Modifier.size(13.dp),
+                                                                color = palette.primaryText,
+                                                                strokeWidth = 1.6.dp,
+                                                            )
+                                                            Text(
+                                                                text = "正在测试连通性…",
+                                                                fontSize = 12.sp,
+                                                                color = palette.muted,
+                                                            )
+                                                        }
+                                                    }
+                                                    is ServerTestState.Reachable -> {
+                                                        val (label, tone) = when {
+                                                            !testState.healthy -> "服务异常 · ${testState.latencyMs} ms" to StatusTone.Warning
+                                                            testState.latencyMs < 150 -> "延迟 ${testState.latencyMs} ms" to StatusTone.Success
+                                                            testState.latencyMs <= 400 -> "延迟 ${testState.latencyMs} ms" to StatusTone.Warning
+                                                            else -> "延迟 ${testState.latencyMs} ms" to StatusTone.Danger
+                                                        }
+                                                        RabbitStatusPill(label = label, tone = tone)
+                                                    }
+                                                    is ServerTestState.Failed -> {
+                                                        RabbitStatusPill(label = "连接失败", tone = StatusTone.Danger)
+                                                    }
+                                                    null -> {
+                                                        Text(
+                                                            text = "未测速",
+                                                            fontSize = 11.sp,
+                                                            color = palette.muted,
+                                                        )
+                                                    }
+                                                }
+                                            }
+
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(4.dp),
                                             ) {
-                                                Icon(
-                                                    Icons.Rounded.DeleteOutline,
-                                                    contentDescription = "删除服务器",
-                                                    tint = palette.muted,
-                                                    modifier = Modifier.size(18.dp),
-                                                )
+                                                Row(
+                                                    modifier = Modifier
+                                                        .height(30.dp)
+                                                        .clip(RoundedCornerShape(RabbitRadius.Pill))
+                                                        .background(palette.primarySoft)
+                                                        .clickable(enabled = !isTesting) {
+                                                            viewModel.testServer(srv) { res ->
+                                                                when (res) {
+                                                                    is ServerTestState.Reachable -> {
+                                                                        if (res.healthy) {
+                                                                            RabbitToast.success("${srv.displayName} 连通正常 · ${res.latencyMs} ms")
+                                                                        } else {
+                                                                            RabbitToast.warning("${srv.displayName} 服务状态异常 · ${res.latencyMs} ms")
+                                                                        }
+                                                                    }
+                                                                    is ServerTestState.Failed -> {
+                                                                        RabbitToast.error(res.message)
+                                                                    }
+                                                                    ServerTestState.Testing -> Unit
+                                                                }
+                                                            }
+                                                        }
+                                                        .padding(horizontal = 10.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Rounded.NetworkCheck,
+                                                        contentDescription = "测试服务器连通性",
+                                                        tint = palette.primaryText,
+                                                        modifier = Modifier.size(14.dp),
+                                                    )
+                                                    Text(
+                                                        text = if (isTesting) "测试中" else "测试",
+                                                        fontSize = 12.sp,
+                                                        fontWeight = FontWeight.Medium,
+                                                        color = palette.primaryText,
+                                                    )
+                                                }
+                                                IconButton(
+                                                    onClick = {
+                                                        viewModel.startEditServer(srv)
+                                                        expandAdvanced = srv.hasCustomPorts
+                                                        showServerSheet = true
+                                                    },
+                                                    modifier = Modifier.size(32.dp),
+                                                ) {
+                                                    Icon(
+                                                        Icons.Rounded.Edit,
+                                                        contentDescription = "编辑服务器",
+                                                        tint = palette.muted,
+                                                        modifier = Modifier.size(17.dp),
+                                                    )
+                                                }
+                                                IconButton(
+                                                    onClick = { pendingDeleteServer = srv },
+                                                    modifier = Modifier.size(32.dp),
+                                                ) {
+                                                    Icon(
+                                                        Icons.Rounded.DeleteOutline,
+                                                        contentDescription = "删除服务器",
+                                                        tint = palette.muted,
+                                                        modifier = Modifier.size(17.dp),
+                                                    )
+                                                }
                                             }
                                         }
                                     }
                                 }
                             }
 
-                            if (!showAddServerSheet && !state.error.isNullOrBlank()) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(RabbitRadius.Md))
-                                        .background(palette.dangerSoft)
-                                        .padding(12.dp),
-                                ) {
-                                    Text(state.error.orEmpty(), color = palette.danger, fontSize = 13.sp)
-                                }
-                            }
-
                             RabbitSecondaryButton(
                                 label = "添加新服务器",
                                 onClick = {
-                                    viewModel.clearError()
-                                    showAddServerSheet = true
+                                    viewModel.startAddServer()
+                                    expandAdvanced = false
+                                    showServerSheet = true
                                 },
                                 modifier = Modifier.fillMaxWidth(),
                             )
                         } else {
-                            // First-time onboarding server form: compact horizontal header + form card
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(vertical = 4.dp),
+                                    .padding(horizontal = 4.dp),
                             ) {
+                                Spacer(modifier = Modifier.height(16.dp))
                                 Image(
                                     painter = painterResource(R.drawable.rabbitcontrol),
                                     contentDescription = null,
                                     modifier = Modifier
-                                        .size(40.dp)
-                                        .clip(RoundedCornerShape(10.dp)),
+                                        .size(48.dp)
+                                        .clip(RoundedCornerShape(13.dp)),
                                 )
-                                Column {
-                                    Text("连接 RabbitControl 服务器", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
-                                    Text("输入私有或公网服务端地址，默认端口 21118", fontSize = 12.sp, color = palette.muted)
-                                }
-                            }
-                            RabbitCard(modifier = Modifier.fillMaxWidth()) {
+                                Spacer(modifier = Modifier.height(16.dp))
+                                Text(
+                                    text = "连接服务器",
+                                    fontSize = 23.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = palette.text,
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = "输入私有或公网服务端地址，默认端口 21118",
+                                    fontSize = 13.sp,
+                                    color = palette.muted,
+                                )
+                                Spacer(modifier = Modifier.height(28.dp))
                                 ServerFormContent(
                                     serverAddress = state.serverAddress,
                                     onAddressChange = viewModel::updateServerAddress,
                                     serverName = state.serverName,
                                     onNameChange = viewModel::updateServerName,
+                                    apiPort = state.apiPort,
+                                    onApiPortChange = viewModel::updateApiPort,
+                                    signalPort = state.signalPort,
+                                    onSignalPortChange = viewModel::updateSignalPort,
+                                    relayPort = state.relayPort,
+                                    onRelayPortChange = viewModel::updateRelayPort,
                                     caPin = state.caPin,
                                     onCaPinChange = viewModel::updateCaPin,
-                                    expandCaPin = expandCaPin,
-                                    onToggleExpandCaPin = { expandCaPin = !expandCaPin },
+                                    expandAdvanced = expandAdvanced,
+                                    onToggleExpandAdvanced = { expandAdvanced = !expandAdvanced },
                                     busy = state.busy,
-                                    error = state.error,
-                                    submitLabel = if (state.busy) "正在校验服务器…" else "校验服务器",
-                                    onSubmit = viewModel::probeServer,
+                                    submitLabel = if (state.busy) "正在校验服务器…" else "校验并连接",
+                                    submitHeight = 50.dp,
+                                    onSubmit = { viewModel.probeServer() },
                                 )
                             }
                         }
@@ -401,99 +668,54 @@ fun AuthScreen(
                                 onClick = {
                                     viewModel.backFromTrust()
                                     if (servers.isNotEmpty()) {
-                                        showAddServerSheet = true
+                                        showServerSheet = true
                                     }
                                 },
                                 modifier = Modifier.fillMaxWidth(),
                             )
-                            if (!state.error.isNullOrBlank()) {
-                                Spacer(modifier = Modifier.height(12.dp))
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(RabbitRadius.Md))
-                                        .background(palette.dangerSoft)
-                                        .padding(12.dp),
-                                ) {
-                                    Text(state.error.orEmpty(), color = palette.danger, fontSize = 13.sp)
-                                }
-                            }
                         }
                     }
 
                     AuthStep.Login, AuthStep.Register -> {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        val isLogin = state.step == AuthStep.Login
+                        Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 2.dp),
+                                .padding(horizontal = 4.dp),
                         ) {
+                            Spacer(modifier = Modifier.height(16.dp))
                             Image(
                                 painter = painterResource(R.drawable.rabbitcontrol),
                                 contentDescription = null,
                                 modifier = Modifier
-                                    .size(36.dp)
-                                    .clip(RoundedCornerShape(9.dp)),
-                            )
-                            Column {
-                                Text("RabbitControl", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
-                                Text(
-                                    if (state.step == AuthStep.Login) "登录账号以同步设备列表" else "注册后自动绑定本机",
-                                    fontSize = 12.sp,
-                                    color = palette.muted,
-                                )
-                            }
-                        }
-
-                        RabbitCard(modifier = Modifier.fillMaxWidth()) {
-                            val srvLabel = activeServer?.displayName ?: state.savedServerAddress
-                            if (!srvLabel.isNullOrBlank()) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(RabbitRadius.Md))
-                                        .background(palette.field)
-                                        .border(1.dp, palette.line, RoundedCornerShape(RabbitRadius.Md))
-                                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Icon(Icons.Rounded.Dns, null, tint = palette.primaryText, modifier = Modifier.size(18.dp))
-                                    Spacer(modifier = Modifier.width(10.dp))
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text("当前服务器", fontSize = 11.sp, color = palette.muted)
-                                        Text(srvLabel, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = palette.text)
-                                    }
-                                    Text(
-                                        "切换服务器",
-                                        color = palette.primaryText,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(RabbitRadius.Sm))
-                                            .background(palette.primarySoft)
-                                            .clickable { viewModel.goToServerEdit() }
-                                            .padding(horizontal = 10.dp, vertical = 7.dp),
-                                    )
-                                }
-                                Spacer(modifier = Modifier.height(14.dp))
-                            }
-
-                            val currentTab = if (state.step == AuthStep.Register) AuthTabOption.Register else AuthTabOption.Login
-                            RabbitSegmentedControl(
-                                options = AuthTabOption.entries,
-                                selected = currentTab,
-                                labelProvider = { it.label },
-                                onSelect = { tab -> viewModel.switchAuthMode(register = tab == AuthTabOption.Register) },
+                                    .size(48.dp)
+                                    .clip(RoundedCornerShape(13.dp)),
                             )
                             Spacer(modifier = Modifier.height(16.dp))
+                            Text(
+                                text = if (isLogin) "欢迎使用 RabbitControl" else "创建新账号",
+                                fontSize = 23.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = palette.text,
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = if (isLogin) {
+                                    "登录账号以同步设备与免密连接"
+                                } else {
+                                    "注册后将自动登录并绑定当前设备"
+                                },
+                                fontSize = 13.sp,
+                                color = palette.muted,
+                            )
+                            Spacer(modifier = Modifier.height(28.dp))
 
-                            if (state.step == AuthStep.Login) {
+                            if (isLogin) {
                                 RabbitTextField(
                                     value = state.email,
                                     onValueChange = viewModel::updateEmail,
                                     label = "邮箱",
-                                    placeholder = "请输入邮箱",
+                                    placeholder = "请输入邮箱地址",
                                     leadingIcon = { Icon(Icons.Rounded.Person, null, tint = palette.muted) },
                                     keyboardType = KeyboardType.Email,
                                 )
@@ -506,29 +728,22 @@ fun AuthScreen(
                                     leadingIcon = { Icon(Icons.Rounded.Key, null, tint = palette.muted) },
                                     isPassword = true,
                                 )
-                                Spacer(modifier = Modifier.height(18.dp))
+                                Spacer(modifier = Modifier.height(24.dp))
                                 RabbitPrimaryButton(
                                     label = if (state.busy) "正在登录…" else "登录",
                                     busy = state.busy,
+                                    height = 50.dp,
                                     onClick = { viewModel.login(onAuthenticated) },
                                     modifier = Modifier.fillMaxWidth(),
                                 )
                             } else {
                                 if (!state.allowRegistration) {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clip(RoundedCornerShape(RabbitRadius.Md))
-                                            .background(palette.dangerSoft)
-                                            .padding(12.dp),
-                                    ) {
-                                        Text(
-                                            "管理员已关闭自助注册，请联系管理员开通",
-                                            color = palette.danger,
-                                            fontSize = 13.sp,
-                                        )
-                                    }
-                                    Spacer(modifier = Modifier.height(14.dp))
+                                    Text(
+                                        text = "当前服务器未开放自助注册，请联系管理员开通",
+                                        color = palette.muted,
+                                        fontSize = 12.sp,
+                                    )
+                                    Spacer(modifier = Modifier.height(12.dp))
                                 }
                                 RabbitTextField(
                                     value = state.email,
@@ -564,27 +779,38 @@ fun AuthScreen(
                                     leadingIcon = { Icon(Icons.Rounded.Key, null, tint = palette.muted) },
                                     isPassword = true,
                                 )
-                                Spacer(modifier = Modifier.height(18.dp))
+                                Spacer(modifier = Modifier.height(24.dp))
                                 RabbitPrimaryButton(
                                     label = if (state.busy) "正在注册…" else "注册并登录",
                                     busy = state.busy,
                                     enabled = state.allowRegistration,
+                                    height = 50.dp,
                                     onClick = { viewModel.register(onAuthenticated) },
                                     modifier = Modifier.fillMaxWidth(),
                                 )
                             }
 
-                            if (!state.error.isNullOrBlank()) {
-                                Spacer(modifier = Modifier.height(12.dp))
-                                Box(
+                            Spacer(modifier = Modifier.height(20.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = if (isLogin) "还没有账号？" else "已有账号？",
+                                    fontSize = 13.sp,
+                                    color = palette.muted,
+                                )
+                                Text(
+                                    text = if (isLogin) "立即注册" else "去登录",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = palette.primaryText,
                                     modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(RabbitRadius.Md))
-                                        .background(palette.dangerSoft)
-                                        .padding(12.dp),
-                                ) {
-                                    Text(state.error.orEmpty(), color = palette.danger, fontSize = 13.sp)
-                                }
+                                        .clip(RoundedCornerShape(RabbitRadius.Sm))
+                                        .clickable { viewModel.switchAuthMode(register = isLogin) }
+                                        .padding(horizontal = 6.dp, vertical = 4.dp),
+                                )
                             }
                         }
                     }
@@ -621,18 +847,6 @@ fun AuthScreen(
                                 onClick = { viewModel.changePassword(onAuthenticated) },
                                 modifier = Modifier.fillMaxWidth(),
                             )
-                            if (!state.error.isNullOrBlank()) {
-                                Spacer(modifier = Modifier.height(12.dp))
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(RabbitRadius.Md))
-                                        .background(palette.dangerSoft)
-                                        .padding(12.dp),
-                                ) {
-                                    Text(state.error.orEmpty(), color = palette.danger, fontSize = 13.sp)
-                                }
-                            }
                         }
                     }
                 }
@@ -641,58 +855,80 @@ fun AuthScreen(
         }
     }
 
-    if (showAddServerSheet && state.step == AuthStep.Server) {
+    if (showServerSheet && state.step == AuthStep.Server) {
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        val editing = state.editingServer
+        val submitText = when {
+            state.busy -> if (editing != null && !viewModel.needsReprobeForEdit(editing)) "正在保存…" else "正在校验服务器…"
+            editing != null && !viewModel.needsReprobeForEdit(editing) -> "保存修改"
+            editing != null -> "重新校验并保存"
+            else -> "校验并添加"
+        }
         ModalBottomSheet(
-            onDismissRequest = { showAddServerSheet = false },
+            onDismissRequest = { showServerSheet = false },
             sheetState = sheetState,
             containerColor = palette.surface,
             tonalElevation = 0.dp,
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-                    .navigationBarsPadding()
-                    .imePadding()
-                    .padding(horizontal = RabbitSpacing.Xl)
-                    .padding(bottom = 20.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
+            ProvideRabbitTextToolbar {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .navigationBarsPadding()
+                        .imePadding()
+                        .padding(horizontal = RabbitSpacing.Xl)
+                        .padding(bottom = 20.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Text(
-                        "添加新服务器",
-                        fontSize = 17.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = palette.text,
-                        modifier = Modifier.weight(1f),
-                    )
-                    IconButton(
-                        onClick = { showAddServerSheet = false },
-                        modifier = Modifier.size(36.dp),
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Icon(Icons.Rounded.Close, "关闭", tint = palette.muted, modifier = Modifier.size(18.dp))
+                        Text(
+                            text = if (editing != null) "编辑服务器" else "添加新服务器",
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = palette.text,
+                            modifier = Modifier.weight(1f),
+                        )
+                        IconButton(
+                            onClick = { showServerSheet = false },
+                            modifier = Modifier.size(36.dp),
+                        ) {
+                            Icon(Icons.Rounded.Close, "关闭", tint = palette.muted, modifier = Modifier.size(18.dp))
+                        }
                     }
-                }
 
-                ServerFormContent(
-                    serverAddress = state.serverAddress,
-                    onAddressChange = viewModel::updateServerAddress,
-                    serverName = state.serverName,
-                    onNameChange = viewModel::updateServerName,
-                    caPin = state.caPin,
-                    onCaPinChange = viewModel::updateCaPin,
-                    expandCaPin = expandCaPin,
-                    onToggleExpandCaPin = { expandCaPin = !expandCaPin },
-                    busy = state.busy,
-                    error = state.error,
-                    submitLabel = if (state.busy) "正在校验服务器…" else "校验并添加",
-                    onSubmit = viewModel::probeServer,
-                )
+                    ServerFormContent(
+                        serverAddress = state.serverAddress,
+                        onAddressChange = viewModel::updateServerAddress,
+                        serverName = state.serverName,
+                        onNameChange = viewModel::updateServerName,
+                        apiPort = state.apiPort,
+                        onApiPortChange = viewModel::updateApiPort,
+                        signalPort = state.signalPort,
+                        onSignalPortChange = viewModel::updateSignalPort,
+                        relayPort = state.relayPort,
+                        onRelayPortChange = viewModel::updateRelayPort,
+                        caPin = state.caPin,
+                        onCaPinChange = viewModel::updateCaPin,
+                        expandAdvanced = expandAdvanced,
+                        onToggleExpandAdvanced = { expandAdvanced = !expandAdvanced },
+                        busy = state.busy,
+                        submitLabel = submitText,
+                        onSubmit = {
+                            viewModel.submitServerForm(
+                                onMetadataSaved = {
+                                    showServerSheet = false
+                                    RabbitToast.success("服务器设置已更新")
+                                },
+                            )
+                        },
+                    )
+                }
             }
+            RabbitToastModalOverlay()
         }
     }
 
@@ -718,17 +954,27 @@ private fun ServerFormContent(
     onAddressChange: (String) -> Unit,
     serverName: String,
     onNameChange: (String) -> Unit,
+    apiPort: String,
+    onApiPortChange: (String) -> Unit,
+    signalPort: String,
+    onSignalPortChange: (String) -> Unit,
+    relayPort: String,
+    onRelayPortChange: (String) -> Unit,
     caPin: String,
     onCaPinChange: (String) -> Unit,
-    expandCaPin: Boolean,
-    onToggleExpandCaPin: () -> Unit,
+    expandAdvanced: Boolean,
+    onToggleExpandAdvanced: () -> Unit,
     busy: Boolean,
-    error: String?,
     submitLabel: String,
+    submitHeight: Dp = 48.dp,
     onSubmit: () -> Unit,
 ) {
     val palette = LocalRabbitPalette.current
-    val showCaField = expandCaPin || caPin.isNotBlank()
+    val showAdvanced = expandAdvanced ||
+        caPin.isNotBlank() ||
+        apiPort.isNotBlank() ||
+        signalPort.isNotBlank() ||
+        relayPort.isNotBlank()
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         RabbitTextField(
@@ -751,50 +997,69 @@ private fun ServerFormContent(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(RabbitRadius.Sm))
-                .clickable(onClick = onToggleExpandCaPin)
+                .clickable(onClick = onToggleExpandAdvanced)
                 .padding(vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = "手动指定 CA 指纹（可选）",
+                text = "高级设置（端口与 CA 指纹）",
                 fontSize = 13.sp,
                 color = palette.muted,
                 modifier = Modifier.weight(1f),
             )
             Icon(
-                imageVector = if (showCaField) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                imageVector = if (showAdvanced) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
                 contentDescription = null,
                 tint = palette.muted,
                 modifier = Modifier.size(18.dp),
             )
         }
 
-        if (showCaField) {
+        if (showAdvanced) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                RabbitTextField(
+                    value = apiPort,
+                    onValueChange = onApiPortChange,
+                    label = "API 端口",
+                    placeholder = ServerConfigModel.DEFAULT_API_PORT.toString(),
+                    keyboardType = KeyboardType.Number,
+                    modifier = Modifier.weight(1f),
+                )
+                RabbitTextField(
+                    value = signalPort,
+                    onValueChange = onSignalPortChange,
+                    label = "信令端口",
+                    placeholder = ServerConfigModel.DEFAULT_SIGNAL_PORT.toString(),
+                    keyboardType = KeyboardType.Number,
+                    modifier = Modifier.weight(1f),
+                )
+                RabbitTextField(
+                    value = relayPort,
+                    onValueChange = onRelayPortChange,
+                    label = "中继端口",
+                    placeholder = ServerConfigModel.DEFAULT_RELAY_PORT.toString(),
+                    keyboardType = KeyboardType.Number,
+                    modifier = Modifier.weight(1f),
+                )
+            }
             RabbitTextField(
                 value = caPin,
                 onValueChange = onCaPinChange,
+                label = "手动指定 CA 指纹（可选）",
                 placeholder = "64 位 SHA-256 指纹",
                 leadingIcon = { Icon(Icons.Rounded.Key, null, tint = palette.muted) },
                 singleLine = false,
             )
         }
 
-        if (!error.isNullOrBlank()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(RabbitRadius.Md))
-                    .background(palette.dangerSoft)
-                    .padding(12.dp),
-            ) {
-                Text(error, color = palette.danger, fontSize = 13.sp)
-            }
-        }
-
-        Spacer(modifier = Modifier.height(2.dp))
+        Spacer(modifier = Modifier.height(6.dp))
         RabbitPrimaryButton(
             label = submitLabel,
             busy = busy,
+            height = submitHeight,
             onClick = onSubmit,
             modifier = Modifier.fillMaxWidth(),
         )

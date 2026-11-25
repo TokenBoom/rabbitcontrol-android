@@ -1,8 +1,10 @@
 package io.rabbitcontrol.android.core.nativebridge
 
+import androidx.compose.runtime.Immutable
 import org.json.JSONArray
 import org.json.JSONObject
 
+@Immutable
 data class ServerConfigModel(
     val address: String,
     val fingerprint: String,
@@ -10,13 +12,35 @@ data class ServerConfigModel(
     val name: String = "",
     val allowRegistration: Boolean = true,
     val authPubkeyHex: String = "",
+    val apiPort: Int = DEFAULT_API_PORT,
+    val signalPort: Int = DEFAULT_SIGNAL_PORT,
+    val relayPort: Int = DEFAULT_RELAY_PORT,
 ) {
     val id: String
         get() = "${address.trim().lowercase()}|${fingerprint.trim().lowercase()}"
     val displayName: String
         get() = name.ifBlank { address }
+    val hasCustomPorts: Boolean
+        get() = apiPort != DEFAULT_API_PORT || signalPort != DEFAULT_SIGNAL_PORT || relayPort != DEFAULT_RELAY_PORT
+
+    fun customPortsSummary(): String? {
+        if (!hasCustomPorts) return null
+        val parts = buildList {
+            if (apiPort != DEFAULT_API_PORT) add("API $apiPort")
+            if (signalPort != DEFAULT_SIGNAL_PORT) add("信令 $signalPort")
+            if (relayPort != DEFAULT_RELAY_PORT) add("中继 $relayPort")
+        }
+        return parts.joinToString(" · ")
+    }
+
+    companion object {
+        const val DEFAULT_API_PORT = 21118
+        const val DEFAULT_SIGNAL_PORT = 21116
+        const val DEFAULT_RELAY_PORT = 21117
+    }
 }
 
+@Immutable
 data class UserProfile(
     val id: String,
     val email: String,
@@ -24,6 +48,7 @@ data class UserProfile(
     val needsPassword: Boolean,
 )
 
+@Immutable
 data class RemoteDevice(
     val id: String,
     val name: String,
@@ -34,6 +59,7 @@ data class RemoteDevice(
     val allowRemoteAssist: Boolean = false,
 )
 
+@Immutable
 data class SignalStatusSnapshot(
     val enabled: Boolean = false,
     val state: String = "disabled",
@@ -42,6 +68,7 @@ data class SignalStatusSnapshot(
     val lastError: String? = null,
 )
 
+@Immutable
 data class DisplayPresetModel(
     val width: Int,
     val height: Int,
@@ -50,6 +77,7 @@ data class DisplayPresetModel(
     val isHidpi: Boolean,
 )
 
+@Immutable
 data class HudSnapshotModel(
     val elapsed: String = "00:00:00",
     val transport: String = "UDP LAN",
@@ -61,6 +89,7 @@ data class HudSnapshotModel(
     val resolution: String = "",
 )
 
+@Immutable
 data class MediaDiagnosticsModel(
     val codecName: String = "",
     val hardware: Boolean = false,
@@ -71,6 +100,7 @@ data class MediaDiagnosticsModel(
     val surfaceAttached: Boolean = false,
 )
 
+@Immutable
 data class NegotiatedStreamInfo(
     val width: Int,
     val height: Int,
@@ -83,6 +113,7 @@ data class NegotiatedStreamInfo(
     val peerCertFingerprint: String? = null,
 )
 
+@Immutable
 data class DisplayConfigModel(
     val width: Int,
     val height: Int,
@@ -93,6 +124,7 @@ data class DisplayConfigModel(
     val presets: List<DisplayPresetModel>,
 )
 
+@Immutable
 data class RemoteFileEntry(
     val name: String,
     val path: String,
@@ -101,6 +133,7 @@ data class RemoteFileEntry(
     val modifiedUnixSec: Long,
 )
 
+@Immutable
 data class FileTransferItem(
     val id: Long,
     val direction: String,
@@ -116,6 +149,7 @@ data class FileTransferItem(
         get() = if (totalBytes > 0L) (transferredBytes.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f) else 0f
 }
 
+@Immutable
 data class TerminalSessionSummary(
     val termId: Int,
     val name: String,
@@ -125,6 +159,7 @@ data class TerminalSessionSummary(
     val createdAtUnixSec: Long,
 )
 
+@Immutable
 data class PortMapRule(
     val id: Long,
     val name: String,

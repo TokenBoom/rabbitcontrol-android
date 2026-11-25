@@ -25,6 +25,8 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Visibility
+import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -39,6 +41,10 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -46,11 +52,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -241,9 +249,17 @@ fun RabbitStatusPill(
         Text(
             text = label,
             fontSize = 11.sp,
+            lineHeight = 14.sp,
             fontWeight = FontWeight.Medium,
             color = fg,
             maxLines = 1,
+            style = TextStyle(
+                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                lineHeightStyle = LineHeightStyle(
+                    alignment = LineHeightStyle.Alignment.Center,
+                    trim = LineHeightStyle.Trim.Both,
+                ),
+            ),
         )
     }
 }
@@ -380,6 +396,23 @@ fun RabbitTextField(
     textStyle: TextStyle = LocalTextStyle.current,
 ) {
     val palette = LocalRabbitPalette.current
+    var passwordVisible by remember(isPassword) { mutableStateOf(false) }
+    val effectiveTrailingIcon: (@Composable () -> Unit)? = when {
+        trailingIcon != null -> trailingIcon
+        isPassword -> {
+            {
+                IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                    Icon(
+                        imageVector = if (passwordVisible) Icons.Rounded.Visibility else Icons.Rounded.VisibilityOff,
+                        contentDescription = if (passwordVisible) "隐藏密码" else "显示密码",
+                        tint = if (passwordVisible) palette.primaryText else palette.muted,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+            }
+        }
+        else -> null
+    }
     Column(modifier = modifier.fillMaxWidth()) {
         if (!label.isNullOrBlank()) {
             Text(
@@ -397,10 +430,11 @@ fun RabbitTextField(
                 Text(placeholder, color = palette.muted, fontSize = 14.sp)
             },
             leadingIcon = leadingIcon,
-            trailingIcon = trailingIcon,
+            trailingIcon = effectiveTrailingIcon,
             singleLine = singleLine,
             textStyle = textStyle,
-            visualTransformation = visualTransformation ?: if (isPassword) PasswordVisualTransformation() else VisualTransformation.None,
+            visualTransformation = visualTransformation
+                ?: if (isPassword && !passwordVisible) PasswordVisualTransformation() else VisualTransformation.None,
             keyboardOptions = keyboardOptions ?: KeyboardOptions(
                 keyboardType = if (isPassword) KeyboardType.Password else keyboardType,
             ),
@@ -562,11 +596,12 @@ fun RabbitDialog(
             shadowElevation = RabbitElevation.Floating,
             border = BorderStroke(1.dp, borderColor),
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(20.dp),
-            ) {
+            ProvideRabbitTextToolbar {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp),
+                ) {
                 Text(
                     text = title,
                     fontSize = 17.sp,
@@ -629,6 +664,7 @@ fun RabbitDialog(
                         )
                     }
                 }
+            }
             }
         }
     }

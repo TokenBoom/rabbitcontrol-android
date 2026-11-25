@@ -37,8 +37,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -62,6 +60,7 @@ import io.rabbitcontrol.android.ui.components.RabbitDialog
 import io.rabbitcontrol.android.ui.components.RabbitEmptyState
 import io.rabbitcontrol.android.ui.components.RabbitSegmentedControl
 import io.rabbitcontrol.android.ui.components.RabbitTextField
+import io.rabbitcontrol.android.ui.components.RabbitToast
 import io.rabbitcontrol.android.ui.components.RabbitTopBar
 import io.rabbitcontrol.android.ui.theme.LocalRabbitPalette
 import io.rabbitcontrol.android.ui.theme.RabbitElevation
@@ -91,7 +90,6 @@ fun FileTransferScreen(
     var selectedTab by remember { mutableStateOf(FileTransferTab.Remote) }
     var showMkdirDialog by remember { mutableStateOf(false) }
     var newDirName by remember { mutableStateOf("") }
-    val snackbarHostState = remember { SnackbarHostState() }
 
     val pickFilesLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments(),
@@ -105,14 +103,19 @@ fun FileTransferScreen(
     LaunchedEffect(notice) {
         val msg = notice
         if (!msg.isNullOrBlank()) {
-            snackbarHostState.showSnackbar(msg)
+            when {
+                msg.contains("失败") || msg.contains("错误") || msg.contains("异常") || msg.contains("无法") ->
+                    RabbitToast.error(msg)
+                msg.contains("已") || msg.contains("成功") || msg.contains("完成") ->
+                    RabbitToast.success(msg)
+                else -> RabbitToast.info(msg)
+            }
             viewModel.clearNotice()
         }
     }
 
     Scaffold(
         containerColor = palette.canvas,
-        snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
             if (selectedTab == FileTransferTab.Remote) {
                 FloatingActionButton(

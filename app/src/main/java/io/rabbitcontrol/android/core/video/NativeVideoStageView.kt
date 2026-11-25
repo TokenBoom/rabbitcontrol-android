@@ -2,19 +2,27 @@ package io.rabbitcontrol.android.core.video
 
 import android.app.Activity
 import android.content.Context
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Path
 import android.os.Build
 import android.util.Log
 import android.view.Gravity
 import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
+import android.view.View
+import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import kotlin.math.roundToInt
 
 /**
- * Pure native FrameLayout hosting a hardware-composited SurfaceView.
- * Supports 120Hz display mode selection, Surface.setFrameRate(120),
- * zero-copy aspect-preserving scaling, pinch zoom, and cursor-following pan.
+ * Pure native FrameLayout hosting:
+ * 1. Hardware-composited zero-copy [SurfaceView] (120Hz display mode + `Surface.setFrameRate`).
+ * 2. Dedicated tiny hardware-layer [HardwareCursorOverlayView] updated strictly via RenderNode
+ *    `translationX`/`translationY` (zero full-screen Canvas invalidation or overdraw).
+ * 3. Lightweight [TapRippleOverlayView] animated on RenderThread and `GONE` when idle.
  */
 class NativeVideoStageView(
     context: Context,
@@ -23,6 +31,12 @@ class NativeVideoStageView(
 ) : FrameLayout(context), SurfaceHolder.Callback {
 
     val surfaceView: SurfaceView = SurfaceView(context)
+    private val density = resources.displayMetrics.density
+    private val cursorHotspotPx = 2f * density
+    private val cursorView = HardwareCursorOverlayView(context, density, cursorHotspotPx)
+    private val rippleSizePx = (52f * density).roundToInt().coerceAtLeast(32)
+    private val rippleView = TapRippleOverlayView(context, density)
+
     private var videoWidth = 1920
     private var videoHeight = 1080
     private var targetFps = 120f
@@ -40,11 +54,21 @@ class NativeVideoStageView(
     var baseStageHeight: Int = 1
         private set
 
+    private var cursorNormX: Int = 32768
+    private var cursorNormY: Int = 32768
+    private var cursorVisible: Boolean = true
+
     init {
         setBackgroundColor(0xFF000000.toInt())
         clipChildren = true
         clipToPadding = true
         addView(surfaceView, LayoutParams(1, 1, Gravity.CENTER))
+
+        val cursorW = (20f * density).roundToInt().coerceAtLeast(16)
+        val cursorH = (26f * density).roundToInt().coerceAtLeast(20)
+        addView(cursorView, LayoutParams(cursorW, cursorH, Gravity.TOP or Gravity.START))
+        addView(rippleView, LayoutParams(rippleSizePx, rippleSizePx, Gravity.TOP or Gravity.START))
+
         surfaceView.holder.addCallback(this)
     }
 
@@ -83,9 +107,59 @@ class NativeVideoStageView(
         surfaceView.scaleY = zoomScale
         surfaceView.translationX = panX
         surfaceView.translationY = panY
+        syncCursorTranslation()
         if (changed) {
             onZoomChanged?.invoke(zoomScale)
         }
+    }
+
+    fun updateCursorOverlay(normX: Int, normY: Int, visible: Boolean = cursorVisible) {
+        cursorNormX = normX.coerceIn(0, 65535)
+        cursorNormY = normY.coerceIn(0, 65535)
+        setCursorVisibility(visible)
+        syncCursorTranslation()
+    }
+
+    fun setCursorVisibility(visible: Boolean) {
+        if (cursorVisible == visible && (cursorView.visibility == View.VISIBLE) == visible) {
+            return
+        }
+        cursorVisible = visible
+        cursorView.visibility = if (visible) View.VISIBLE else View.GONE
+        if (visible) {
+            syncCursorTranslation()
+        }
+    }
+
+    private fun syncCursorTranslation() {
+        if (!cursorVisible || width <= 0 || height <= 0 || baseStageWidth <= 1 || baseStageHeight <= 1) {
+            return
+        }
+        val (vx, vy) = mapNormalizedToViewPoint(cursorNormX, cursorNormY)
+        cursorView.translationX = vx - cursorHotspotPx
+        cursorView.translationY = vy - cursorHotspotPx
+    }
+
+    fun triggerTapRipple(normX: Int, normY: Int, color: Int) {
+        if (width <= 0 || height <= 0 || baseStageWidth <= 1 || baseStageHeight <= 1) return
+        val (vx, vy) = mapNormalizedToViewPoint(normX, normY)
+        val half = rippleSizePx * 0.5f
+        rippleView.animate().cancel()
+        rippleView.setRippleColor(color)
+        rippleView.translationX = vx - half
+        rippleView.translationY = vy - half
+        rippleView.scaleX = 0.35f
+        rippleView.scaleY = 0.35f
+        rippleView.alpha = 0.88f
+        rippleView.visibility = View.VISIBLE
+        rippleView.animate()
+            .scaleX(1f)
+            .scaleY(1f)
+            .alpha(0f)
+            .setDuration(150L)
+            .setInterpolator(RIPPLE_INTERPOLATOR)
+            .withEndAction { rippleView.visibility = View.GONE }
+            .start()
     }
 
     fun stepZoomIn(): Float {
@@ -112,7 +186,7 @@ class NativeVideoStageView(
 
     /**
      * When zoomed in (>1x), keeps the remote cursor `(normX, normY)` comfortably inside the
-     * visible viewport with a 15% safety margin by smoothly panning the zoomed stage.
+     * visible viewport with a ~14% safety margin by smoothly panning the zoomed stage.
      */
     fun ensureCursorVisible(normX: Int, normY: Int) {
         if (zoomScale <= 1.02f || width <= 0 || height <= 0 || baseStageWidth <= 1 || baseStageHeight <= 1) {
@@ -179,6 +253,7 @@ class NativeVideoStageView(
             post { requestLayout() }
         }
         setZoomAndPan(zoomScale, panX, panY)
+        syncCursorTranslation()
     }
 
     private fun layoutVideoSurface(containerW: Int, containerH: Int) {
@@ -199,7 +274,7 @@ class NativeVideoStageView(
     }
 
     override fun surfaceCreated(holder: SurfaceHolder) {
-        Log.i(
+        Log.d(
             "RC_DIAG",
             "NativeVideoStageView surfaceCreated size=${surfaceView.width}x${surfaceView.height} stage=${baseStageWidth}x${baseStageHeight}",
         )
@@ -209,7 +284,6 @@ class NativeVideoStageView(
     }
 
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
-        Log.i("RC_DIAG", "NativeVideoStageView surfaceChanged ${width}x${height}")
         applySurfaceFrameRate()
     }
 
@@ -239,10 +313,87 @@ class NativeVideoStageView(
         val best = display.supportedModes
             .filter { it.physicalWidth == cur.physicalWidth && it.physicalHeight == cur.physicalHeight }
             .maxByOrNull { it.refreshRate }
-        if (best != null && best.refreshRate >= 119f && window.attributes.preferredDisplayModeId != best.modeId) {
+        if (best != null && best.refreshRate >= 89f && window.attributes.preferredDisplayModeId != best.modeId) {
             val attrs = window.attributes
             attrs.preferredDisplayModeId = best.modeId
             window.attributes = attrs
         }
+    }
+
+    private companion object {
+        val RIPPLE_INTERPOLATOR = DecelerateInterpolator()
+    }
+}
+
+private class HardwareCursorOverlayView(
+    context: Context,
+    density: Float,
+    hotspotPx: Float,
+) : View(context) {
+    private val arrowPath = Path().apply {
+        val x = hotspotPx
+        val y = hotspotPx
+        moveTo(x, y)
+        lineTo(x, y + 17f * density)
+        lineTo(x + 4.3f * density, y + 13.2f * density)
+        lineTo(x + 7.5f * density, y + 19.6f * density)
+        lineTo(x + 10.1f * density, y + 18.3f * density)
+        lineTo(x + 6.9f * density, y + 12.0f * density)
+        lineTo(x + 12.2f * density, y + 11.8f * density)
+        close()
+    }
+    private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        style = Paint.Style.FILL
+    }
+    private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xFF10141A.toInt()
+        style = Paint.Style.STROKE
+        strokeWidth = 1.8f * density
+        strokeJoin = Paint.Join.ROUND
+    }
+
+    init {
+        isClickable = false
+        isFocusable = false
+        importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
+        setLayerType(LAYER_TYPE_HARDWARE, null)
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        canvas.drawPath(arrowPath, fillPaint)
+        canvas.drawPath(arrowPath, strokePaint)
+    }
+}
+
+private class TapRippleOverlayView(
+    context: Context,
+    private val density: Float,
+) : View(context) {
+    private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        style = Paint.Style.STROKE
+        strokeWidth = 2f * density
+    }
+
+    init {
+        isClickable = false
+        isFocusable = false
+        importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
+        visibility = GONE
+    }
+
+    fun setRippleColor(color: Int) {
+        if (ringPaint.color != color) {
+            ringPaint.color = color
+            invalidate()
+        }
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        val cx = width * 0.5f
+        val cy = height * 0.5f
+        val radius = (minOf(cx, cy) - 2f * density).coerceAtLeast(4f)
+        canvas.drawCircle(cx, cy, radius, ringPaint)
     }
 }

@@ -51,17 +51,15 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -81,6 +79,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.rabbitcontrol.android.core.data.DeviceToolKind
+import io.rabbitcontrol.android.core.data.rememberWallpaperImage
 import io.rabbitcontrol.android.core.nativebridge.RemoteDevice
 import io.rabbitcontrol.android.ui.components.RabbitCard
 import io.rabbitcontrol.android.ui.components.RabbitDialog
@@ -88,13 +87,13 @@ import io.rabbitcontrol.android.ui.components.RabbitPrimaryButton
 import io.rabbitcontrol.android.ui.components.RabbitSecondaryButton
 import io.rabbitcontrol.android.ui.components.RabbitSectionHeader
 import io.rabbitcontrol.android.ui.components.RabbitStatusPill
+import io.rabbitcontrol.android.ui.components.RabbitToast
 import io.rabbitcontrol.android.ui.components.RabbitTopBar
 import io.rabbitcontrol.android.ui.components.StatusTone
 import io.rabbitcontrol.android.ui.theme.LocalRabbitPalette
 import io.rabbitcontrol.android.ui.theme.RabbitElevation
 import io.rabbitcontrol.android.ui.theme.RabbitRadius
 import io.rabbitcontrol.android.ui.theme.RabbitSpacing
-import kotlinx.coroutines.launch
 import org.koin.androidx.compose.koinViewModel
 
 private enum class DetailSheetMode {
@@ -113,8 +112,6 @@ fun DeviceDetailScreen(
 ) {
     val palette = LocalRabbitPalette.current
     val clipboard = LocalClipboardManager.current
-    val scope = rememberCoroutineScope()
-    val snackbarHostState = remember { SnackbarHostState() }
 
     val toolOrder by viewModel.toolOrder.collectAsStateWithLifecycle()
     val wallpaperVersion by viewModel.wallpaperVersion.collectAsStateWithLifecycle()
@@ -123,9 +120,7 @@ fun DeviceDetailScreen(
     val connectError by viewModel.connectError.collectAsStateWithLifecycle()
     val favorites by viewModel.favoriteTargets.collectAsStateWithLifecycle()
 
-    val wallpaperBitmap = remember(device.id, wallpaperVersion) {
-        viewModel.wallpaperCache.loadBitmap(device.id)
-    }
+    val wallpaperBitmap = rememberWallpaperImage(viewModel.wallpaperCache, device.id, wallpaperVersion, 960)
     val isCurrentConnected = activeSession.targetId == device.id && activeSession.negotiated != null
     val isFav = device.id in favorites
 
@@ -202,7 +197,7 @@ fun DeviceDetailScreen(
                     ) {
                         if (wallpaperBitmap != null) {
                             Image(
-                                bitmap = wallpaperBitmap.asImageBitmap(),
+                                bitmap = wallpaperBitmap,
                                 contentDescription = null,
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize(),
@@ -367,7 +362,7 @@ fun DeviceDetailScreen(
                                 .clip(RoundedCornerShape(RabbitRadius.Sm))
                                 .clickable {
                                     clipboard.setText(AnnotatedString(device.id))
-                                    scope.launch { snackbarHostState.showSnackbar("已复制设备 ID") }
+                                    RabbitToast.success("已复制设备 ID")
                                 }
                                 .padding(vertical = 4.dp),
                         ) {
@@ -402,21 +397,14 @@ fun DeviceDetailScreen(
                 Spacer(modifier = Modifier.height(12.dp))
             }
         }
-
-        SnackbarHost(
-            hostState = snackbarHostState,
-            modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp),
-        )
     }
 
-    if (!connectError.isNullOrBlank()) {
-        RabbitDialog(
-            title = "无法建立连接",
-            message = connectError.orEmpty(),
-            onDismissRequest = viewModel::clearError,
-            confirmLabel = "知道了",
-            onConfirm = viewModel::clearError,
-        )
+    LaunchedEffect(connectError) {
+        val err = connectError
+        if (!err.isNullOrBlank()) {
+            RabbitToast.error(err)
+            viewModel.clearError()
+        }
     }
 
     val activeSheet = sheetMode
@@ -648,9 +636,7 @@ fun DeviceDetailScreen(
             destructive = true,
             onConfirm = {
                 powerConfirmKind = null
-                scope.launch {
-                    snackbarHostState.showSnackbar("等待被控端支持远程电源协议（可使用「终端」执行 $verb）")
-                }
+                RabbitToast.info("等待被控端支持远程电源协议（可使用「终端」执行 $verb）")
             },
         )
     }

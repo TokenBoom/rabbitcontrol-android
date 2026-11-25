@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.rabbitcontrol.android.core.data.AccountRepository
 import io.rabbitcontrol.android.core.nativebridge.ServerConfigModel
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -11,11 +13,21 @@ import kotlinx.coroutines.launch
 
 enum class AuthStep { Server, Trust, Login, Register, Password }
 
+sealed interface ServerTestState {
+    data object Testing : ServerTestState
+    data class Reachable(val latencyMs: Long, val healthy: Boolean) : ServerTestState
+    data class Failed(val message: String) : ServerTestState
+}
+
 data class AuthUiState(
     val step: AuthStep = AuthStep.Server,
     val serverName: String = "",
     val serverAddress: String = "",
+    val apiPort: String = "",
+    val signalPort: String = "",
+    val relayPort: String = "",
     val caPin: String = "",
+    val editingServer: ServerConfigModel? = null,
     val candidateServer: ServerConfigModel? = null,
     val probeReport: String = "",
     val email: String = "",
@@ -29,6 +41,7 @@ data class AuthUiState(
     val busy: Boolean = false,
     val error: String? = null,
     val savedServerAddress: String? = null,
+    val serverTests: Map<String, ServerTestState> = emptyMap(),
 )
 
 class AuthViewModel(
@@ -54,7 +67,11 @@ class AuthViewModel(
             step = step,
             serverName = "",
             serverAddress = "",
+            apiPort = "",
+            signalPort = "",
+            relayPort = "",
             caPin = "",
+            editingServer = null,
             savedServerAddress = srv?.displayName,
             allowRegistration = srv?.allowRegistration ?: true,
             error = null,
@@ -66,7 +83,42 @@ class AuthViewModel(
 
     fun updateServerName(v: String) { _ui.value = _ui.value.copy(serverName = v, error = null) }
     fun updateServerAddress(v: String) { _ui.value = _ui.value.copy(serverAddress = v, error = null) }
+    fun updateApiPort(v: String) {
+        _ui.value = _ui.value.copy(apiPort = v.filter(Char::isDigit).take(5), error = null)
+    }
+    fun updateSignalPort(v: String) {
+        _ui.value = _ui.value.copy(signalPort = v.filter(Char::isDigit).take(5), error = null)
+    }
+    fun updateRelayPort(v: String) {
+        _ui.value = _ui.value.copy(relayPort = v.filter(Char::isDigit).take(5), error = null)
+    }
     fun updateCaPin(v: String) { _ui.value = _ui.value.copy(caPin = v, error = null) }
+
+    fun startAddServer() {
+        _ui.value = _ui.value.copy(
+            serverName = "",
+            serverAddress = "",
+            apiPort = "",
+            signalPort = "",
+            relayPort = "",
+            caPin = "",
+            editingServer = null,
+            error = null,
+        )
+    }
+
+    fun startEditServer(target: ServerConfigModel) {
+        _ui.value = _ui.value.copy(
+            serverName = target.name,
+            serverAddress = target.address,
+            apiPort = if (target.apiPort == ServerConfigModel.DEFAULT_API_PORT) "" else target.apiPort.toString(),
+            signalPort = if (target.signalPort == ServerConfigModel.DEFAULT_SIGNAL_PORT) "" else target.signalPort.toString(),
+            relayPort = if (target.relayPort == ServerConfigModel.DEFAULT_RELAY_PORT) "" else target.relayPort.toString(),
+            caPin = "",
+            editingServer = target,
+            error = null,
+        )
+    }
     fun updateEmail(v: String) { _ui.value = _ui.value.copy(email = v, error = null) }
     fun updateDisplayName(v: String) { _ui.value = _ui.value.copy(displayName = v, error = null) }
     fun updatePassword(v: String) { _ui.value = _ui.value.copy(password = v, error = null) }
@@ -109,17 +161,106 @@ class AuthViewModel(
         }
     }
 
-    fun probeServer() {
+    private fun parseOptionalPort(raw: String, defaultPort: Int, label: String): Result<Int> {
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty()) return Result.success(defaultPort)
+        val parsed = trimmed.toIntOrNull()?.takeIf { it in 1..65535 }
+            ?: return Result.failure(IllegalArgumentException("$label 需为 1–65535 之间的数字"))
+        return Result.success(parsed)
+    }
+
+    fun needsReprobeForEdit(editing: ServerConfigModel): Boolean {
+        val hostChanged = _ui.value.serverAddress.trim() != editing.address.trim()
+        val rawApiPort = _ui.value.apiPort.trim()
+        val effectiveApiPort = if (rawApiPort.isEmpty()) {
+            ServerConfigModel.DEFAULT_API_PORT
+        } else {
+            rawApiPort.toIntOrNull() ?: -1
+        }
+        val apiPortChanged = effectiveApiPort != editing.apiPort
+        val pinProvided = _ui.value.caPin.isNotBlank()
+        return hostChanged || apiPortChanged || pinProvided
+    }
+
+    fun submitServerForm(onMetadataSaved: () -> Unit) {
+        val editing = _ui.value.editingServer
         val host = _ui.value.serverAddress.trim()
         val name = _ui.value.serverName.trim()
-        val pin = _ui.value.caPin.replace("\\s".toRegex(), "")
         if (host.isEmpty()) {
             _ui.value = _ui.value.copy(error = "请输入服务器地址")
             return
         }
+        val apiPort = parseOptionalPort(_ui.value.apiPort, ServerConfigModel.DEFAULT_API_PORT, "API 端口")
+            .getOrElse { _ui.value = _ui.value.copy(error = it.message); return }
+        val signalPort = parseOptionalPort(_ui.value.signalPort, ServerConfigModel.DEFAULT_SIGNAL_PORT, "信令端口")
+            .getOrElse { _ui.value = _ui.value.copy(error = it.message); return }
+        val relayPort = parseOptionalPort(_ui.value.relayPort, ServerConfigModel.DEFAULT_RELAY_PORT, "中继端口")
+            .getOrElse { _ui.value = _ui.value.copy(error = it.message); return }
+
+        if (editing != null && !needsReprobeForEdit(editing)) {
+            _ui.value = _ui.value.copy(busy = true, error = null)
+            viewModelScope.launch {
+                runCatching { accountRepo.updateServerMetadata(editing, name, signalPort, relayPort) }
+                    .onSuccess {
+                        _ui.value = _ui.value.copy(
+                            busy = false,
+                            editingServer = null,
+                            savedServerAddress = accountRepo.server.value?.displayName,
+                            serverTests = _ui.value.serverTests - editing.id,
+                        )
+                        onMetadataSaved()
+                    }
+                    .onFailure { err ->
+                        _ui.value = _ui.value.copy(
+                            busy = false,
+                            error = AuthErrorFormatter.format(err.message, AuthAction.SwitchServer),
+                        )
+                    }
+            }
+            return
+        }
+
+        val apiPortOverride = if (_ui.value.apiPort.isNotBlank()) apiPort else null
+        probeServerInternal(host = host, name = name, apiPortOverride = apiPortOverride, signalPort = signalPort, relayPort = relayPort)
+    }
+
+    fun probeServer() {
+        val host = _ui.value.serverAddress.trim()
+        val name = _ui.value.serverName.trim()
+        if (host.isEmpty()) {
+            _ui.value = _ui.value.copy(error = "请输入服务器地址")
+            return
+        }
+        val apiPort = parseOptionalPort(_ui.value.apiPort, ServerConfigModel.DEFAULT_API_PORT, "API 端口")
+            .getOrElse { _ui.value = _ui.value.copy(error = it.message); return }
+        val signalPort = parseOptionalPort(_ui.value.signalPort, ServerConfigModel.DEFAULT_SIGNAL_PORT, "信令端口")
+            .getOrElse { _ui.value = _ui.value.copy(error = it.message); return }
+        val relayPort = parseOptionalPort(_ui.value.relayPort, ServerConfigModel.DEFAULT_RELAY_PORT, "中继端口")
+            .getOrElse { _ui.value = _ui.value.copy(error = it.message); return }
+        val apiPortOverride = if (_ui.value.apiPort.isNotBlank()) apiPort else null
+        probeServerInternal(host = host, name = name, apiPortOverride = apiPortOverride, signalPort = signalPort, relayPort = relayPort)
+    }
+
+    private fun probeServerInternal(
+        host: String,
+        name: String,
+        apiPortOverride: Int?,
+        signalPort: Int,
+        relayPort: Int,
+    ) {
+        val pin = _ui.value.caPin.replace("\\s".toRegex(), "")
         _ui.value = _ui.value.copy(busy = true, error = null)
         viewModelScope.launch {
-            runCatching { accountRepo.probeServer(host, pin, name) }
+            runCatching {
+                accountRepo.probeServer(
+                    address = host,
+                    expectedPin = pin,
+                    name = name,
+                    apiPort = apiPortOverride,
+                    signalPort = signalPort,
+                    relayPort = relayPort,
+                )
+            }
                 .onSuccess { (model, report) ->
                     _ui.value = _ui.value.copy(
                         busy = false,
@@ -130,16 +271,20 @@ class AuthViewModel(
                     )
                 }
                 .onFailure { err ->
-                    _ui.value = _ui.value.copy(busy = false, error = err.message ?: "服务器探测失败")
+                    _ui.value = _ui.value.copy(
+                        busy = false,
+                        error = AuthErrorFormatter.format(err.message, AuthAction.ProbeServer),
+                    )
                 }
         }
     }
 
     fun trustAndContinue(onlyServer: Boolean, onDone: () -> Unit) {
         val candidate = _ui.value.candidateServer ?: return
+        val replaceTargetId = _ui.value.editingServer?.id
         _ui.value = _ui.value.copy(busy = true, error = null)
         viewModelScope.launch {
-            runCatching { accountRepo.saveServer(candidate) }
+            runCatching { accountRepo.saveServer(candidate, replaceTargetId = replaceTargetId) }
                 .onSuccess { restored ->
                     val needsPwd = accountRepo.profile.value?.needsPassword == true
                     _ui.value = _ui.value.copy(
@@ -148,7 +293,11 @@ class AuthViewModel(
                         allowRegistration = candidate.allowRegistration,
                         serverName = "",
                         serverAddress = "",
+                        apiPort = "",
+                        signalPort = "",
+                        relayPort = "",
                         caPin = "",
+                        editingServer = null,
                         step = when {
                             restored && needsPwd -> AuthStep.Password
                             restored && onlyServer -> _ui.value.step
@@ -160,7 +309,10 @@ class AuthViewModel(
                     }
                 }
                 .onFailure { err ->
-                    _ui.value = _ui.value.copy(busy = false, error = err.message ?: "保存服务器失败")
+                    _ui.value = _ui.value.copy(
+                        busy = false,
+                        error = AuthErrorFormatter.format(err.message, AuthAction.SwitchServer),
+                    )
                 }
         }
     }
@@ -195,8 +347,76 @@ class AuthViewModel(
                     }
                 }
                 .onFailure { err ->
-                    _ui.value = _ui.value.copy(busy = false, error = err.message ?: "切换服务器失败")
+                    _ui.value = _ui.value.copy(
+                        busy = false,
+                        error = AuthErrorFormatter.format(err.message, AuthAction.SwitchServer),
+                    )
                 }
+        }
+    }
+
+    fun testServer(
+        target: ServerConfigModel,
+        onResult: ((ServerTestState) -> Unit)? = null,
+    ) {
+        if (_ui.value.serverTests[target.id] is ServerTestState.Testing) return
+        _ui.value = _ui.value.copy(
+            serverTests = _ui.value.serverTests + (target.id to ServerTestState.Testing),
+        )
+        viewModelScope.launch {
+            val resultState = runCatching { accountRepo.testServerConnection(target) }
+                .fold(
+                    onSuccess = { probe ->
+                        ServerTestState.Reachable(
+                            latencyMs = probe.latencyMs,
+                            healthy = probe.healthy,
+                        )
+                    },
+                    onFailure = { err ->
+                        ServerTestState.Failed(
+                            AuthErrorFormatter.format(err.message, AuthAction.ProbeServer),
+                        )
+                    },
+                )
+            _ui.value = _ui.value.copy(
+                serverTests = _ui.value.serverTests + (target.id to resultState),
+            )
+            onResult?.invoke(resultState)
+        }
+    }
+
+    fun testAllServers(
+        onFinished: ((reachable: Int, total: Int) -> Unit)? = null,
+    ) {
+        val list = servers.value
+        if (list.isEmpty()) return
+        val marked = list.associate { it.id to ServerTestState.Testing }
+        _ui.value = _ui.value.copy(serverTests = _ui.value.serverTests + marked)
+        viewModelScope.launch {
+            val results = list.map { srv ->
+                async {
+                    val state = runCatching { accountRepo.testServerConnection(srv) }
+                        .fold(
+                            onSuccess = { probe ->
+                                ServerTestState.Reachable(
+                                    latencyMs = probe.latencyMs,
+                                    healthy = probe.healthy,
+                                )
+                            },
+                            onFailure = { err ->
+                                ServerTestState.Failed(
+                                    AuthErrorFormatter.format(err.message, AuthAction.ProbeServer),
+                                )
+                            },
+                        )
+                    _ui.value = _ui.value.copy(
+                        serverTests = _ui.value.serverTests + (srv.id to state),
+                    )
+                    state
+                }
+            }.awaitAll()
+            val okCount = results.count { it is ServerTestState.Reachable && it.healthy }
+            onFinished?.invoke(okCount, list.size)
         }
     }
 
@@ -206,11 +426,14 @@ class AuthViewModel(
                 .onSuccess {
                     _ui.value = _ui.value.copy(
                         savedServerAddress = accountRepo.server.value?.displayName,
+                        serverTests = _ui.value.serverTests - target.id,
                         error = null,
                     )
                 }
                 .onFailure { err ->
-                    _ui.value = _ui.value.copy(error = err.message ?: "删除服务器失败")
+                    _ui.value = _ui.value.copy(
+                        error = AuthErrorFormatter.format(err.message, AuthAction.RemoveServer),
+                    )
                 }
         }
     }
@@ -238,7 +461,10 @@ class AuthViewModel(
                     }
                 }
                 .onFailure { err ->
-                    _ui.value = _ui.value.copy(busy = false, error = err.message ?: "登录失败，请检查账号或密码")
+                    _ui.value = _ui.value.copy(
+                        busy = false,
+                        error = AuthErrorFormatter.format(err.message, AuthAction.Login),
+                    )
                 }
         }
     }
@@ -276,7 +502,10 @@ class AuthViewModel(
                     }
                 }
                 .onFailure { err ->
-                    _ui.value = _ui.value.copy(busy = false, error = err.message ?: "注册失败")
+                    _ui.value = _ui.value.copy(
+                        busy = false,
+                        error = AuthErrorFormatter.format(err.message, AuthAction.Register),
+                    )
                 }
         }
     }
@@ -301,7 +530,10 @@ class AuthViewModel(
                     onCompleted()
                 }
                 .onFailure { err ->
-                    _ui.value = _ui.value.copy(busy = false, error = err.message ?: "修改密码失败")
+                    _ui.value = _ui.value.copy(
+                        busy = false,
+                        error = AuthErrorFormatter.format(err.message, AuthAction.ChangePassword),
+                    )
                 }
         }
     }

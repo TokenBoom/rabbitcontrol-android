@@ -1,6 +1,8 @@
 package io.rabbitcontrol.android.ui.theme
 
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.text.selection.LocalTextSelectionColors
+import androidx.compose.foundation.text.selection.TextSelectionColors
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
@@ -15,6 +17,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.rabbitcontrol.android.ui.components.ProvideRabbitTextToolbar
 
 object RabbitSpacing {
     val Xs = 4.dp
@@ -225,11 +228,19 @@ fun RabbitTheme(
     content: @Composable () -> Unit,
 ) {
     val palette = if (darkTheme) DarkPalette else LightPalette
-    CompositionLocalProvider(LocalRabbitPalette provides palette) {
+    val selectionColors = TextSelectionColors(
+        handleColor = palette.primary,
+        backgroundColor = palette.primary.copy(alpha = 0.22f),
+    )
+    CompositionLocalProvider(
+        LocalRabbitPalette provides palette,
+        LocalTextSelectionColors provides selectionColors,
+    ) {
         MaterialTheme(
             colorScheme = if (darkTheme) DarkScheme else LightScheme,
             typography = RabbitTypography,
-            content = content,
-        )
+        ) {
+            ProvideRabbitTextToolbar(content = content)
+        }
     }
 }

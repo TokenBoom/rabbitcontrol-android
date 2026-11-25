@@ -49,6 +49,7 @@ import androidx.compose.material.icons.rounded.ScreenRotation
 import androidx.compose.material.icons.rounded.TouchApp
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Visibility
+import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material.icons.rounded.ZoomIn
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -78,6 +79,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
@@ -86,6 +88,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -100,6 +103,7 @@ import io.rabbitcontrol.android.core.data.TouchInputMode
 import io.rabbitcontrol.android.core.input.ImeInputBridge
 import io.rabbitcontrol.android.core.input.PrecisionTouchLayer
 import io.rabbitcontrol.android.core.input.ScancodeMapper
+import io.rabbitcontrol.android.core.nativebridge.HudSnapshotModel
 import io.rabbitcontrol.android.core.session.SessionStatus
 import io.rabbitcontrol.android.core.video.NativeVideoStageView
 import io.rabbitcontrol.android.session.Core
@@ -108,6 +112,7 @@ import io.rabbitcontrol.android.ui.theme.RabbitElevation
 import io.rabbitcontrol.android.ui.theme.RabbitRadius
 import io.rabbitcontrol.android.ui.theme.SessionPalette
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.StateFlow
 import kotlin.math.roundToInt
 
 private data class EditingSlotTarget(
@@ -159,7 +164,8 @@ fun DesktopSessionScreen(
         stageRef?.updateStreamGeometry(w, h, fps)
     }
 
-    LaunchedEffect(overlayTouchRef, bottomTrackpadRef, prefs, state.watchOnly, rightClickModHeld, dragModHeld) {
+    LaunchedEffect(stageRef, overlayTouchRef, bottomTrackpadRef, prefs, state.watchOnly, rightClickModHeld, dragModHeld) {
+        stageRef?.setCursorVisibility(!state.watchOnly && prefs.touchMode == TouchInputMode.Trackpad)
         listOfNotNull(overlayTouchRef, bottomTrackpadRef).forEach { layer ->
             layer.inputMode = prefs.touchMode
             layer.sensitivity = prefs.pointerSensitivity
@@ -324,11 +330,8 @@ fun DesktopSessionScreen(
                         )
                     }
                     if (prefs.showHud && state.negotiated != null) {
-                        MiniHudBadge(
-                            fps = state.hud.fps,
-                            res = state.hud.resolution,
-                            rtt = state.hud.rttMs,
-                            transport = state.hud.transport,
+                        LiveMiniHudBadge(
+                            hudFlow = viewModel.hud,
                             onClick = { openControlPanel(ControlPanelTab.Display) },
                             modifier = Modifier.align(Alignment.TopEnd).padding(10.dp),
                         )
@@ -572,11 +575,8 @@ fun DesktopSessionScreen(
                         )
                     }
                     if (prefs.showHud && state.negotiated != null) {
-                        MiniHudBadge(
-                            fps = state.hud.fps,
-                            res = state.hud.resolution,
-                            rtt = state.hud.rttMs,
-                            transport = state.hud.transport,
+                        LiveMiniHudBadge(
+                            hudFlow = viewModel.hud,
                             onClick = { openControlPanel(ControlPanelTab.Display) },
                             modifier = Modifier.align(Alignment.TopEnd).padding(10.dp),
                         )
@@ -646,11 +646,8 @@ fun DesktopSessionScreen(
                     )
                 }
                 if (prefs.showHud && state.negotiated != null) {
-                    MiniHudBadge(
-                        fps = state.hud.fps,
-                        res = state.hud.resolution,
-                        rtt = state.hud.rttMs,
-                        transport = state.hud.transport,
+                    LiveMiniHudBadge(
+                        hudFlow = viewModel.hud,
                         onClick = { openControlPanel(ControlPanelTab.Display) },
                         modifier = Modifier.align(Alignment.TopEnd).systemBarsPadding().padding(14.dp),
                     )
@@ -783,13 +780,24 @@ fun DesktopSessionScreen(
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(reason, color = SessionPalette.muted, fontSize = 13.sp)
                             if (needsPassword) {
+                                var passwordVisible by remember { mutableStateOf(false) }
                                 Spacer(modifier = Modifier.height(14.dp))
                                 OutlinedTextField(
                                     value = passwordInput,
                                     onValueChange = { passwordInput = it },
                                     placeholder = { Text("输入被控端访问密码", color = SessionPalette.muted) },
                                     singleLine = true,
-                                    visualTransformation = PasswordVisualTransformation(),
+                                    trailingIcon = {
+                                        IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                                            Icon(
+                                                imageVector = if (passwordVisible) Icons.Rounded.Visibility else Icons.Rounded.VisibilityOff,
+                                                contentDescription = if (passwordVisible) "隐藏密码" else "显示密码",
+                                                tint = if (passwordVisible) SessionPalette.accentText else SessionPalette.muted,
+                                                modifier = Modifier.size(20.dp),
+                                            )
+                                        }
+                                    },
+                                    visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                                     shape = RoundedCornerShape(RabbitRadius.Md),
                                     colors = OutlinedTextFieldDefaults.colors(
                                         focusedTextColor = SessionPalette.text,
@@ -1001,8 +1009,11 @@ private fun EdgeSnappedMicroPill(
 
         Surface(
             modifier = Modifier
-                .offset { IntOffset(displayX.roundToInt(), offY.roundToInt()) }
-                .alpha(alpha)
+                .graphicsLayer {
+                    translationX = displayX
+                    translationY = offY
+                    this.alpha = alpha
+                }
                 .pointerInput(maxW, maxH) {
                     detectDragGestures(
                         onDragStart = {
@@ -1126,6 +1137,23 @@ private fun ZoomBadge(
             fontSize = 11.sp,
         )
     }
+}
+
+@Composable
+private fun LiveMiniHudBadge(
+    hudFlow: StateFlow<HudSnapshotModel>,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val hud by hudFlow.collectAsStateWithLifecycle()
+    MiniHudBadge(
+        fps = hud.fps,
+        res = hud.resolution,
+        rtt = hud.rttMs,
+        transport = hud.transport,
+        onClick = onClick,
+        modifier = modifier,
+    )
 }
 
 @Composable

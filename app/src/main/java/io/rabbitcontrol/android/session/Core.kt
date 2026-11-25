@@ -24,11 +24,11 @@ internal object Core {
     external fun attachSurface(surface: Surface)
     external fun detachSurface()
 
-    external fun pollSignalEvents(): String
+    external fun pollSignalEvents(): String?
     external fun openSession(requestJson: String): String
     external fun disconnectSession(lockRemote: Boolean)
     external fun sendSessionCommand(commandJson: String)
-    external fun pollSessionUpdates(): String
+    external fun pollSessionUpdates(includeMedia: Boolean): String?
 
     external fun sendMouseMove(x: Int, y: Int)
     external fun sendMouseButton(button: Int, pressed: Boolean)
@@ -43,6 +43,6 @@ internal object Core {
     external fun startHost(configJson: String): String
     external fun stopHost()
     external fun hostCommand(commandJson: String): String
-    external fun pollHostEvents(): String
+    external fun pollHostEvents(): String?
     external fun pushHostEncodedFrame(data: ByteArray, isKeyframe: Boolean)
 }

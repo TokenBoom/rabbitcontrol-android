@@ -68,6 +68,7 @@ import io.rabbitcontrol.android.ui.components.RabbitCard
 import io.rabbitcontrol.android.ui.components.RabbitDialog
 import io.rabbitcontrol.android.ui.components.RabbitEmptyState
 import io.rabbitcontrol.android.ui.components.RabbitTextField
+import io.rabbitcontrol.android.ui.components.RabbitToast
 import io.rabbitcontrol.android.ui.components.RabbitTopBar
 import io.rabbitcontrol.android.ui.theme.LocalRabbitPalette
 import io.rabbitcontrol.android.ui.theme.RabbitRadius
@@ -297,7 +298,7 @@ fun TerminalScreen(
             val vScroll = rememberScrollState()
             val hScroll = rememberScrollState()
             LaunchedEffect(renderedText) {
-                vScroll.animateScrollTo(vScroll.maxValue)
+                vScroll.scrollTo(vScroll.maxValue)
             }
 
             BoxWithConstraints(
@@ -430,14 +431,12 @@ fun TerminalScreen(
         }
     }
 
-    if (!error.isNullOrBlank()) {
-        RabbitDialog(
-            title = "终端提示",
-            message = error.orEmpty(),
-            onDismissRequest = viewModel::clearError,
-            confirmLabel = "知道了",
-            onConfirm = viewModel::clearError,
-        )
+    LaunchedEffect(error) {
+        val err = error
+        if (!err.isNullOrBlank()) {
+            RabbitToast.error(err)
+            viewModel.clearError()
+        }
     }
 }
 

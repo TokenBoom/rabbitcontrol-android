@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.wifi.WifiManager
 import android.util.Log
 import android.view.Surface
+import androidx.compose.runtime.Immutable
 import io.rabbitcontrol.android.core.data.InteractionPrefsStore
 import io.rabbitcontrol.android.core.data.TargetHistoryStore
 import io.rabbitcontrol.android.core.data.WallpaperCache
@@ -12,6 +13,7 @@ import io.rabbitcontrol.android.core.nativebridge.DisplayPresetModel
 import io.rabbitcontrol.android.core.nativebridge.FileTransferItem
 import io.rabbitcontrol.android.core.nativebridge.HudSnapshotModel
 import io.rabbitcontrol.android.core.nativebridge.MediaDiagnosticsModel
+import io.rabbitcontrol.android.core.nativebridge.NativeRuntimeBootstrap
 import io.rabbitcontrol.android.core.nativebridge.NegotiatedStreamInfo
 import io.rabbitcontrol.android.core.nativebridge.PortMapRule
 import io.rabbitcontrol.android.core.nativebridge.RemoteFileEntry
@@ -45,6 +47,7 @@ sealed interface SessionStatus {
     data class Ended(val reason: String) : SessionStatus
 }
 
+@Immutable
 data class ActiveSessionState(
     val targetId: String = "",
     val deviceName: String = "",
@@ -56,8 +59,6 @@ data class ActiveSessionState(
     val negotiated: NegotiatedStreamInfo? = null,
     val targetBitrateBps: Int? = null,
     val displayConfig: DisplayConfigModel? = null,
-    val hud: HudSnapshotModel = HudSnapshotModel(),
-    val media: MediaDiagnosticsModel = MediaDiagnosticsModel(),
     val firstFrameSeen: Boolean = false,
 )
 
@@ -116,6 +117,15 @@ class SessionManager(
     private val _state = MutableStateFlow(ActiveSessionState())
     val state: StateFlow<ActiveSessionState> = _state.asStateFlow()
 
+    private val _hud = MutableStateFlow(HudSnapshotModel())
+    val hud: StateFlow<HudSnapshotModel> = _hud.asStateFlow()
+
+    private val _media = MutableStateFlow(MediaDiagnosticsModel())
+    val media: StateFlow<MediaDiagnosticsModel> = _media.asStateFlow()
+
+    @Volatile
+    private var mediaDiagnosticsVisible: Boolean = false
+
     private val _fileEvents = MutableSharedFlow<FileToolEvent>(extraBufferCapacity = 128)
     val fileEvents: SharedFlow<FileToolEvent> = _fileEvents.asSharedFlow()
 
@@ -124,6 +134,10 @@ class SessionManager(
 
     private val _portMapRules = MutableStateFlow<List<PortMapRule>>(emptyList())
     val portMapRules: StateFlow<List<PortMapRule>> = _portMapRules.asStateFlow()
+
+    fun setMediaDiagnosticsVisible(visible: Boolean) {
+        mediaDiagnosticsVisible = visible
+    }
 
     fun isConnectedTo(targetId: String): Boolean {
         val cur = _state.value
@@ -145,7 +159,10 @@ class SessionManager(
         lastPassword = password
         lastForceRelay = forceRelay
 
+        NativeRuntimeBootstrap.ensureReady(context)
         acquireMulticastLock()
+        _hud.value = HudSnapshotModel()
+        _media.value = MediaDiagnosticsModel()
         _state.value = ActiveSessionState(
             targetId = targetId,
             deviceName = deviceName,
@@ -195,12 +212,12 @@ class SessionManager(
     }
 
     fun attachSurface(surface: Surface) {
-        Log.i("RC_DIAG", "attachSurface valid=${surface.isValid}")
+        NativeRuntimeBootstrap.ensureReady(context)
         Core.attachSurface(surface)
     }
 
     fun detachSurface() {
-        Log.i("RC_DIAG", "detachSurface")
+        if (!NativeRuntimeBootstrap.isReady) return
         Core.detachSurface()
     }
 
@@ -294,11 +311,14 @@ class SessionManager(
         releaseMulticastLock()
         SessionForegroundService.stop(context)
         _portMapRules.value = emptyList()
+        _hud.value = HudSnapshotModel()
+        _media.value = MediaDiagnosticsModel()
         _state.value = _state.value.copy(
             status = SessionStatus.Idle,
             negotiated = null,
             targetBitrateBps = null,
             displayConfig = null,
+            firstFrameSeen = false,
         )
     }
 
@@ -307,38 +327,33 @@ class SessionManager(
         pollJob = scope.launch {
             while (isActive) {
                 runCatching {
-                    val payload = JSONObject(Core.pollSessionUpdates())
-                    val updates = payload.optJSONArray("updates")
-                    if (updates != null) {
-                        for (i in 0 until updates.length()) {
-                            handleSessionUpdate(updates.getJSONObject(i))
-                        }
-                    }
-                    val clips = payload.optJSONArray("clipboardTexts")
-                    if (clips != null) {
-                        for (i in 0 until clips.length()) {
-                            val txt = clips.optString(i)
-                            if (txt.isNotEmpty() && _state.value.clipboardEnabled) {
-                                clipboardBridge.applyPeerText(txt)
+                    val raw = Core.pollSessionUpdates(mediaDiagnosticsVisible)
+                    if (raw != null) {
+                        val payload = JSONObject(raw)
+                        payload.optJSONArray("updates")?.let { updates ->
+                            for (i in 0 until updates.length()) {
+                                handleSessionUpdate(updates.getJSONObject(i))
                             }
                         }
-                    }
-                    payload.optJSONObject("media")?.let { m ->
-                        val rendered = m.optLong("renderedFrames", 0L)
-                        val cur = _state.value
-                        val firstFrame = cur.firstFrameSeen || rendered > 0L
-                        val codecName = m.optString("codecName")
-                        val hardware = m.optBoolean("hardware")
-                        val lowLatency = m.optBoolean("lowLatency")
-                        if (!cur.firstFrameSeen && firstFrame) {
-                            Log.i(
-                                "RC_DIAG",
-                                "firstFrame rendered=$rendered codec=$codecName hw=$hardware lowLatency=$lowLatency",
-                            )
+                        payload.optJSONArray("clipboardTexts")?.let { clips ->
+                            for (i in 0 until clips.length()) {
+                                val txt = clips.optString(i)
+                                if (txt.isNotEmpty() && _state.value.clipboardEnabled) {
+                                    clipboardBridge.applyPeerText(txt)
+                                }
+                            }
                         }
-                        _state.value = cur.copy(
-                            firstFrameSeen = firstFrame,
-                            media = MediaDiagnosticsModel(
+                        payload.optJSONObject("media")?.let { m ->
+                            val rendered = m.optLong("renderedFrames", 0L)
+                            val cur = _state.value
+                            val firstFrame = cur.firstFrameSeen || rendered > 0L
+                            val codecName = m.optString("codecName")
+                            val hardware = m.optBoolean("hardware")
+                            val lowLatency = m.optBoolean("lowLatency")
+                            if (!cur.firstFrameSeen && firstFrame) {
+                                _state.value = cur.copy(firstFrameSeen = true)
+                            }
+                            _media.value = MediaDiagnosticsModel(
                                 codecName = codecName,
                                 hardware = hardware,
                                 lowLatency = lowLatency,
@@ -346,82 +361,27 @@ class SessionManager(
                                 renderedFrames = rendered,
                                 droppedFrames = m.optLong("droppedFrames"),
                                 surfaceAttached = m.optBoolean("surfaceAttached"),
-                            ),
-                        )
-                    }
-
-                    // Poll file, terminal, and portmap tool events when running
-                    if (payload.optBoolean("running", false)) {
-                        pollToolsOnce()
+                            )
+                        }
+                        payload.optJSONArray("fileEvents")?.let { arr ->
+                            for (i in 0 until arr.length()) {
+                                parseFileToolEvent(arr.getJSONObject(i))?.let { _fileEvents.emit(it) }
+                            }
+                        }
+                        payload.optJSONArray("terminalEvents")?.let { arr ->
+                            for (i in 0 until arr.length()) {
+                                parseTerminalToolEvent(arr.getJSONObject(i))?.let { _terminalEvents.emit(it) }
+                            }
+                        }
+                        payload.optJSONArray("portmapRules")?.let { arr ->
+                            _portMapRules.value = List(arr.length()) { idx -> arr.getJSONObject(idx).toPortMapRule() }
+                        }
                     }
                 }.onFailure { err ->
                     Log.w("RC_DIAG", "pollSessionUpdates error: ${err.message}", err)
                 }
-                delay(32L)
+                delay(20L)
             }
-        }
-    }
-
-    private suspend fun pollToolsOnce() {
-        val fileResp = runCatching {
-            JSONObject(Core.toolCall(JSONObject().put("action", "file_poll_events").toString()))
-        }.onFailure { err ->
-            Log.w("RC_DIAG", "file_poll_events error: ${err.message}")
-        }.getOrNull()
-        fileResp?.optJSONArray("events")?.let { arr ->
-            for (i in 0 until arr.length()) {
-                val ev = arr.getJSONObject(i)
-                val parsed = parseFileToolEvent(ev)
-                if (parsed != null) {
-                    when (parsed) {
-                        is FileToolEvent.RemoteDir -> Log.i(
-                            "RC_DIAG",
-                            "fileEvent RemoteDir path=${parsed.path} count=${parsed.entries.size} err=${parsed.error}",
-                        )
-                        is FileToolEvent.MkdirResult -> Log.i(
-                            "RC_DIAG",
-                            "fileEvent MkdirResult path=${parsed.path} ok=${parsed.ok} err=${parsed.error}",
-                        )
-                        is FileToolEvent.TransferUpdated -> if (parsed.item.status != "active") {
-                            Log.i(
-                                "RC_DIAG",
-                                "fileEvent TransferUpdated id=${parsed.item.id} dir=${parsed.item.direction} status=${parsed.item.status} err=${parsed.item.error}",
-                            )
-                        }
-                    }
-                    _fileEvents.emit(parsed)
-                }
-            }
-        }
-
-        val termResp = runCatching {
-            JSONObject(Core.toolCall(JSONObject().put("action", "terminal_poll_events").toString()))
-        }.onFailure { err ->
-            Log.w("RC_DIAG", "terminal_poll_events error: ${err.message}")
-        }.getOrNull()
-        termResp?.optJSONArray("events")?.let { arr ->
-            for (i in 0 until arr.length()) {
-                val ev = arr.getJSONObject(i)
-                val parsed = parseTerminalToolEvent(ev)
-                if (parsed != null) {
-                    when (parsed) {
-                        is TerminalToolEvent.SessionList -> Log.i("RC_DIAG", "termEvent SessionList count=${parsed.sessions.size}")
-                        is TerminalToolEvent.Opened -> Log.i("RC_DIAG", "termEvent Opened id=${parsed.termId} ok=${parsed.ok} err=${parsed.error}")
-                        is TerminalToolEvent.Attached -> Log.i("RC_DIAG", "termEvent Attached id=${parsed.termId} ok=${parsed.ok} err=${parsed.error}")
-                        is TerminalToolEvent.Exited -> Log.i("RC_DIAG", "termEvent Exited id=${parsed.termId} code=${parsed.exitCode}")
-                        is TerminalToolEvent.Error -> Log.w("RC_DIAG", "termEvent Error id=${parsed.termId} msg=${parsed.message}")
-                        is TerminalToolEvent.Output, is TerminalToolEvent.Renamed -> Unit
-                    }
-                    _terminalEvents.emit(parsed)
-                }
-            }
-        }
-
-        val pmResp = runCatching {
-            JSONObject(Core.toolCall(JSONObject().put("action", "portmap_poll_updates").toString()))
-        }.getOrNull()
-        pmResp?.optJSONArray("rules")?.let { arr ->
-            _portMapRules.value = List(arr.length()) { idx -> arr.getJSONObject(idx).toPortMapRule() }
         }
     }
 
@@ -473,7 +433,7 @@ class SessionManager(
                 )
             }
             "hud" -> if (data != null) {
-                val hud = HudSnapshotModel(
+                val nextHud = HudSnapshotModel(
                     elapsed = data.optString("elapsed"),
                     transport = data.optString("transport"),
                     fps = data.optDouble("fps", 0.0),
@@ -483,7 +443,9 @@ class SessionManager(
                     lossPct = data.optDouble("loss_pct", 0.0),
                     resolution = data.optString("resolution"),
                 )
-                _state.value = _state.value.copy(hud = hud)
+                if (_hud.value != nextHud) {
+                    _hud.value = nextHud
+                }
             }
             "display_config" -> if (data != null) {
                 val presetsArr = data.optJSONArray("presets")

@@ -6,13 +6,18 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
+import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,62 +28,86 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.AccessibilityNew
+import androidx.compose.material.icons.rounded.CheckCircleOutline
 import androidx.compose.material.icons.rounded.ContentCopy
-import androidx.compose.material.icons.rounded.Devices
+import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.ScreenShare
+import androidx.compose.material.icons.rounded.SystemUpdate
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.rabbitcontrol.android.R
 import io.rabbitcontrol.android.core.data.AccountRepository
 import io.rabbitcontrol.android.core.data.InteractionPrefsStore
 import io.rabbitcontrol.android.core.data.OrientationPreference
 import io.rabbitcontrol.android.core.data.PortraitLayoutMode
 import io.rabbitcontrol.android.core.data.TouchInputMode
 import io.rabbitcontrol.android.core.host.HostManager
+import io.rabbitcontrol.android.core.update.AppUpdateManager
+import io.rabbitcontrol.android.core.update.AppUpdateUiState
+import io.rabbitcontrol.android.core.update.ReleaseInfo
+import io.rabbitcontrol.android.core.update.UpdateCheckStatus
+import io.rabbitcontrol.android.core.update.UpdateDownloadState
 import io.rabbitcontrol.android.ui.components.RabbitCard
 import io.rabbitcontrol.android.ui.components.RabbitSegmentedControl
 import io.rabbitcontrol.android.ui.components.RabbitStatusPill
 import io.rabbitcontrol.android.ui.components.RabbitSwitchRow
+import io.rabbitcontrol.android.ui.components.RabbitToast
 import io.rabbitcontrol.android.ui.components.RabbitTopBar
 import io.rabbitcontrol.android.ui.components.StatusTone
 import io.rabbitcontrol.android.ui.screens.auth.AuthStep
 import io.rabbitcontrol.android.ui.theme.LocalRabbitPalette
+import io.rabbitcontrol.android.ui.theme.RabbitElevation
 import io.rabbitcontrol.android.ui.theme.RabbitRadius
 import io.rabbitcontrol.android.ui.theme.RabbitSpacing
 import org.koin.compose.koinInject
@@ -107,7 +136,12 @@ fun HostSettingsScreen(
     val signal by accountRepo.signalStatus.collectAsStateWithLifecycle()
     val hostState by hostManager.state.collectAsStateWithLifecycle()
 
-    var copiedCodeHint by remember { mutableStateOf(false) }
+    LaunchedEffect(hostState.lastError) {
+        val err = hostState.lastError
+        if (!err.isNullOrBlank()) {
+            RabbitToast.error(err)
+        }
+    }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -265,18 +299,14 @@ fun HostSettingsScreen(
                                 fontWeight = FontWeight.Bold,
                                 color = palette.primaryText,
                             )
-                            if (copiedCodeHint) {
-                                Text("已复制到剪贴板", fontSize = 11.sp, color = palette.success)
-                            }
                         }
                         IconButton(onClick = {
                             clipboard.setText(AnnotatedString(code))
-                            copiedCodeHint = true
+                            RabbitToast.success("已复制临时验证码")
                         }) {
                             Icon(Icons.Rounded.ContentCopy, "复制验证码", tint = palette.muted, modifier = Modifier.size(18.dp))
                         }
                         IconButton(onClick = {
-                            copiedCodeHint = false
                             hostManager.rotateTempCode()
                         }) {
                             Icon(Icons.Rounded.Refresh, "刷新验证码", tint = palette.muted, modifier = Modifier.size(18.dp))
@@ -317,11 +347,6 @@ fun HostSettingsScreen(
                         )
                     }
                     Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, tint = palette.muted)
-                }
-
-                if (!hostState.lastError.isNullOrBlank()) {
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(hostState.lastError.orEmpty(), fontSize = 12.sp, color = palette.danger)
                 }
             }
         }
@@ -442,71 +467,110 @@ fun AboutScreen(
 ) {
     val palette = LocalRabbitPalette.current
     val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
     val versionName = remember { getAppVersionName(context) }
 
-    Column(
+    fun openUrl(url: String) {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { context.startActivity(intent) }
+            .onFailure { RabbitToast.error("未找到可用的浏览器") }
+    }
+
+    fun copyUrl(label: String, url: String) {
+        clipboard.setText(AnnotatedString(url))
+        RabbitToast.success("已复制$label 链接")
+    }
+
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .background(palette.canvas)
             .systemBarsPadding(),
     ) {
-        RabbitTopBar(title = "关于我们", onBack = onBack)
+        Column(modifier = Modifier.fillMaxSize()) {
+            RabbitTopBar(title = "关于我们", onBack = onBack)
 
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = RabbitSpacing.Lg, vertical = RabbitSpacing.Md),
-            verticalArrangement = Arrangement.spacedBy(RabbitSpacing.Md),
-        ) {
-            RabbitCard(modifier = Modifier.fillMaxWidth()) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = RabbitSpacing.Sm),
-                ) {
-                    Box(
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = RabbitSpacing.Lg, vertical = RabbitSpacing.Md),
+                verticalArrangement = Arrangement.spacedBy(RabbitSpacing.Md),
+            ) {
+                RabbitCard(modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier
-                            .size(56.dp)
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(palette.primarySoft),
-                        contentAlignment = Alignment.Center,
+                            .fillMaxWidth()
+                            .padding(vertical = RabbitSpacing.Sm),
                     ) {
-                        Icon(Icons.Rounded.Devices, null, tint = palette.primaryText, modifier = Modifier.size(28.dp))
-                    }
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text("RabbitControl", fontSize = 19.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(RabbitRadius.Pill))
-                            .background(palette.field)
-                            .border(1.dp, palette.line, RoundedCornerShape(RabbitRadius.Pill))
-                            .padding(horizontal = 10.dp, vertical = 3.dp),
-                    ) {
+                        Image(
+                            painter = painterResource(R.drawable.rabbitcontrol),
+                            contentDescription = null,
+                            modifier = Modifier
+                                .size(56.dp)
+                                .clip(RoundedCornerShape(14.dp)),
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text("RabbitControl", fontSize = 19.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(RabbitRadius.Pill))
+                                .background(palette.field)
+                                .border(1.dp, palette.line, RoundedCornerShape(RabbitRadius.Pill))
+                                .padding(horizontal = 10.dp, vertical = 3.dp),
+                        ) {
+                            Text(
+                                text = "v$versionName",
+                                fontSize = 12.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = palette.muted,
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(10.dp))
                         Text(
-                            text = "v$versionName",
-                            fontSize = 12.sp,
-                            fontFamily = FontFamily.Monospace,
+                            text = "低延迟跨平台远程桌面与移动协助客户端",
+                            fontSize = 13.sp,
                             color = palette.muted,
                         )
                     }
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Text(
-                        text = "低延迟跨平台远程桌面与移动协助客户端",
-                        fontSize = 13.sp,
-                        color = palette.muted,
+                }
+
+                RabbitCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(horizontal = RabbitSpacing.Lg, vertical = 4.dp),
+                ) {
+                    AboutInfoRow(label = "当前版本", value = "v$versionName")
+                    HorizontalDivider(color = palette.line, thickness = 1.dp)
+                    AboutLinkRow(
+                        label = "项目主页",
+                        value = "TokenBoom/rabbitcontrol-android",
+                        onClick = { openUrl(AppUpdateManager.GITHUB_REPO_URL) },
+                        onLongClick = { copyUrl("项目主页", AppUpdateManager.GITHUB_REPO_URL) },
+                    )
+                    HorizontalDivider(color = palette.line, thickness = 1.dp)
+                    AboutLinkRow(
+                        label = "反馈与建议",
+                        value = "GitHub Issues",
+                        onClick = { openUrl(AppUpdateManager.GITHUB_ISSUES_URL) },
+                        onLongClick = { copyUrl("Issues", AppUpdateManager.GITHUB_ISSUES_URL) },
+                    )
+                    HorizontalDivider(color = palette.line, thickness = 1.dp)
+                    AboutLinkRow(
+                        label = "发行版本",
+                        value = "GitHub Releases",
+                        onClick = { openUrl(AppUpdateManager.GITHUB_RELEASES_URL) },
+                        onLongClick = { copyUrl("Releases", AppUpdateManager.GITHUB_RELEASES_URL) },
                     )
                 }
-            }
 
-            RabbitCard(modifier = Modifier.fillMaxWidth()) {
-                AboutInfoRow(label = "当前版本", value = "v$versionName")
-                HorizontalDivider(color = palette.line, thickness = 1.dp)
-                AboutInfoRow(label = "GitHub 仓库", value = "待配置")
-                HorizontalDivider(color = palette.line, thickness = 1.dp)
-                AboutInfoRow(label = "反馈与建议", value = "待配置 GitHub Issues")
+                Text(
+                    text = "提示：长按任意开源地址条目可快速复制链接",
+                    fontSize = 12.sp,
+                    color = palette.muted,
+                    modifier = Modifier.padding(horizontal = 4.dp),
+                )
             }
         }
     }
@@ -521,7 +585,7 @@ private fun AboutInfoRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .defaultMinSize(minHeight = 48.dp)
+            .defaultMinSize(minHeight = 50.dp)
             .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -529,3 +593,410 @@ private fun AboutInfoRow(
         Text(value, fontSize = 13.sp, color = palette.muted)
     }
 }
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun AboutLinkRow(
+    label: String,
+    value: String,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+) {
+    val palette = LocalRabbitPalette.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .defaultMinSize(minHeight = 50.dp)
+            .clip(RoundedCornerShape(RabbitRadius.Sm))
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, fontSize = 14.sp, color = palette.text, modifier = Modifier.weight(1f))
+        Text(
+            text = value,
+            fontSize = 12.sp,
+            color = palette.primaryText,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.widthIn(max = 200.dp),
+        )
+        Spacer(modifier = Modifier.width(6.dp))
+        Icon(
+            imageVector = Icons.AutoMirrored.Rounded.OpenInNew,
+            contentDescription = null,
+            tint = palette.muted,
+            modifier = Modifier.size(15.dp),
+        )
+    }
+}
+
+@Composable
+fun AppUpdateDialog(
+    state: AppUpdateUiState,
+    onRetryCheck: () -> Unit,
+    onStartDownload: (ReleaseInfo) -> Unit,
+    onCancelDownload: () -> Unit,
+    onInstall: (String) -> Unit,
+    onOpenReleasePage: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val palette = LocalRabbitPalette.current
+    val release = state.availableRelease ?: (state.checkStatus as? UpdateCheckStatus.UpdateAvailable)?.release
+
+    Dialog(
+        onDismissRequest = {
+            if (state.downloadState !is UpdateDownloadState.Downloading) onDismiss()
+        },
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .widthIn(max = 370.dp),
+            shape = RoundedCornerShape(RabbitRadius.Xl),
+            color = palette.surface,
+            tonalElevation = 0.dp,
+            shadowElevation = RabbitElevation.Floating,
+            border = BorderStroke(1.dp, palette.line),
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp),
+            ) {
+                when (val dl = state.downloadState) {
+                    is UpdateDownloadState.Downloading -> {
+                        Text("正在下载更新", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
+                        if (release != null) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                "v${release.versionName}${release.apkName?.let { " · $it" } ?: ""}",
+                                fontSize = 12.sp,
+                                color = palette.muted,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(16.dp))
+                        val progress = if (dl.totalBytes > 0L) {
+                            (dl.downloadedBytes.toFloat() / dl.totalBytes.toFloat()).coerceIn(0f, 1f)
+                        } else {
+                            null
+                        }
+                        if (progress != null) {
+                            LinearProgressIndicator(
+                                progress = { progress },
+                                color = palette.primary,
+                                trackColor = palette.line,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(6.dp)
+                                    .clip(RoundedCornerShape(3.dp)),
+                            )
+                        } else {
+                            LinearProgressIndicator(
+                                color = palette.primary,
+                                trackColor = palette.line,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(6.dp)
+                                    .clip(RoundedCornerShape(3.dp)),
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            val pctStr = progress?.let { "${(it * 100).toInt()}%" } ?: "下载中…"
+                            val sizeStr = if (dl.totalBytes > 0L) {
+                                "${formatUpdateBytes(dl.downloadedBytes)} / ${formatUpdateBytes(dl.totalBytes)}"
+                            } else {
+                                formatUpdateBytes(dl.downloadedBytes)
+                            }
+                            Text("$pctStr · $sizeStr", fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = palette.text)
+                            Text(
+                                if (dl.speedBytesPerSec > 0L) "${formatUpdateBytes(dl.speedBytesPerSec)}/s" else "",
+                                fontSize = 12.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = palette.muted,
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(20.dp))
+                        DialogActionButton(
+                            label = "取消下载",
+                            filled = false,
+                            onClick = onCancelDownload,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+
+                    is UpdateDownloadState.ReadyToInstall -> {
+                        Text("安装包已就绪", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = if (dl.needsInstallPermission) {
+                                "请在系统设置中开启「允许来自此来源的应用」安装权限，授权后点击下方「立即安装」。"
+                            } else {
+                                "新版本安装包已下载完成，点击「立即安装」即可升级。"
+                            },
+                            fontSize = 14.sp,
+                            lineHeight = 20.sp,
+                            color = palette.muted,
+                        )
+                        Spacer(modifier = Modifier.height(20.dp))
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            DialogActionButton(
+                                label = "稍后",
+                                filled = false,
+                                onClick = onDismiss,
+                                modifier = Modifier.weight(1f),
+                            )
+                            DialogActionButton(
+                                label = "立即安装",
+                                filled = true,
+                                onClick = { onInstall(dl.apkPath) },
+                                modifier = Modifier.weight(1.3f),
+                            )
+                        }
+                    }
+
+                    is UpdateDownloadState.Error -> {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Icon(Icons.Rounded.ErrorOutline, null, tint = palette.danger, modifier = Modifier.size(20.dp))
+                            Text("下载失败", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(dl.message, fontSize = 14.sp, lineHeight = 20.sp, color = palette.muted)
+                        Spacer(modifier = Modifier.height(20.dp))
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            DialogActionButton(
+                                label = "浏览器打开",
+                                filled = false,
+                                onClick = {
+                                    onOpenReleasePage(release?.htmlUrl ?: AppUpdateManager.GITHUB_RELEASES_URL)
+                                    onDismiss()
+                                },
+                                modifier = Modifier.weight(1f),
+                            )
+                            DialogActionButton(
+                                label = "重试下载",
+                                filled = true,
+                                onClick = {
+                                    if (release != null) onStartDownload(release) else onRetryCheck()
+                                },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+
+                    UpdateDownloadState.Idle -> {
+                        when (val check = state.checkStatus) {
+                            UpdateCheckStatus.Checking -> {
+                                Text("检查更新", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
+                                Spacer(modifier = Modifier.height(16.dp))
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                ) {
+                                    CircularProgressIndicator(
+                                        color = palette.primary,
+                                        strokeWidth = 2.5.dp,
+                                        modifier = Modifier.size(22.dp),
+                                    )
+                                    Text("正在查询 GitHub 最新正式版本…", fontSize = 14.sp, color = palette.muted)
+                                }
+                                Spacer(modifier = Modifier.height(20.dp))
+                                DialogActionButton(
+                                    label = "关闭",
+                                    filled = false,
+                                    onClick = onDismiss,
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
+
+                            is UpdateCheckStatus.UpdateAvailable -> {
+                                val rel = check.release
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(34.dp)
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(palette.primarySoft),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        Icon(Icons.Rounded.SystemUpdate, null, tint = palette.primaryText, modifier = Modifier.size(18.dp))
+                                    }
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("发现新版本 v${rel.versionName}", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
+                                        val meta = buildString {
+                                            append("当前 v${state.currentVersion}")
+                                            if (rel.apkSizeBytes > 0L) append(" · ${formatUpdateBytes(rel.apkSizeBytes)}")
+                                            if (rel.publishedAt.isNotBlank()) append(" · ${rel.publishedAt}")
+                                        }
+                                        Text(meta, fontSize = 12.sp, color = palette.muted)
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(14.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(min = 72.dp, max = 210.dp)
+                                        .clip(RoundedCornerShape(RabbitRadius.Md))
+                                        .background(palette.field)
+                                        .border(1.dp, palette.line, RoundedCornerShape(RabbitRadius.Md))
+                                        .verticalScroll(rememberScrollState())
+                                        .padding(12.dp),
+                                ) {
+                                    Text(
+                                        text = rel.releaseNotes,
+                                        fontSize = 13.sp,
+                                        lineHeight = 19.sp,
+                                        color = palette.text,
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Row(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(RabbitRadius.Sm))
+                                        .clickable { onOpenReleasePage(rel.htmlUrl) }
+                                        .padding(vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    Text("前往 GitHub Releases 查看详情", fontSize = 12.sp, color = palette.primaryText)
+                                    Icon(Icons.AutoMirrored.Rounded.OpenInNew, null, tint = palette.primaryText, modifier = Modifier.size(13.dp))
+                                }
+
+                                Spacer(modifier = Modifier.height(16.dp))
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    DialogActionButton(
+                                        label = "稍后再说",
+                                        filled = false,
+                                        onClick = onDismiss,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    DialogActionButton(
+                                        label = if (rel.apkUrl != null) "立即更新" else "前往下载",
+                                        filled = true,
+                                        onClick = {
+                                            if (rel.apkUrl != null) {
+                                                onStartDownload(rel)
+                                            } else {
+                                                onOpenReleasePage(rel.htmlUrl)
+                                                onDismiss()
+                                            }
+                                        },
+                                        modifier = Modifier.weight(1.3f),
+                                    )
+                                }
+                            }
+
+                            is UpdateCheckStatus.Error -> {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Icon(Icons.Rounded.ErrorOutline, null, tint = palette.danger, modifier = Modifier.size(20.dp))
+                                    Text("检查更新失败", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(check.message, fontSize = 14.sp, lineHeight = 20.sp, color = palette.muted)
+                                Spacer(modifier = Modifier.height(20.dp))
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    DialogActionButton(
+                                        label = "浏览器查看",
+                                        filled = false,
+                                        onClick = {
+                                            onOpenReleasePage(AppUpdateManager.GITHUB_RELEASES_URL)
+                                            onDismiss()
+                                        },
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    DialogActionButton(
+                                        label = "重试",
+                                        filled = true,
+                                        onClick = onRetryCheck,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                }
+                            }
+
+                            UpdateCheckStatus.Idle, is UpdateCheckStatus.UpToDate -> {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Icon(Icons.Rounded.CheckCircleOutline, null, tint = palette.success, modifier = Modifier.size(20.dp))
+                                    Text("已是最新版本", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    "当前版本 v${state.currentVersion} 已是 GitHub 最新正式版。",
+                                    fontSize = 14.sp,
+                                    lineHeight = 20.sp,
+                                    color = palette.muted,
+                                )
+                                Spacer(modifier = Modifier.height(20.dp))
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    DialogActionButton(
+                                        label = "查看历史版本",
+                                        filled = false,
+                                        onClick = {
+                                            onOpenReleasePage(AppUpdateManager.GITHUB_RELEASES_URL)
+                                            onDismiss()
+                                        },
+                                        modifier = Modifier.weight(1.1f),
+                                    )
+                                    DialogActionButton(
+                                        label = "知道了",
+                                        filled = true,
+                                        onClick = onDismiss,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DialogActionButton(
+    label: String,
+    filled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val palette = LocalRabbitPalette.current
+    Box(
+        modifier = modifier
+            .height(44.dp)
+            .clip(RoundedCornerShape(RabbitRadius.Md))
+            .background(if (filled) palette.primary else palette.field)
+            .then(
+                if (!filled) Modifier.border(1.dp, palette.line, RoundedCornerShape(RabbitRadius.Md))
+                else Modifier,
+            )
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = label,
+            fontSize = 14.sp,
+            fontWeight = if (filled) FontWeight.SemiBold else FontWeight.Medium,
+            color = if (filled) Color.White else palette.text,
+            maxLines = 1,
+        )
+    }
+}
+
+private fun formatUpdateBytes(bytes: Long): String {
+    if (bytes < 1024L) return "$bytes B"
+    val kb = bytes / 1024.0
+    if (kb < 1024.0) return String.format("%.0f KB", kb)
+    val mb = kb / 1024.0
+    return String.format("%.1f MB", mb)
+}
+

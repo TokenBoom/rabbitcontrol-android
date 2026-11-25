@@ -9,6 +9,7 @@ import android.util.Log
 import android.view.WindowManager
 import io.rabbitcontrol.android.core.data.AccountRepository
 import io.rabbitcontrol.android.core.data.InteractionPrefsStore
+import io.rabbitcontrol.android.core.nativebridge.NativeRuntimeBootstrap
 import io.rabbitcontrol.android.session.Core
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -97,6 +98,7 @@ class HostManager(
             accessibilityEnabled = RabbitAccessibilityService.isEnabled(context),
         )
         scope.launch {
+            NativeRuntimeBootstrap.ensureReady(context)
             val (screenW, screenH, _) = queryDisplayMetrics()
             Core.setHostScreenMetrics(screenW, screenH)
 
@@ -106,6 +108,7 @@ class HostManager(
 
             val res = runCatching { JSONObject(Core.startHost(req.toString())) }
             res.onSuccess { obj ->
+                accountRepo.setBackgroundKeepAlive(true)
                 val pw = obj.optString("password").takeIf { it.isNotBlank() && it != "null" }
                 val ownerReady = obj.optBoolean("ownerSelfControlReady", false)
                 val listenAddr = obj.optString("listenAddr")
@@ -153,12 +156,15 @@ class HostManager(
     }
 
     fun stopHost() {
+        accountRepo.setBackgroundKeepAlive(false)
         pollJob?.cancel()
         pollJob = null
         screenEncoder?.releaseAll()
         screenEncoder = null
-        scope.launch {
-            runCatching { Core.stopHost() }
+        if (NativeRuntimeBootstrap.isReady) {
+            scope.launch {
+                runCatching { Core.stopHost() }
+            }
         }
         HostForegroundService.stop(context)
         _state.value = _state.value.copy(
@@ -240,23 +246,23 @@ class HostManager(
         pollJob = scope.launch {
             while (isActive) {
                 runCatching {
-                    val payload = JSONObject(Core.pollHostEvents())
-                    val updates = payload.optJSONArray("updates")
-                    if (updates != null) {
-                        for (i in 0 until updates.length()) {
-                            handleHostUpdate(updates.getJSONObject(i))
+                    val raw = Core.pollHostEvents()
+                    if (raw != null) {
+                        val payload = JSONObject(raw)
+                        payload.optJSONArray("updates")?.let { updates ->
+                            for (i in 0 until updates.length()) {
+                                handleHostUpdate(updates.getJSONObject(i))
+                            }
                         }
-                    }
-                    val encCmds = payload.optJSONArray("encoderCommands")
-                    if (encCmds != null) {
-                        for (i in 0 until encCmds.length()) {
-                            handleEncoderCommand(encCmds.getJSONObject(i))
+                        payload.optJSONArray("encoderCommands")?.let { encCmds ->
+                            for (i in 0 until encCmds.length()) {
+                                handleEncoderCommand(encCmds.getJSONObject(i))
+                            }
                         }
-                    }
-                    val inputEvs = payload.optJSONArray("inputEvents")
-                    if (inputEvs != null) {
-                        for (i in 0 until inputEvs.length()) {
-                            handleInputEvent(inputEvs.getJSONObject(i))
+                        payload.optJSONArray("inputEvents")?.let { inputEvs ->
+                            for (i in 0 until inputEvs.length()) {
+                                handleInputEvent(inputEvs.getJSONObject(i))
+                            }
                         }
                     }
                 }.onFailure { err ->

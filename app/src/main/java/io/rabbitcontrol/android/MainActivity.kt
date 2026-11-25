@@ -1,24 +1,21 @@
 package io.rabbitcontrol.android
 
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
+import android.animation.ObjectAnimator
 import android.content.Intent
 import android.graphics.Color as AndroidColor
 import android.os.Bundle
+import android.view.View
+import android.view.animation.DecelerateInterpolator
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -28,10 +25,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.unit.dp
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -43,6 +39,7 @@ import io.rabbitcontrol.android.core.data.DeviceToolKind
 import io.rabbitcontrol.android.core.data.InteractionPrefsStore
 import io.rabbitcontrol.android.core.nativebridge.RemoteDevice
 import io.rabbitcontrol.android.core.session.SessionManager
+import io.rabbitcontrol.android.ui.components.RabbitToastHost
 import io.rabbitcontrol.android.ui.screens.auth.AuthScreen
 import io.rabbitcontrol.android.ui.screens.auth.AuthStep
 import io.rabbitcontrol.android.ui.screens.detail.DeviceDetailScreen
@@ -56,6 +53,7 @@ import io.rabbitcontrol.android.ui.screens.tools.TerminalScreen
 import io.rabbitcontrol.android.ui.session.SessionActivity
 import io.rabbitcontrol.android.ui.theme.LocalRabbitPalette
 import io.rabbitcontrol.android.ui.theme.RabbitTheme
+import kotlinx.coroutines.launch
 import org.koin.android.ext.android.inject
 
 class MainActivity : ComponentActivity() {
@@ -65,9 +63,39 @@ class MainActivity : ComponentActivity() {
     private var pendingToolRoute by mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         pendingToolRoute = intent?.getStringExtra(EXTRA_NAV_TOOL)
+        lifecycleScope.launch {
+            if (!accountRepo.restored.value) {
+                runCatching { accountRepo.restore() }
+            }
+        }
+        splashScreen.setKeepOnScreenCondition { !accountRepo.restored.value }
+        splashScreen.setOnExitAnimationListener { splashScreenViewProvider ->
+            ObjectAnimator.ofFloat(
+                splashScreenViewProvider.view,
+                View.ALPHA,
+                1f,
+                0f,
+            ).apply {
+                interpolator = DecelerateInterpolator()
+                duration = 220L
+                addListener(
+                    object : AnimatorListenerAdapter() {
+                        override fun onAnimationEnd(animation: Animator) {
+                            splashScreenViewProvider.remove()
+                        }
+
+                        override fun onAnimationCancel(animation: Animator) {
+                            splashScreenViewProvider.remove()
+                        }
+                    },
+                )
+                start()
+            }
+        }
 
         setContent {
             val prefs by prefsStore.state.collectAsStateWithLifecycle()
@@ -92,18 +120,21 @@ class MainActivity : ComponentActivity() {
                 onDispose {}
             }
             RabbitTheme(darkTheme = darkTheme) {
-                RabbitControlNavRoot(
-                    accountRepo = accountRepo,
-                    sessionManager = sessionManager,
-                    pendingToolRoute = pendingToolRoute,
-                    onConsumePendingTool = { pendingToolRoute = null },
-                    onOpenSessionActivity = {
-                        startActivity(Intent(this, SessionActivity::class.java))
-                    },
-                    onOpenPreviewActivity = {
-                        startActivity(Intent(this, PreviewActivity::class.java))
-                    },
-                )
+                Box(modifier = Modifier.fillMaxSize()) {
+                    RabbitControlNavRoot(
+                        accountRepo = accountRepo,
+                        sessionManager = sessionManager,
+                        pendingToolRoute = pendingToolRoute,
+                        onConsumePendingTool = { pendingToolRoute = null },
+                        onOpenSessionActivity = {
+                            startActivity(Intent(this@MainActivity, SessionActivity::class.java))
+                        },
+                        onOpenPreviewActivity = {
+                            startActivity(Intent(this@MainActivity, PreviewActivity::class.java))
+                        },
+                    )
+                    RabbitToastHost(modifier = Modifier.align(Alignment.TopCenter))
+                }
             }
         }
     }
@@ -144,26 +175,7 @@ private fun RabbitControlNavRoot(
             modifier = Modifier
                 .fillMaxSize()
                 .background(palette.canvas),
-            contentAlignment = Alignment.Center,
-        ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-            ) {
-                Image(
-                    painter = painterResource(R.drawable.rabbitcontrol),
-                    contentDescription = null,
-                    modifier = Modifier
-                        .size(56.dp)
-                        .clip(RoundedCornerShape(14.dp)),
-                )
-                CircularProgressIndicator(
-                    color = palette.primary,
-                    strokeWidth = 2.5.dp,
-                    modifier = Modifier.size(24.dp),
-                )
-            }
-        }
+        )
         return
     }
 

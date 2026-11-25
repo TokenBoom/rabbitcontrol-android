@@ -10,6 +10,7 @@ import io.rabbitcontrol.android.core.data.TargetHistoryStore
 import io.rabbitcontrol.android.core.data.WallpaperCache
 import io.rabbitcontrol.android.core.host.HostManager
 import io.rabbitcontrol.android.core.host.HostUiState
+import io.rabbitcontrol.android.core.nativebridge.NativeRuntimeBootstrap
 import io.rabbitcontrol.android.core.nativebridge.RemoteDevice
 import io.rabbitcontrol.android.core.nativebridge.ServerConfigModel
 import io.rabbitcontrol.android.core.nativebridge.SignalStatusSnapshot
@@ -152,6 +153,7 @@ class HomeViewModel(
     fun parseDeviceCode(raw: String): String? {
         val digits = raw.filter { it.isDigit() }
         if (digits.length != 9) return null
+        NativeRuntimeBootstrap.ensureReady()
         return Core.deviceId(digits)
     }
 

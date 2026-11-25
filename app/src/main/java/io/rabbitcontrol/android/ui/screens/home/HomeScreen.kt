@@ -1,6 +1,8 @@
 package io.rabbitcontrol.android.ui.screens.home
 
+import android.content.Intent
 import android.graphics.Bitmap
+import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -84,11 +86,12 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -96,13 +99,18 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.OffsetMapping
 import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.rabbitcontrol.android.core.data.AppThemeMode
+import io.rabbitcontrol.android.core.data.rememberWallpaperImage
 import io.rabbitcontrol.android.core.nativebridge.RemoteDevice
 import io.rabbitcontrol.android.core.session.SessionStatus
+import io.rabbitcontrol.android.core.update.AppUpdateManager
+import io.rabbitcontrol.android.core.update.AppUpdateUiState
+import io.rabbitcontrol.android.core.update.UpdateDownloadState
 import io.rabbitcontrol.android.ui.components.RabbitCard
 import io.rabbitcontrol.android.ui.components.RabbitDialog
 import io.rabbitcontrol.android.ui.components.RabbitEmptyState
@@ -112,14 +120,25 @@ import io.rabbitcontrol.android.ui.components.RabbitSectionHeader
 import io.rabbitcontrol.android.ui.components.RabbitSegmentedControl
 import io.rabbitcontrol.android.ui.components.RabbitStatusPill
 import io.rabbitcontrol.android.ui.components.RabbitTextField
+import io.rabbitcontrol.android.ui.components.RabbitToast
 import io.rabbitcontrol.android.ui.components.StatusTone
 import io.rabbitcontrol.android.ui.screens.auth.AuthStep
+import io.rabbitcontrol.android.ui.screens.settings.AppUpdateDialog
 import io.rabbitcontrol.android.ui.screens.settings.getAppVersionName
 import io.rabbitcontrol.android.ui.theme.LocalRabbitPalette
 import io.rabbitcontrol.android.ui.theme.RabbitElevation
 import io.rabbitcontrol.android.ui.theme.RabbitRadius
 import io.rabbitcontrol.android.ui.theme.RabbitSpacing
 import org.koin.androidx.compose.koinViewModel
+import org.koin.compose.koinInject
+
+private val CompactCenteredTextStyle = TextStyle(
+    platformStyle = PlatformTextStyle(includeFontPadding = false),
+    lineHeightStyle = LineHeightStyle(
+        alignment = LineHeightStyle.Alignment.Center,
+        trim = LineHeightStyle.Trim.Both,
+    ),
+)
 
 @Composable
 fun HomeScreen(
@@ -136,6 +155,13 @@ fun HomeScreen(
     val activeSession by viewModel.activeSession.collectAsStateWithLifecycle()
     val kickedNotice by viewModel.kickedNotice.collectAsStateWithLifecycle()
     val hostState by viewModel.hostState.collectAsStateWithLifecycle()
+
+    val updateManager: AppUpdateManager = koinInject()
+    val updateState by updateManager.state.collectAsStateWithLifecycle()
+
+    LaunchedEffect(Unit) {
+        updateManager.checkForUpdate(force = false)
+    }
 
     LaunchedEffect(profile?.id, profile?.needsPassword) {
         if (profile != null && profile?.needsPassword == false) {
@@ -193,7 +219,21 @@ fun HomeScreen(
                         NavigationBarItem(
                             selected = selected,
                             onClick = { viewModel.selectTab(tab) },
-                            icon = { Icon(icon, contentDescription = tab.label) },
+                            icon = {
+                                Box {
+                                    Icon(icon, contentDescription = tab.label)
+                                    if (tab == HomeTab.Me && updateState.hasUpdate) {
+                                        Box(
+                                            modifier = Modifier
+                                                .align(Alignment.TopEnd)
+                                                .size(8.dp)
+                                                .clip(CircleShape)
+                                                .background(Color(0xFFE53935))
+                                                .border(1.dp, palette.surface, CircleShape),
+                                        )
+                                    }
+                                }
+                            },
                             label = { Text(tab.label, fontSize = 11.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal) },
                             colors = NavigationBarItemDefaults.colors(
                                 selectedIconColor = palette.primaryText,
@@ -226,6 +266,8 @@ fun HomeScreen(
                 HomeTab.Assist -> AssistTab(viewModel = viewModel, onOpenDevice = onOpenDevice)
                 HomeTab.Me -> ProfileTab(
                     viewModel = viewModel,
+                    updateManager = updateManager,
+                    updateState = updateState,
                     onOpenAuth = onOpenAuth,
                     onOpenPreviewCheck = onOpenPreviewCheck,
                     onOpenProfileRoute = onOpenProfileRoute,
@@ -359,10 +401,12 @@ private fun DevicesTab(
                                 Text(
                                     text = "${server!!.displayName}${if (servers.size > 1) " · ${servers.size}台" else ""}",
                                     fontSize = 12.sp,
+                                    lineHeight = 16.sp,
                                     color = palette.text,
                                     fontWeight = FontWeight.Medium,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
+                                    style = CompactCenteredTextStyle,
                                 )
                                 Spacer(modifier = Modifier.width(3.dp))
                                 Icon(Icons.Rounded.KeyboardArrowDown, "切换服务器", tint = palette.muted, modifier = Modifier.size(16.dp))
@@ -544,7 +588,7 @@ private fun DevicesTab(
                         }
                     }
                     items(online, key = { it.id }) { dev ->
-                        val thumb = remember(dev.id, wallpaperVersion) { viewModel.wallpaperCache.loadBitmap(dev.id) }
+                        val thumb = rememberWallpaperImage(viewModel.wallpaperCache, dev.id, wallpaperVersion, 320)
                         DeviceCard(device = dev, thumbnail = thumb, onClick = { onOpenDevice(dev) })
                     }
                 }
@@ -556,7 +600,7 @@ private fun DevicesTab(
                         }
                     }
                     items(offline, key = { it.id }) { dev ->
-                        val thumb = remember(dev.id, wallpaperVersion) { viewModel.wallpaperCache.loadBitmap(dev.id) }
+                        val thumb = rememberWallpaperImage(viewModel.wallpaperCache, dev.id, wallpaperVersion, 320)
                         DeviceCard(device = dev, thumbnail = thumb, onClick = { onOpenDevice(dev) })
                     }
                 }
@@ -691,7 +735,7 @@ private fun deviceOsIcon(raw: String): ImageVector {
 }
 
 @Composable
-private fun DeviceCard(device: RemoteDevice, thumbnail: Bitmap?, onClick: () -> Unit) {
+private fun DeviceCard(device: RemoteDevice, thumbnail: ImageBitmap?, onClick: () -> Unit) {
     val palette = LocalRabbitPalette.current
     val online = (device.online || device.busy) && !device.disabled
     val (statusLabel, dotColor) = when {
@@ -708,7 +752,7 @@ private fun DeviceCard(device: RemoteDevice, thumbnail: Bitmap?, onClick: () -> 
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(92.dp),
+                .height(98.dp),
         ) {
             Box(
                 modifier = Modifier
@@ -720,7 +764,7 @@ private fun DeviceCard(device: RemoteDevice, thumbnail: Bitmap?, onClick: () -> 
             ) {
                 if (thumbnail != null) {
                     Image(
-                        bitmap = thumbnail.asImageBitmap(),
+                        bitmap = thumbnail,
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier
@@ -775,9 +819,11 @@ private fun DeviceCard(device: RemoteDevice, thumbnail: Bitmap?, onClick: () -> 
                     Text(
                         text = statusLabel,
                         fontSize = 10.sp,
+                        lineHeight = 13.sp,
                         fontWeight = FontWeight.Medium,
                         color = Color.White,
                         maxLines = 1,
+                        style = CompactCenteredTextStyle,
                     )
                 }
             }
@@ -786,18 +832,18 @@ private fun DeviceCard(device: RemoteDevice, thumbnail: Bitmap?, onClick: () -> 
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight()
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                    .padding(horizontal = 12.dp, vertical = 9.dp),
             ) {
                 Text(
                     device.name,
                     fontSize = 15.sp,
-                    lineHeight = 20.sp,
+                    lineHeight = 19.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = palette.text,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(3.dp))
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(5.dp),
@@ -811,9 +857,11 @@ private fun DeviceCard(device: RemoteDevice, thumbnail: Bitmap?, onClick: () -> 
                     Text(
                         text = formatDeviceOs(device.os),
                         fontSize = 12.sp,
+                        lineHeight = 16.sp,
                         color = palette.muted,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                        style = CompactCenteredTextStyle,
                     )
                 }
                 Spacer(modifier = Modifier.weight(1f))
@@ -829,26 +877,32 @@ private fun DeviceCard(device: RemoteDevice, thumbnail: Bitmap?, onClick: () -> 
                                 .border(1.dp, palette.line, RoundedCornerShape(8.dp))
                                 .padding(horizontal = 8.dp, vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(3.dp),
                         ) {
                             Icon(
                                 imageVector = Icons.Rounded.PlayArrow,
                                 contentDescription = null,
                                 tint = palette.primaryText,
-                                modifier = Modifier.size(13.dp),
+                                modifier = Modifier.size(14.dp),
                             )
-                            Spacer(modifier = Modifier.width(3.dp))
                             Text(
                                 text = if (device.busy) "返回控制" else "连接桌面",
                                 fontSize = 11.sp,
+                                lineHeight = 14.sp,
                                 fontWeight = FontWeight.Medium,
                                 color = palette.text,
+                                maxLines = 1,
+                                style = CompactCenteredTextStyle,
                             )
                         }
                     } else {
                         Text(
                             text = if (device.disabled) "已停用" else "当前离线",
                             fontSize = 11.sp,
+                            lineHeight = 14.sp,
                             color = palette.muted.copy(alpha = 0.8f),
+                            maxLines = 1,
+                            style = CompactCenteredTextStyle,
                         )
                     }
                     Spacer(modifier = Modifier.weight(1f))
@@ -928,8 +982,6 @@ private fun AssistTab(
     }
 
     var quickTab by remember { mutableStateOf(AssistQuickTab.Recent) }
-    var invalidError by remember { mutableStateOf<String?>(null) }
-    val validTarget = remember(input) { viewModel.parseDeviceCode(input) }
 
     Column(
         modifier = Modifier
@@ -967,10 +1019,7 @@ private fun AssistTab(
                 Spacer(modifier = Modifier.height(16.dp))
                 RabbitTextField(
                     value = input,
-                    onValueChange = {
-                        viewModel.updateAssistInput(it)
-                        invalidError = null
-                    },
+                    onValueChange = { viewModel.updateAssistInput(it) },
                     label = "9 位设备码",
                     placeholder = "例如 604 928 235",
                     keyboardType = KeyboardType.Number,
@@ -984,10 +1033,7 @@ private fun AssistTab(
                     trailingIcon = if (input.isNotEmpty()) {
                         {
                             IconButton(
-                                onClick = {
-                                    viewModel.updateAssistInput("")
-                                    invalidError = null
-                                },
+                                onClick = { viewModel.updateAssistInput("") },
                             ) {
                                 Icon(
                                     imageVector = Icons.Rounded.Close,
@@ -1001,19 +1047,15 @@ private fun AssistTab(
                         null
                     },
                 )
-                if (!invalidError.isNullOrBlank()) {
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(invalidError.orEmpty(), color = palette.danger, fontSize = 12.sp)
-                }
 
                 Spacer(modifier = Modifier.height(16.dp))
                 RabbitPrimaryButton(
                     label = "开始远控",
-                    enabled = validTarget != null,
+                    enabled = input.isNotBlank(),
                     onClick = {
                         val parsed = viewModel.parseDeviceCode(input)
                         if (parsed == null) {
-                            invalidError = "请输入有效的 9 位数字设备码"
+                            RabbitToast.error("请输入有效的 9 位数字设备码")
                             return@RabbitPrimaryButton
                         }
                         viewModel.recordTarget(parsed)
@@ -1067,10 +1109,7 @@ private fun AssistTab(
                                 .fillMaxWidth()
                                 .defaultMinSize(minHeight = 48.dp)
                                 .clip(RoundedCornerShape(RabbitRadius.Sm))
-                                .clickable {
-                                    viewModel.updateAssistInput(item)
-                                    invalidError = null
-                                }
+                                .clickable { viewModel.updateAssistInput(item) }
                                 .padding(horizontal = 8.dp, vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
@@ -1104,6 +1143,8 @@ private fun AssistTab(
 @Composable
 private fun ProfileTab(
     viewModel: HomeViewModel,
+    updateManager: AppUpdateManager,
+    updateState: AppUpdateUiState,
     onOpenAuth: (AuthStep, Boolean) -> Unit,
     onOpenPreviewCheck: () -> Unit,
     onOpenProfileRoute: (String) -> Unit,
@@ -1254,11 +1295,48 @@ private fun ProfileTab(
             modifier = Modifier.fillMaxWidth(),
             contentPadding = PaddingValues(horizontal = RabbitSpacing.Lg, vertical = 4.dp),
         ) {
+            val newVer = updateState.availableRelease?.versionName
             ProfileMenuRow(
                 icon = Icons.Rounded.SystemUpdate,
                 title = "版本更新",
-                trailingText = "v$versionName",
-                onClick = { showVersionDialog = true },
+                trailingText = if (newVer == null) "v$versionName" else null,
+                trailingContent = if (newVer != null) {
+                    {
+                        Row(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(RabbitRadius.Pill))
+                                .background(palette.dangerSoft)
+                                .padding(horizontal = 8.dp, vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp),
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(6.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFFE53935)),
+                            )
+                            Text(
+                                text = "新版本 v$newVer",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = palette.danger,
+                                maxLines = 1,
+                            )
+                        }
+                    }
+                } else {
+                    null
+                },
+                onClick = {
+                    showVersionDialog = true
+                    if (!updateState.hasUpdate &&
+                        updateState.downloadState !is UpdateDownloadState.Downloading &&
+                        updateState.downloadState !is UpdateDownloadState.ReadyToInstall
+                    ) {
+                        updateManager.checkForUpdate(force = true)
+                    }
+                },
             )
             HorizontalDivider(color = palette.line, thickness = 1.dp)
             ProfileMenuRow(
@@ -1348,12 +1426,17 @@ private fun ProfileTab(
     }
 
     if (showVersionDialog) {
-        RabbitDialog(
-            title = "版本更新",
-            message = "当前版本：v$versionName\n\n配置 GitHub 仓库地址后即可在线检查与更新版本。",
-            onDismissRequest = { showVersionDialog = false },
-            confirmLabel = "知道了",
-            onConfirm = { showVersionDialog = false },
+        AppUpdateDialog(
+            state = updateState,
+            onRetryCheck = { updateManager.checkForUpdate(force = true) },
+            onStartDownload = { rel -> updateManager.startDownload(rel) },
+            onCancelDownload = { updateManager.cancelDownload() },
+            onInstall = { path -> updateManager.triggerInstall(path) },
+            onOpenReleasePage = { url ->
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                runCatching { context.startActivity(intent) }
+            },
+            onDismiss = { showVersionDialog = false },
         )
     }
 

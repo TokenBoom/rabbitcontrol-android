@@ -1,12 +1,10 @@
 package io.rabbitcontrol.android.core.input
 
 import android.content.Context
-import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.Paint
-import android.graphics.Path
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.Choreographer
 import android.view.HapticFeedbackConstants
 import android.view.InputDevice
@@ -21,14 +19,15 @@ import kotlin.math.hypot
 import kotlin.math.roundToInt
 
 /**
- * Ultra-low-latency 120Hz native touch & vector cursor overlay.
+ * Zero-draw, unbuffered 120Hz/240Hz touch & hardware mouse input layer.
  *
- * Supports:
- * - Trackpad mode: nonlinear acceleration, 1-finger move/tap/double-tap/tap-drag,
- *   3-finger drag, 2-finger tap right-click, 2-finger inertial scroll, 2-finger pinch zoom.
- * - Direct-touch mode: inverse zoom/pan coordinate mapping + optional fingertip offset.
- * - Dedicated portrait bottom-half trackpad mode (`trackpadOnly = true`).
- * - Hardware Bluetooth/USB mouse & trackpad passthrough (`SOURCE_MOUSE`).
+ * - Uses `requestUnbufferedDispatch` to shave 4~8ms VSYNC touch batching latency.
+ * - Integrates historical `MotionEvent` samples for accurate velocity curve acceleration.
+ * - Updates [NativeVideoStageView]'s hardware-composited cursor via RenderNode translation
+ *   (zero full-screen Canvas invalidation), showing steady arrow in Trackpad mode and hiding
+ *   it in Direct-Touch mode while preserving lightweight tap ripple feedback.
+ * - Micro-coalesces high-rate unbuffered `MouseMove` wire packets while flushing immediately
+ *   before any button press/release or scroll event.
  */
 class PrecisionTouchLayer(
     context: Context,
@@ -54,6 +53,12 @@ class PrecisionTouchLayer(
     }
 
     var inputMode: TouchInputMode = TouchInputMode.Trackpad
+        set(value) {
+            if (field != value) {
+                field = value
+                syncStageCursorVisibility()
+            }
+        }
     var sensitivity: Float = 1.15f
     var naturalScroll: Boolean = true
     var directTouchOffset: Boolean = true
@@ -63,6 +68,7 @@ class PrecisionTouchLayer(
             val prev = field
             field = value
             if (prev && !value && leftButtonHeld) {
+                flushPendingWireMove()
                 leftButtonHeld = false
                 onButton(0, false)
                 if (gesture == Gesture.TrackpadDrag) gesture = Gesture.TrackpadMove
@@ -71,9 +77,11 @@ class PrecisionTouchLayer(
         }
     var watchOnly: Boolean = false
         set(value) {
-            field = value
-            if (value) cancelGesture()
-            invalidate()
+            if (field != value) {
+                field = value
+                if (value) cancelGesture()
+                syncStageCursorVisibility()
+            }
         }
 
     private val accelerator = PointerAccelerator()
@@ -96,6 +104,19 @@ class PrecisionTouchLayer(
     private var lastTapUpY = 0f
     private var pendingTapDrag = false
     private var leftButtonHeld = false
+
+    // Wire MouseMove micro-coalescing (~200Hz max wire rate, 0ms first-move latency)
+    private var lastWireNx = -1
+    private var lastWireNy = -1
+    private var lastWireSendNs = 0L
+    private var hasPendingWireMove = false
+    private var pendingWireNx = 0
+    private var pendingWireNy = 0
+    private var flushScheduled = false
+    private val flushWireRunnable = Runnable {
+        flushScheduled = false
+        flushPendingWireMove()
+    }
 
     // Two-finger scroll & pinch tracking
     private var twoDownTimeMs = 0L
@@ -136,28 +157,6 @@ class PrecisionTouchLayer(
         }
     }
 
-    // Crisp vector cursor & tap feedback
-    private var rippleX = -1f
-    private var rippleY = -1f
-    private var rippleAlpha = 0f
-    private var rippleColor = Color.WHITE
-
-    private val arrowPath = Path()
-    private val cursorFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
-        style = Paint.Style.FILL
-    }
-    private val cursorStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFF10141A.toInt()
-        style = Paint.Style.STROKE
-        strokeWidth = 1.8f * density
-        strokeJoin = Paint.Join.ROUND
-    }
-    private val ripplePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeWidth = 2f * density
-    }
-
     private val choreographerCallback = object : Choreographer.FrameCallback {
         override fun doFrame(frameTimeNanos: Long) {
             if (!inertiaRunning) return
@@ -165,7 +164,7 @@ class PrecisionTouchLayer(
             else ((frameTimeNanos - lastFlingFrameNs) / 1_000_000_000f).coerceIn(0.001f, 0.032f)
             lastFlingFrameNs = frameTimeNanos
 
-            val decay = Math.exp((-6.5 * dtSec)).toFloat()
+            val decay = kotlin.math.exp(-6.5f * dtSec)
             inertiaVx *= decay
             inertiaVy *= decay
 
@@ -192,9 +191,24 @@ class PrecisionTouchLayer(
         }
     }
 
+    init {
+        setWillNotDraw(true)
+    }
+
+    private fun shouldShowSteadyCursor(): Boolean =
+        !watchOnly && inputMode == TouchInputMode.Trackpad
+
+    private fun syncStageCursorVisibility() {
+        if (!trackpadOnly) {
+            stageProvider()?.setCursorVisibility(shouldShowSteadyCursor())
+        }
+    }
+
     fun syncNormalizedPosition(normX: Int, normY: Int) {
         accelerator.setNormalizedPosition(normX, normY)
-        postInvalidateOnAnimation()
+        if (!trackpadOnly) {
+            stageProvider()?.updateCursorOverlay(normX, normY, shouldShowSteadyCursor())
+        }
     }
 
     fun currentNormalized(): Pair<Int, Int> = accelerator.currentNormX to accelerator.currentNormY
@@ -202,6 +216,7 @@ class PrecisionTouchLayer(
     fun pressLeft(pressed: Boolean) {
         if (watchOnly && pressed) return
         if (leftButtonHeld != pressed) {
+            flushPendingWireMove()
             leftButtonHeld = pressed
             onButton(0, pressed)
             if (pressed) performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
@@ -216,6 +231,9 @@ class PrecisionTouchLayer(
 
     fun cancelGesture() {
         handlerMain.removeCallbacks(longPressRunnable)
+        removeCallbacks(flushWireRunnable)
+        flushScheduled = false
+        flushPendingWireMove()
         stopInertia()
         releaseVelocityTracker()
         if (leftButtonHeld) {
@@ -237,21 +255,62 @@ class PrecisionTouchLayer(
         velocityTracker = null
     }
 
-    private fun emitMove(nx: Int, ny: Int) {
-        onMove(nx, ny)
-        if (!trackpadOnly) {
-            stageProvider()?.ensureCursorVisible(nx, ny)
+    private fun flushPendingWireMove() {
+        if (!hasPendingWireMove) return
+        hasPendingWireMove = false
+        val nx = pendingWireNx
+        val ny = pendingWireNy
+        if (nx != lastWireNx || ny != lastWireNy) {
+            lastWireNx = nx
+            lastWireNy = ny
+            lastWireSendNs = SystemClock.elapsedRealtimeNanos()
+            onMove(nx, ny)
         }
-        postInvalidateOnAnimation()
+    }
+
+    private fun emitMove(nx: Int, ny: Int, forceImmediate: Boolean = false) {
+        if (!trackpadOnly) {
+            val stg = stageProvider()
+            stg?.ensureCursorVisible(nx, ny)
+            stg?.updateCursorOverlay(nx, ny, shouldShowSteadyCursor())
+        }
+
+        if (nx == lastWireNx && ny == lastWireNy && !hasPendingWireMove) {
+            return
+        }
+
+        val nowNs = SystemClock.elapsedRealtimeNanos()
+        if (forceImmediate || (nowNs - lastWireSendNs) >= MIN_WIRE_MOVE_INTERVAL_NS) {
+            hasPendingWireMove = false
+            lastWireNx = nx
+            lastWireNy = ny
+            lastWireSendNs = nowNs
+            onMove(nx, ny)
+        } else {
+            pendingWireNx = nx
+            pendingWireNy = ny
+            hasPendingWireMove = true
+            if (!flushScheduled) {
+                flushScheduled = true
+                postOnAnimation(flushWireRunnable)
+            }
+        }
+    }
+
+    private fun sendButtonImmediate(button: Int, pressed: Boolean) {
+        flushPendingWireMove()
+        onButton(button, pressed)
     }
 
     private fun performClickLeft() {
+        flushPendingWireMove()
         onButton(0, true)
         onButton(0, false)
         triggerRipple(Color.WHITE)
     }
 
     private fun performClickRight() {
+        flushPendingWireMove()
         onButton(1, true)
         onButton(1, false)
         triggerRipple(0xFF6094FF.toInt())
@@ -260,18 +319,15 @@ class PrecisionTouchLayer(
     private fun emitWheel(rawLines: Int, horizontal: Boolean) {
         val dir = if (naturalScroll) rawLines else -rawLines
         val clamped = dir.coerceIn(-32768, 32767)
-        if (clamped != 0) onWheel(clamped, horizontal)
+        if (clamped != 0) {
+            flushPendingWireMove()
+            onWheel(clamped, horizontal)
+        }
     }
 
     private fun triggerRipple(color: Int) {
         if (trackpadOnly) return
-        val stage = stageProvider() ?: return
-        val (sx, sy) = stage.mapNormalizedToViewPoint(accelerator.currentNormX, accelerator.currentNormY)
-        rippleX = sx
-        rippleY = sy
-        rippleColor = color
-        rippleAlpha = 1f
-        postInvalidateOnAnimation()
+        stageProvider()?.triggerTapRipple(accelerator.currentNormX, accelerator.currentNormY, color)
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -279,7 +335,6 @@ class PrecisionTouchLayer(
             return handleWatchOnlyTouch(event)
         }
 
-        // Physical mouse routed via MotionEvent on older APIs
         if (event.isFromSource(InputDevice.SOURCE_MOUSE)) {
             return handleMouseMotionEvent(event)
         }
@@ -287,6 +342,7 @@ class PrecisionTouchLayer(
         val nowMs = event.eventTime
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                requestUnbufferedDispatch(event)
                 stopInertia()
                 handlerMain.removeCallbacks(longPressRunnable)
                 releaseVelocityTracker()
@@ -307,7 +363,7 @@ class PrecisionTouchLayer(
                     pendingTapDrag = isSecondTap
                     if (dragModifierHeld && !rightClickModifierHeld) {
                         leftButtonHeld = true
-                        onButton(0, true)
+                        sendButtonImmediate(0, true)
                         gesture = Gesture.TrackpadDrag
                         performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                     } else {
@@ -317,10 +373,10 @@ class PrecisionTouchLayer(
                         }
                     }
                 } else {
-                    mapDirectAndMove(event.x, event.y)
+                    mapDirectAndMove(event.x, event.y, forceImmediate = true)
                     if (dragModifierHeld && !rightClickModifierHeld) {
                         leftButtonHeld = true
-                        onButton(0, true)
+                        sendButtonImmediate(0, true)
                         gesture = Gesture.DirectDrag
                         performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                     } else {
@@ -334,6 +390,7 @@ class PrecisionTouchLayer(
 
             MotionEvent.ACTION_POINTER_DOWN -> {
                 handlerMain.removeCallbacks(longPressRunnable)
+                flushPendingWireMove()
                 if (leftButtonHeld) {
                     leftButtonHeld = false
                     onButton(0, false)
@@ -353,12 +410,11 @@ class PrecisionTouchLayer(
                     gesture = Gesture.TwoFingerPending
                     velocityTracker?.addMovement(event)
                 } else if (event.pointerCount == 3 && (trackpadOnly || inputMode == TouchInputMode.Trackpad)) {
-                    // 3-finger drag (Mac accessibility style)
                     prevX = (event.getX(0) + event.getX(1) + event.getX(2)) / 3f
                     prevY = (event.getY(0) + event.getY(1) + event.getY(2)) / 3f
                     prevEventMs = nowMs
                     leftButtonHeld = true
-                    onButton(0, true)
+                    sendButtonImmediate(0, true)
                     gesture = Gesture.ThreeFingerDrag
                     performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                 } else {
@@ -374,7 +430,7 @@ class PrecisionTouchLayer(
                         if (dist > touchSlop * 0.6f) {
                             movedBeyondSlop = true
                             leftButtonHeld = true
-                            onButton(0, true)
+                            sendButtonImmediate(0, true)
                             gesture = Gesture.TrackpadDrag
                             prevX = event.x
                             prevY = event.y
@@ -384,27 +440,31 @@ class PrecisionTouchLayer(
                     }
 
                     Gesture.TrackpadMove, Gesture.TrackpadDrag -> {
-                        val dist = hypot(event.x - downX, event.y - downY)
-                        if (!movedBeyondSlop && dist > touchSlop) {
-                            movedBeyondSlop = true
-                            handlerMain.removeCallbacks(longPressRunnable)
-                            if ((pendingTapDrag || dragModifierHeld) && !leftButtonHeld && !rightClickModifierHeld) {
-                                leftButtonHeld = true
-                                onButton(0, true)
-                                gesture = Gesture.TrackpadDrag
-                                performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                        val span = minOf(width, height).coerceAtLeast(360).toFloat()
+                        val histCount = event.historySize
+                        var latestNx = accelerator.currentNormX
+                        var latestNy = accelerator.currentNormY
+                        var didStep = false
+
+                        for (h in 0 until histCount) {
+                            val hx = event.getHistoricalX(h)
+                            val hy = event.getHistoricalY(h)
+                            val ht = event.getHistoricalEventTime(h)
+                            val step = stepSinglePointerTrackpad(hx, hy, ht, span)
+                            if (step != null) {
+                                latestNx = step.first
+                                latestNy = step.second
+                                didStep = true
                             }
                         }
-                        val dx = event.x - prevX
-                        val dy = event.y - prevY
-                        val dt = (nowMs - prevEventMs).toFloat().coerceAtLeast(1f)
-                        prevX = event.x
-                        prevY = event.y
-                        prevEventMs = nowMs
-                        if (movedBeyondSlop || abs(dx) > 0.25f || abs(dy) > 0.25f) {
-                            val span = minOf(width, height).coerceAtLeast(360).toFloat()
-                            val (nx, ny) = accelerator.applyDelta(dx, dy, dt, span, density, sensitivity)
-                            emitMove(nx, ny)
+                        val finalStep = stepSinglePointerTrackpad(event.x, event.y, nowMs, span)
+                        if (finalStep != null) {
+                            latestNx = finalStep.first
+                            latestNy = finalStep.second
+                            didStep = true
+                        }
+                        if (didStep) {
+                            emitMove(latestNx, latestNy)
                         }
                     }
 
@@ -413,7 +473,7 @@ class PrecisionTouchLayer(
                             handlerMain.removeCallbacks(longPressRunnable)
                             movedBeyondSlop = true
                             leftButtonHeld = true
-                            onButton(0, true)
+                            sendButtonImmediate(0, true)
                             gesture = Gesture.DirectDrag
                         }
                         if (gesture == Gesture.DirectDrag) {
@@ -452,7 +512,6 @@ class PrecisionTouchLayer(
                                         val dx = cx - twoCenterX
                                         val dy = cy - twoCenterY
                                         stage.setZoomAndPan(newScale, stage.panX + dx, stage.panY + dy)
-                                        invalidate()
                                     }
                                 } else if (gesture == Gesture.TwoFingerScroll) {
                                     val stepPx = 18f * density
@@ -478,10 +537,20 @@ class PrecisionTouchLayer(
 
                     Gesture.ThreeFingerDrag -> {
                         if (event.pointerCount >= 3) {
+                            val span = minOf(width, height).coerceAtLeast(360).toFloat()
+                            for (h in 0 until event.historySize) {
+                                val hcx = (event.getHistoricalX(0, h) + event.getHistoricalX(1, h) + event.getHistoricalX(2, h)) / 3f
+                                val hcy = (event.getHistoricalY(0, h) + event.getHistoricalY(1, h) + event.getHistoricalY(2, h)) / 3f
+                                val ht = event.getHistoricalEventTime(h)
+                                val dt = (ht - prevEventMs).toFloat().coerceAtLeast(1f)
+                                accelerator.applyDelta(hcx - prevX, hcy - prevY, dt, span, density, sensitivity)
+                                prevX = hcx
+                                prevY = hcy
+                                prevEventMs = ht
+                            }
                             val cx = (event.getX(0) + event.getX(1) + event.getX(2)) / 3f
                             val cy = (event.getY(0) + event.getY(1) + event.getY(2)) / 3f
                             val dt = (nowMs - prevEventMs).toFloat().coerceAtLeast(1f)
-                            val span = minOf(width, height).coerceAtLeast(360).toFloat()
                             val (nx, ny) = accelerator.applyDelta(cx - prevX, cy - prevY, dt, span, density, sensitivity)
                             prevX = cx
                             prevY = cy
@@ -495,6 +564,7 @@ class PrecisionTouchLayer(
             }
 
             MotionEvent.ACTION_POINTER_UP -> {
+                flushPendingWireMove()
                 when (gesture) {
                     Gesture.TwoFingerPending -> {
                         if (!twoMoved && (nowMs - twoDownTimeMs) < 280L) {
@@ -529,6 +599,7 @@ class PrecisionTouchLayer(
 
             MotionEvent.ACTION_UP -> {
                 handlerMain.removeCallbacks(longPressRunnable)
+                flushPendingWireMove()
                 when (gesture) {
                     Gesture.LongPressPending -> {
                         performClickRight()
@@ -556,7 +627,7 @@ class PrecisionTouchLayer(
                     }
                     Gesture.DirectTap -> {
                         if (!movedBeyondSlop) {
-                            mapDirectAndMove(event.x, event.y)
+                            mapDirectAndMove(event.x, event.y, forceImmediate = true)
                             if (rightClickModifierHeld) {
                                 performClickRight()
                                 performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
@@ -577,6 +648,35 @@ class PrecisionTouchLayer(
             MotionEvent.ACTION_CANCEL -> cancelGesture()
         }
         return true
+    }
+
+    private fun stepSinglePointerTrackpad(
+        x: Float,
+        y: Float,
+        sampleMs: Long,
+        span: Float,
+    ): Pair<Int, Int>? {
+        val dist = hypot(x - downX, y - downY)
+        if (!movedBeyondSlop && dist > touchSlop) {
+            movedBeyondSlop = true
+            handlerMain.removeCallbacks(longPressRunnable)
+            if ((pendingTapDrag || dragModifierHeld) && !leftButtonHeld && !rightClickModifierHeld) {
+                leftButtonHeld = true
+                sendButtonImmediate(0, true)
+                gesture = Gesture.TrackpadDrag
+                performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+            }
+        }
+        val dx = x - prevX
+        val dy = y - prevY
+        val dt = (sampleMs - prevEventMs).toFloat().coerceAtLeast(1f)
+        prevX = x
+        prevY = y
+        prevEventMs = sampleMs
+        if (movedBeyondSlop || abs(dx) > 0.25f || abs(dy) > 0.25f) {
+            return accelerator.applyDelta(dx, dy, dt, span, density, sensitivity)
+        }
+        return null
     }
 
     private fun handleWatchOnlyTouch(event: MotionEvent): Boolean {
@@ -606,12 +706,12 @@ class PrecisionTouchLayer(
         return true
     }
 
-    private fun mapDirectAndMove(viewX: Float, viewY: Float) {
+    private fun mapDirectAndMove(viewX: Float, viewY: Float, forceImmediate: Boolean = false) {
         val stage = stageProvider() ?: return
         val offsetPx = if (directTouchOffset) 18f * density else 0f
         val (nx, ny) = stage.mapViewPointToNormalized(viewX, viewY - offsetPx) ?: return
         accelerator.setNormalizedPosition(nx, ny)
-        emitMove(nx, ny)
+        emitMove(nx, ny, forceImmediate = forceImmediate)
     }
 
     private fun handleMouseMotionEvent(event: MotionEvent): Boolean {
@@ -623,13 +723,13 @@ class PrecisionTouchLayer(
             currentNormalized()
         }
         accelerator.setNormalizedPosition(nx, ny)
-        emitMove(nx, ny)
+        emitMove(nx, ny, forceImmediate = event.actionMasked != MotionEvent.ACTION_MOVE)
         when (event.actionMasked) {
             MotionEvent.ACTION_BUTTON_PRESS -> {
-                mapActionButton(event.actionButton)?.let { onButton(it, true) }
+                mapActionButton(event.actionButton)?.let { sendButtonImmediate(it, true) }
             }
             MotionEvent.ACTION_BUTTON_RELEASE -> {
-                mapActionButton(event.actionButton)?.let { onButton(it, false) }
+                mapActionButton(event.actionButton)?.let { sendButtonImmediate(it, false) }
             }
         }
         return true
@@ -639,6 +739,7 @@ class PrecisionTouchLayer(
         if (watchOnly) return super.onGenericMotionEvent(event)
         if (event.isFromSource(InputDevice.SOURCE_MOUSE) || event.isFromSource(InputDevice.SOURCE_TOUCHPAD)) {
             if (event.actionMasked == MotionEvent.ACTION_HOVER_MOVE) {
+                requestUnbufferedDispatch(event)
                 val stage = stageProvider()
                 val (nx, ny) = if (stage != null && !trackpadOnly) {
                     stage.mapViewPointToNormalized(event.x, event.y) ?: return true
@@ -650,8 +751,8 @@ class PrecisionTouchLayer(
             if (event.actionMasked == MotionEvent.ACTION_SCROLL) {
                 val v = event.getAxisValue(MotionEvent.AXIS_VSCROLL).roundToInt()
                 val h = event.getAxisValue(MotionEvent.AXIS_HSCROLL).roundToInt()
-                if (v != 0) onWheel(v, false)
-                if (h != 0) onWheel(h, true)
+                if (v != 0) emitWheel(v, false)
+                if (h != 0) emitWheel(h, true)
                 return true
             }
         }
@@ -661,20 +762,21 @@ class PrecisionTouchLayer(
     override fun onCapturedPointerEvent(event: MotionEvent): Boolean {
         if (watchOnly) return true
         if (event.actionMasked == MotionEvent.ACTION_MOVE || event.actionMasked == MotionEvent.ACTION_HOVER_MOVE) {
-            val dx = event.x
-            val dy = event.y
             val span = minOf(width, height).coerceAtLeast(480).toFloat()
-            val (nx, ny) = accelerator.applyDelta(dx, dy, 8f, span, density, sensitivity)
+            for (h in 0 until event.historySize) {
+                accelerator.applyDelta(event.getHistoricalX(h), event.getHistoricalY(h), 4f, span, density, sensitivity)
+            }
+            val (nx, ny) = accelerator.applyDelta(event.x, event.y, 4f, span, density, sensitivity)
             emitMove(nx, ny)
         } else if (event.actionMasked == MotionEvent.ACTION_BUTTON_PRESS) {
-            mapActionButton(event.actionButton)?.let { onButton(it, true) }
+            mapActionButton(event.actionButton)?.let { sendButtonImmediate(it, true) }
         } else if (event.actionMasked == MotionEvent.ACTION_BUTTON_RELEASE) {
-            mapActionButton(event.actionButton)?.let { onButton(it, false) }
+            mapActionButton(event.actionButton)?.let { sendButtonImmediate(it, false) }
         } else if (event.actionMasked == MotionEvent.ACTION_SCROLL) {
             val v = event.getAxisValue(MotionEvent.AXIS_VSCROLL).roundToInt()
             val h = event.getAxisValue(MotionEvent.AXIS_HSCROLL).roundToInt()
-            if (v != 0) onWheel(v, false)
-            if (h != 0) onWheel(h, true)
+            if (v != 0) emitWheel(v, false)
+            if (h != 0) emitWheel(h, true)
         }
         return true
     }
@@ -688,41 +790,14 @@ class PrecisionTouchLayer(
         else -> null
     }
 
-    override fun onDraw(canvas: Canvas) {
-        if (trackpadOnly) return
-        val stage = stageProvider() ?: return
-        if (!watchOnly) {
-            val (cx, cy) = stage.mapNormalizedToViewPoint(accelerator.currentNormX, accelerator.currentNormY)
-            drawCursorArrow(canvas, cx, cy)
-        }
-        if (rippleAlpha > 0.02f) {
-            ripplePaint.color = rippleColor
-            ripplePaint.alpha = (rippleAlpha * 210).toInt().coerceIn(0, 255)
-            val radius = (8f + (1f - rippleAlpha) * 20f) * density
-            canvas.drawCircle(rippleX, rippleY, radius, ripplePaint)
-            rippleAlpha *= 0.84f
-            postInvalidateOnAnimation()
-        }
-    }
-
-    private fun drawCursorArrow(canvas: Canvas, x: Float, y: Float) {
-        val s = density
-        arrowPath.reset()
-        arrowPath.moveTo(x, y)
-        arrowPath.lineTo(x, y + 17f * s)
-        arrowPath.lineTo(x + 4.3f * s, y + 13.2f * s)
-        arrowPath.lineTo(x + 7.5f * s, y + 19.6f * s)
-        arrowPath.lineTo(x + 10.1f * s, y + 18.3f * s)
-        arrowPath.lineTo(x + 6.9f * s, y + 12.0f * s)
-        arrowPath.lineTo(x + 12.2f * s, y + 11.8f * s)
-        arrowPath.close()
-        canvas.drawPath(arrowPath, cursorFillPaint)
-        canvas.drawPath(arrowPath, cursorStrokePaint)
-    }
-
     override fun performClick(): Boolean {
         super.performClick()
         return true
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        syncStageCursorVisibility()
     }
 
     override fun onDetachedFromWindow() {
@@ -733,5 +808,9 @@ class PrecisionTouchLayer(
     override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
         super.onWindowFocusChanged(hasWindowFocus)
         if (!hasWindowFocus) cancelGesture()
+    }
+
+    private companion object {
+        const val MIN_WIRE_MOVE_INTERVAL_NS = 5_000_000L // ~200Hz max wire MouseMove packet rate
     }
 }

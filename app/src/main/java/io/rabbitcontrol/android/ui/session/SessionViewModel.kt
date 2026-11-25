@@ -14,6 +14,8 @@ import io.rabbitcontrol.android.core.data.SidebarConfig
 import io.rabbitcontrol.android.core.data.TouchInputMode
 import io.rabbitcontrol.android.core.data.VirtualKeyItem
 import io.rabbitcontrol.android.core.input.ScancodeMapper
+import io.rabbitcontrol.android.core.nativebridge.HudSnapshotModel
+import io.rabbitcontrol.android.core.nativebridge.MediaDiagnosticsModel
 import io.rabbitcontrol.android.core.session.ActiveSessionState
 import io.rabbitcontrol.android.core.session.ClipboardSyncBridge
 import io.rabbitcontrol.android.core.session.SessionManager
@@ -32,6 +34,8 @@ class SessionViewModel(
 ) : ViewModel() {
 
     val sessionState: StateFlow<ActiveSessionState> = sessionManager.state
+    val hud: StateFlow<HudSnapshotModel> = sessionManager.hud
+    val media: StateFlow<MediaDiagnosticsModel> = sessionManager.media
     val prefs: StateFlow<InteractionPrefs> = prefsStore.state
     val sidebarConfig: StateFlow<SidebarConfig> = layoutStore.sidebarConfig
     val keymapState: StateFlow<KeyMapState> = layoutStore.keymapState
@@ -59,6 +63,12 @@ class SessionViewModel(
 
     fun setDrawerOpen(open: Boolean) {
         _drawerOpen.value = open
+        sessionManager.setMediaDiagnosticsVisible(open)
+    }
+
+    override fun onCleared() {
+        sessionManager.setMediaDiagnosticsVisible(false)
+        super.onCleared()
     }
 
     fun toggleKeyboardBar() {
