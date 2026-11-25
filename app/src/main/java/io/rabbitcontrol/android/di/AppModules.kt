@@ -2,9 +2,11 @@ package io.rabbitcontrol.android.di
 
 import io.rabbitcontrol.android.core.data.AccountRepository
 import io.rabbitcontrol.android.core.data.InteractionPrefsStore
+import io.rabbitcontrol.android.core.data.SessionLayoutStore
 import io.rabbitcontrol.android.core.data.TargetHistoryStore
 import io.rabbitcontrol.android.core.data.ToolOrderStore
 import io.rabbitcontrol.android.core.data.WallpaperCache
+import io.rabbitcontrol.android.core.host.HostManager
 import io.rabbitcontrol.android.core.session.ClipboardSyncBridge
 import io.rabbitcontrol.android.core.session.SessionManager
 import io.rabbitcontrol.android.ui.screens.auth.AuthViewModel
@@ -24,18 +26,20 @@ val dataModule = module {
     single { ToolOrderStore(androidContext()) }
     single { WallpaperCache(androidContext()) }
     single { InteractionPrefsStore(androidContext()) }
+    single { SessionLayoutStore(androidContext()) }
 }
 
 val sessionModule = module {
     single { ClipboardSyncBridge(androidContext()) }
     single { SessionManager(androidContext(), get(), get(), get(), get()) }
+    single { HostManager(androidContext(), get(), get()) }
 }
 
 val viewModelModule = module {
     viewModel { AuthViewModel(get()) }
-    viewModel { HomeViewModel(get(), get(), get(), get(), get()) }
+    viewModel { HomeViewModel(get(), get(), get(), get(), get(), get()) }
     viewModel { DeviceDetailViewModel(get(), get(), get(), get()) }
-    viewModel { SessionViewModel(get(), get(), get()) }
+    viewModel { SessionViewModel(get(), get(), get(), get()) }
     viewModel { FileTransferViewModel(androidContext(), get()) }
     viewModel { TerminalViewModel(get()) }
     viewModel { PortMapViewModel(get()) }

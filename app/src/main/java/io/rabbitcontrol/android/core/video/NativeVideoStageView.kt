@@ -33,6 +33,7 @@ class NativeVideoStageView(
         private set
     var panY: Float = 0f
         private set
+    var onZoomChanged: ((Float) -> Unit)? = null
 
     var baseStageWidth: Int = 1
         private set
@@ -40,7 +41,7 @@ class NativeVideoStageView(
         private set
 
     init {
-        setBackgroundColor(0xFF07090D.toInt())
+        setBackgroundColor(0xFF000000.toInt())
         clipChildren = true
         clipToPadding = true
         addView(surfaceView, LayoutParams(1, 1, Gravity.CENTER))
@@ -72,6 +73,7 @@ class NativeVideoStageView(
 
     fun setZoomAndPan(scale: Float, newPanX: Float, newPanY: Float) {
         val clampedScale = scale.coerceIn(1f, 4f)
+        val changed = kotlin.math.abs(clampedScale - zoomScale) > 0.005f
         zoomScale = clampedScale
         val maxPanX = ((baseStageWidth * (clampedScale - 1f)) / 2f).coerceAtLeast(0f)
         val maxPanY = ((baseStageHeight * (clampedScale - 1f)) / 2f).coerceAtLeast(0f)
@@ -81,6 +83,27 @@ class NativeVideoStageView(
         surfaceView.scaleY = zoomScale
         surfaceView.translationX = panX
         surfaceView.translationY = panY
+        if (changed) {
+            onZoomChanged?.invoke(zoomScale)
+        }
+    }
+
+    fun stepZoomIn(): Float {
+        val steps = floatArrayOf(1f, 1.5f, 2f, 2.5f, 3f, 4f)
+        val next = steps.firstOrNull { it > zoomScale + 0.08f } ?: 4f
+        setZoomAndPan(next, panX, panY)
+        return zoomScale
+    }
+
+    fun stepZoomOut(): Float {
+        val steps = floatArrayOf(1f, 1.5f, 2f, 2.5f, 3f, 4f)
+        val prev = steps.lastOrNull { it < zoomScale - 0.08f } ?: 1f
+        if (prev <= 1.01f) {
+            resetZoom()
+        } else {
+            setZoomAndPan(prev, panX, panY)
+        }
+        return zoomScale
     }
 
     fun resetZoom() {

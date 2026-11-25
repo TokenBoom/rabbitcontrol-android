@@ -4,12 +4,18 @@
 use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use rc_client_core::auth_client::AuthSessionManager;
-use rc_client_core::cert_manager::CertManager;
+use rc_client_core::auth_client::{
+    save_auth_session, AuthHttpClient, AuthSessionManager, StoredAuthSession,
+};
+use rc_client_core::cert_manager::{CertManager, RcOwnerTicketVerifier};
+use rc_client_core::config_paths::acquire_file_lock;
+use rc_client_core::host_bridge::{
+    generate_temp_code, HostHandle, UiHostConfig, DEFAULT_HOST_PORT,
+};
 use rc_client_core::lan_discovery::{discover_local_lan_ipv4s, LanDiscoveryHandle};
 use rc_client_core::model::parse_connect_target;
 use rc_client_core::server_config::{
@@ -23,9 +29,11 @@ use rc_client_core::signal_client::{
     ConnectGrant, DeviceStatusEvent, SignalClientHandle, SignalClientOptions,
 };
 use rc_input::{InputEvent, MouseButton};
-use rc_session::auth::OwnerTicketSigner;
+use rc_session::auth::{OwnerTicketSigner, OwnerTicketVerifier};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+
+use crate::host_android;
 
 use crate::ndk_media::{
     media_diagnostics, request_keyframe, reset_media_diagnostics, set_codec_candidates,
@@ -62,6 +70,16 @@ pub struct OpenSessionRequest {
     pub bitrate_bps: u32,
 }
 
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartHostRequest {
+    #[serde(default)]
+    pub allow_remote_assist: bool,
+    #[serde(default = "default_true")]
+    pub require_approval: bool,
+    pub password: Option<String>,
+}
+
 fn default_true() -> bool {
     true
 }
@@ -76,6 +94,7 @@ enum SignalUiEvent {
 
 pub struct AndroidRuntime {
     device_name: Mutex<String>,
+    auth_path: PathBuf,
     pub auth: AuthSessionManager,
     cert_mgr: Arc<CertManager>,
     signal: Mutex<Option<Arc<SignalClientHandle>>>,
@@ -84,6 +103,8 @@ pub struct AndroidRuntime {
     lan: Mutex<Option<LanDiscoveryHandle>>,
     session: Mutex<Option<SessionHandle>>,
     session_epoch: AtomicU64,
+    host: Mutex<Option<HostHandle>>,
+    host_allow_remote_assist: AtomicBool,
 }
 
 static RUNTIME: OnceLock<Arc<AndroidRuntime>> = OnceLock::new();
@@ -108,7 +129,7 @@ pub fn init_runtime(
     let certs_dir = files_dir.join("certs");
     let cert_mgr = Arc::new(CertManager::load_or_init(certs_dir)?);
     let auth_path = files_dir.join("auth.json");
-    let auth = AuthSessionManager::new(ServerConfig::default(), auth_path, Arc::clone(&cert_mgr));
+    let auth = AuthSessionManager::new(ServerConfig::default(), auth_path.clone(), Arc::clone(&cert_mgr));
     let instance_id = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
@@ -117,6 +138,7 @@ pub fn init_runtime(
 
     let rt = Arc::new(AndroidRuntime {
         device_name: Mutex::new(device_name),
+        auth_path,
         auth,
         cert_mgr,
         signal: Mutex::new(None),
@@ -125,6 +147,8 @@ pub fn init_runtime(
         lan: Mutex::new(Some(lan)),
         session: Mutex::new(None),
         session_epoch: AtomicU64::new(0),
+        host: Mutex::new(None),
+        host_allow_remote_assist: AtomicBool::new(false),
     });
 
     let _ = RUNTIME.set(Arc::clone(&rt));
@@ -146,6 +170,14 @@ impl AndroidRuntime {
     /// Stable 64-char hex device key derived deterministically from this device's Ed25519 pubkey.
     pub fn device_key(&self) -> String {
         self.cert_mgr.device_pubkey_hex()
+    }
+
+    /// Persists an externally obtained/restored session to `auth.json` and updates in-memory state
+    /// so `AuthSessionManager::ensure_valid_access_token()` can safely refresh tokens on Android.
+    pub fn apply_and_persist_session(&self, stored: StoredAuthSession) {
+        let _file_lock = acquire_file_lock(&self.auth_path, Duration::from_secs(5));
+        let _ = save_auth_session(&self.auth_path, &stored);
+        self.auth.apply_external_session(stored);
     }
 
     pub fn ensure_signal_started(&self) {
@@ -198,7 +230,7 @@ impl AndroidRuntime {
         let opts = SignalClientOptions {
             token_provider: Some(token_provider),
             device_pubkey: Some(self.cert_mgr.device_pubkey_hex()),
-            allow_remote_assist: false,
+            allow_remote_assist: self.host_allow_remote_assist.load(Ordering::Acquire),
             dynamic_lan_discovery: true,
         };
 
@@ -234,6 +266,7 @@ impl AndroidRuntime {
     }
 
     pub fn stop_signal_and_session(&self) {
+        self.stop_host();
         self.disconnect_session(false);
         let mut sig_guard = self.signal.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(old) = sig_guard.take() {
@@ -243,7 +276,38 @@ impl AndroidRuntime {
             ServerConfig::default().disabled_snapshot();
     }
 
+    fn pump_incoming_relay(&self) {
+        let mut incoming_list = Vec::new();
+        {
+            let sig_guard = self.signal.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(sig) = sig_guard.as_ref() {
+                while let Some(inc) = sig.try_recv_incoming() {
+                    incoming_list.push(inc);
+                }
+            }
+        }
+        if incoming_list.is_empty() {
+            return;
+        }
+        let host_guard = self.host.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(host) = host_guard.as_ref() {
+            for inc in incoming_list {
+                host.offer_relay_incoming(inc);
+            }
+        } else {
+            drop(host_guard);
+            for inc in incoming_list {
+                let _ = std::thread::Builder::new()
+                    .name("rc-relay-reject".to_string())
+                    .spawn(move || {
+                        rc_client_core::relay_transport::reject_relay_incoming_fast(inc, None);
+                    });
+            }
+        }
+    }
+
     pub fn poll_signal_events(&self) -> Value {
+        self.pump_incoming_relay();
         let mut out = Vec::new();
         {
             let mut q = self.signal_events.lock().unwrap_or_else(|e| e.into_inner());
@@ -719,6 +783,195 @@ impl AndroidRuntime {
             other => Err(format!("未知工具命令: {other}")),
         }
     }
+
+    fn build_owner_verifier(&self) -> Option<Arc<dyn OwnerTicketVerifier>> {
+        let mut cfg = self.auth.server_config();
+        let pubkey_hex = match cfg.server_auth_pubkey_hex.clone() {
+            Some(pk) if !pk.trim().is_empty() => pk,
+            _ => {
+                if !cfg.is_configured() {
+                    return None;
+                }
+                let client = AuthHttpClient::new(
+                    cfg.server_host.clone(),
+                    cfg.api_port,
+                    cfg.use_https,
+                    cfg.ca_cert_pem.clone(),
+                )
+                .ok()?;
+                let bundle = client.fetch_ca_bundle().ok()?;
+                cfg.server_auth_pubkey_hex = Some(bundle.auth_pubkey_hex.clone());
+                self.auth.update_server_config(cfg.clone());
+                bundle.auth_pubkey_hex
+            }
+        };
+        let user_id = self.auth.current_session()?.user_id;
+        let did = self
+            .signal_snapshot
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .device_id
+            .clone()
+            .or(cfg.cached_device_id)?;
+        RcOwnerTicketVerifier::new(&pubkey_hex, user_id, did)
+            .ok()
+            .map(|v| Arc::new(v) as Arc<dyn OwnerTicketVerifier>)
+    }
+
+    pub fn start_host(&self, req: StartHostRequest) -> Result<Value, String> {
+        self.stop_host();
+
+        if let Some(did) = self
+            .signal_snapshot
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .device_id
+            .clone()
+        {
+            let _ = self.auth.ensure_device_cert(&did);
+        }
+
+        let mtls_config = self.build_mtls_bundle(None, None);
+        let has_mtls = mtls_config.is_some();
+        let owner_verifier = self.build_owner_verifier();
+        let owner_ready = owner_verifier.is_some();
+
+        self.host_allow_remote_assist
+            .store(req.allow_remote_assist, Ordering::Release);
+        if let Some(sig) = self.signal.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+            let _ = sig.set_allow_remote_assist(req.allow_remote_assist);
+        }
+
+        let password = if let Some(custom) = req.password.filter(|p| !p.trim().is_empty()) {
+            Some(custom)
+        } else if req.allow_remote_assist {
+            Some(generate_temp_code())
+        } else {
+            None
+        };
+
+        let ui_cfg = UiHostConfig {
+            listen_addr: SocketAddr::from(([0, 0, 0, 0], DEFAULT_HOST_PORT)),
+            password: password.clone(),
+            prefer_hardware: true,
+            require_approval: req.require_approval,
+            auto_accept_with_password: true,
+            auto_rotate_password: req.allow_remote_assist,
+            clipboard_enabled: true,
+            audio_enabled: false,
+            allow_remote_assist: req.allow_remote_assist,
+            owner_verifier,
+            mtls_config,
+            accept_mtls_lan: has_mtls,
+            forbid_passwordless_auto_approve: false,
+            ..Default::default()
+        };
+
+        host_android::reset_host_queues();
+        let handle = HostHandle::spawn(ui_cfg)?;
+        let listen_addr = handle.listen_addr().to_string();
+        *self.host.lock().unwrap_or_else(|e| e.into_inner()) = Some(handle);
+
+        Ok(json!({
+            "started": true,
+            "listenAddr": listen_addr,
+            "password": password,
+            "allowRemoteAssist": req.allow_remote_assist,
+            "ownerSelfControlReady": owner_ready,
+        }))
+    }
+
+    pub fn stop_host(&self) {
+        self.host_allow_remote_assist.store(false, Ordering::Release);
+        if let Some(sig) = self.signal.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+            let _ = sig.set_allow_remote_assist(false);
+        }
+        let old = self.host.lock().unwrap_or_else(|e| e.into_inner()).take();
+        if let Some(mut handle) = old {
+            handle.stop();
+        }
+        host_android::reset_host_queues();
+    }
+
+    pub fn host_command(&self, cmd: &Value) -> Result<Value, String> {
+        let kind = cmd["type"].as_str().unwrap_or("");
+        match kind {
+            "set_allow_remote_assist" => {
+                let enabled = cmd["enabled"].as_bool().unwrap_or(false);
+                self.host_allow_remote_assist
+                    .store(enabled, Ordering::Release);
+                if let Some(sig) = self.signal.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+                    let _ = sig.set_allow_remote_assist(enabled);
+                }
+                let new_pw = if enabled {
+                    Some(generate_temp_code())
+                } else {
+                    None
+                };
+                if let Some(host) = self.host.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+                    host.set_password_mode(new_pw.clone(), enabled);
+                    host.set_allow_remote_assist(enabled);
+                }
+                Ok(json!({
+                    "ok": true,
+                    "allowRemoteAssist": enabled,
+                    "password": new_pw,
+                }))
+            }
+            "respond_approval" => {
+                let generation = cmd["generation"].as_u64().unwrap_or(0);
+                let accepted = cmd["accepted"].as_bool().unwrap_or(false);
+                let applied = self
+                    .host
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .as_ref()
+                    .is_some_and(|h| h.respond_approval(generation, accepted));
+                Ok(json!({ "ok": applied }))
+            }
+            "disconnect_client" => {
+                if let Some(host) = self.host.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+                    host.disconnect_client();
+                }
+                Ok(json!({ "ok": true }))
+            }
+            "rotate_password" => {
+                let new_pw = generate_temp_code();
+                if let Some(host) = self.host.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+                    host.set_password_mode(Some(new_pw.clone()), true);
+                }
+                Ok(json!({ "password": new_pw }))
+            }
+            other => Err(format!("未知被控端指令: {other}")),
+        }
+    }
+
+    pub fn poll_host_events(&self) -> Value {
+        self.pump_incoming_relay();
+        let mut updates = Vec::new();
+        let running;
+        {
+            let g = self.host.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(handle) = g.as_ref() {
+                running = handle.is_running();
+                while let Some(u) = handle.try_recv_update() {
+                    if let Ok(v) = serde_json::to_value(&u) {
+                        updates.push(v);
+                    }
+                }
+            } else {
+                running = false;
+            }
+        }
+        let encoder_cmds = host_android::drain_host_encoder_commands();
+        let input_events = host_android::drain_host_input_events();
+        json!({
+            "running": running,
+            "updates": updates,
+            "encoderCommands": encoder_cmds,
+            "inputEvents": input_events,
+        })
+    }
 }
 
 pub fn decode_mouse_button(code: i32) -> Option<MouseButton> {
@@ -735,6 +988,7 @@ pub fn decode_mouse_button(code: i32) -> Option<MouseButton> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rc_client_core::auth_client::load_auth_session;
 
     #[test]
     fn close_active_session_only_preserves_epoch() {
@@ -754,6 +1008,65 @@ mod tests {
 
         rt.disconnect_session(false);
         assert_eq!(rt.session_epoch.load(Ordering::Acquire), my_epoch + 1);
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn apply_and_persist_session_writes_auth_json_and_updates_memory() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "rc-runtime-auth-persist-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let certs_dir = temp_dir.join("certs");
+        let auth_path = temp_dir.join("auth.json");
+        let cert_mgr = Arc::new(CertManager::load_or_init(certs_dir).expect("cert_mgr"));
+        let auth = AuthSessionManager::new(
+            ServerConfig::default(),
+            auth_path.clone(),
+            Arc::clone(&cert_mgr),
+        );
+        let rt = AndroidRuntime {
+            device_name: Mutex::new("test-android".to_string()),
+            auth_path: auth_path.clone(),
+            auth,
+            cert_mgr,
+            signal: Mutex::new(None),
+            signal_events: Arc::new(Mutex::new(VecDeque::new())),
+            signal_snapshot: Arc::new(Mutex::new(ServerConfig::default().disabled_snapshot())),
+            lan: Mutex::new(None),
+            session: Mutex::new(None),
+            session_epoch: AtomicU64::new(0),
+            host: Mutex::new(None),
+            host_allow_remote_assist: AtomicBool::new(false),
+        };
+
+        let stored = StoredAuthSession {
+            user_id: "user-123".to_string(),
+            email: "user@example.com".to_string(),
+            display_name: "Test".to_string(),
+            role: "user".to_string(),
+            must_change_password: false,
+            access_token: "acc-token".to_string(),
+            refresh_token: "ref-token".to_string(),
+            access_expires_at_unix_sec: 1234567890,
+            server_host: "example.com".to_string(),
+            api_port: 21118,
+        };
+
+        rt.apply_and_persist_session(stored.clone());
+
+        let disk = load_auth_session(&auth_path).expect("auth.json should exist on disk");
+        assert_eq!(disk.user_id, stored.user_id);
+        assert_eq!(disk.refresh_token, stored.refresh_token);
+        let mem = rt
+            .auth
+            .current_session()
+            .expect("in-memory session should be set");
+        assert_eq!(mem.user_id, stored.user_id);
+
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

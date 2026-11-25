@@ -3,6 +3,7 @@ package io.rabbitcontrol.android.ui.session
 import android.app.KeyguardManager
 import android.content.Intent
 import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
 import android.view.KeyEvent
@@ -39,8 +40,8 @@ class SessionActivity : ComponentActivity() {
             val prefs by viewModel.prefs.collectAsStateWithLifecycle()
             LaunchedEffect(prefs.orientationPref) {
                 requestedOrientation = when (prefs.orientationPref) {
+                    OrientationPreference.AutoSensor -> ActivityInfo.SCREEN_ORIENTATION_SENSOR
                     OrientationPreference.LandscapeFirst -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                    OrientationPreference.AutoSensor -> ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
                     OrientationPreference.PortraitTrackpad -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
                 }
             }
@@ -77,6 +78,11 @@ class SessionActivity : ComponentActivity() {
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) applyImmersiveBars()
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        applyImmersiveBars()
     }
 
     override fun onPause() {

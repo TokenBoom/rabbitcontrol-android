@@ -8,8 +8,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -27,7 +29,6 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Close
@@ -35,11 +36,11 @@ import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Terminal
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -57,12 +58,21 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.rabbitcontrol.android.core.nativebridge.TerminalSessionSummary
 import io.rabbitcontrol.android.core.session.SessionStatus
+import io.rabbitcontrol.android.ui.components.RabbitCard
+import io.rabbitcontrol.android.ui.components.RabbitDialog
+import io.rabbitcontrol.android.ui.components.RabbitEmptyState
+import io.rabbitcontrol.android.ui.components.RabbitTextField
+import io.rabbitcontrol.android.ui.components.RabbitTopBar
 import io.rabbitcontrol.android.ui.theme.LocalRabbitPalette
+import io.rabbitcontrol.android.ui.theme.RabbitRadius
+import io.rabbitcontrol.android.ui.theme.RabbitSpacing
+import io.rabbitcontrol.android.ui.theme.SessionPalette
 import org.koin.androidx.compose.koinViewModel
 
 @Composable
@@ -83,64 +93,62 @@ fun TerminalScreen(
     var renameTarget by remember { mutableStateOf<TerminalSessionSummary?>(null) }
     var renameDraft by remember { mutableStateOf("") }
 
+    val inInteractiveTerm = activeTermId != null
+
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(if (activeTermId != null) Color(0xFF0D1117) else palette.canvas)
+            .background(if (inInteractiveTerm) SessionPalette.trackpad else palette.canvas)
             .systemBarsPadding()
             .imePadding(),
     ) {
-        // Header
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            IconButton(onClick = {
-                if (activeTermId != null) viewModel.detachBackToList() else onBack()
-            }) {
-                Icon(
-                    Icons.AutoMirrored.Rounded.ArrowBack,
-                    "返回",
-                    tint = if (activeTermId != null) Color.White else palette.text,
-                )
-            }
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    if (activeTermId != null) "终端 · $deviceName" else "终端远控 · $deviceName",
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = if (activeTermId != null) Color.White else palette.text,
-                )
-            }
-            if (activeTermId == null) {
-                IconButton(onClick = viewModel::refreshSessions) {
-                    Icon(Icons.Rounded.Refresh, "刷新", tint = palette.muted)
+        RabbitTopBar(
+            title = if (inInteractiveTerm) "终端" else "终端远控",
+            subtitle = deviceName,
+            onBack = {
+                if (inInteractiveTerm) viewModel.detachBackToList() else onBack()
+            },
+            contentColor = if (inInteractiveTerm) SessionPalette.text else palette.text,
+            mutedColor = if (inInteractiveTerm) SessionPalette.muted else palette.muted,
+            actions = {
+                if (!inInteractiveTerm) {
+                    IconButton(onClick = viewModel::refreshSessions, modifier = Modifier.size(44.dp)) {
+                        Icon(Icons.Rounded.Refresh, "刷新", tint = palette.muted)
+                    }
+                    Button(
+                        onClick = viewModel::createTerminal,
+                        enabled = sessionState.status is SessionStatus.Streaming,
+                        shape = RoundedCornerShape(RabbitRadius.Md),
+                        elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = palette.primary,
+                            contentColor = Color.White,
+                        ),
+                        contentPadding = PaddingValues(horizontal = 12.dp),
+                        modifier = Modifier.height(40.dp),
+                    ) {
+                        Icon(Icons.Rounded.Add, null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("新建", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    }
+                } else {
+                    IconButton(onClick = viewModel::createTerminal, modifier = Modifier.size(44.dp)) {
+                        Icon(Icons.Rounded.Add, "新建标签", tint = SessionPalette.text)
+                    }
                 }
-                Button(
-                    onClick = viewModel::createTerminal,
-                    enabled = sessionState.status is SessionStatus.Streaming,
-                    shape = RoundedCornerShape(10.dp),
-                ) {
-                    Icon(Icons.Rounded.Add, null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("新建终端", fontSize = 13.sp)
-                }
-            } else {
-                IconButton(onClick = viewModel::createTerminal) {
-                    Icon(Icons.Rounded.Add, "新建标签", tint = Color.White)
-                }
-            }
-        }
+            },
+        )
 
         when (val st = sessionState.status) {
             is SessionStatus.Connecting -> {
                 Text(
                     text = st.label,
                     fontSize = 12.sp,
-                    color = palette.primary,
-                    modifier = Modifier.fillMaxWidth().background(palette.primarySoft).padding(horizontal = 16.dp, vertical = 6.dp),
+                    color = palette.primaryText,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(palette.primarySoft)
+                        .padding(horizontal = 16.dp, vertical = 6.dp),
                 )
             }
             is SessionStatus.Error -> {
@@ -148,7 +156,10 @@ fun TerminalScreen(
                     text = "会话异常: ${st.message}",
                     fontSize = 12.sp,
                     color = palette.danger,
-                    modifier = Modifier.fillMaxWidth().background(palette.surface).padding(horizontal = 16.dp, vertical = 6.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(palette.dangerSoft)
+                        .padding(horizontal = 16.dp, vertical = 6.dp),
                 )
             }
             is SessionStatus.Ended -> {
@@ -156,83 +167,92 @@ fun TerminalScreen(
                     text = "会话已断开: ${st.reason}",
                     fontSize = 12.sp,
                     color = palette.danger,
-                    modifier = Modifier.fillMaxWidth().background(palette.surface).padding(horizontal = 16.dp, vertical = 6.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(palette.dangerSoft)
+                        .padding(horizontal = 16.dp, vertical = 6.dp),
                 )
             }
             else -> Unit
         }
 
-        if (activeTermId == null) {
-            // View 1: Session List
+        if (!inInteractiveTerm) {
+            // Session List
             LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(RabbitSpacing.Lg),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 if (sessions.isEmpty()) {
                     item {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(16.dp))
-                                .background(palette.surface)
-                                .border(1.dp, palette.line, RoundedCornerShape(16.dp))
-                                .padding(24.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                        ) {
-                            Icon(Icons.Rounded.Terminal, null, tint = palette.primary, modifier = Modifier.size(36.dp))
-                            Spacer(modifier = Modifier.height(10.dp))
-                            Text("暂无运行中的终端会话", fontSize = 16.sp, fontWeight = FontWeight.Medium, color = palette.text)
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text("点击右上角「新建终端」在远端开启 PTY Shell", fontSize = 13.sp, color = palette.muted)
-                        }
+                        RabbitEmptyState(
+                            icon = Icons.Rounded.Terminal,
+                            title = "暂无运行中的终端会话",
+                            description = "点击右上角「新建」在远端开启 PTY Shell。",
+                        )
                     }
                 } else {
                     items(sessions, key = { it.termId }) { sess ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(16.dp))
-                                .background(palette.surface)
-                                .border(1.dp, palette.line, RoundedCornerShape(16.dp))
-                                .clickable { viewModel.attachTerminal(sess) }
-                                .padding(14.dp),
-                            verticalAlignment = Alignment.CenterVertically,
+                        RabbitCard(
+                            onClick = { viewModel.attachTerminal(sess) },
+                            contentPadding = PaddingValues(start = 14.dp, end = 6.dp, top = 10.dp, bottom = 10.dp),
+                            modifier = Modifier.fillMaxWidth(),
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(palette.primarySoft),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Icon(Icons.Rounded.Terminal, null, tint = palette.primary)
-                            }
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(sess.name.ifBlank { "终端 #${sess.termId}" }, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
-                                Text("${sess.title.ifBlank { "shell" }} · ${sess.cwd.ifBlank { "~" }}", fontSize = 12.sp, color = palette.muted, maxLines = 1)
-                            }
-                            IconButton(onClick = {
-                                renameTarget = sess
-                                renameDraft = sess.name
-                            }) {
-                                Icon(Icons.Rounded.Edit, "重命名", tint = palette.muted, modifier = Modifier.size(18.dp))
-                            }
-                            IconButton(onClick = { viewModel.closeTerminal(sess.termId) }) {
-                                Icon(Icons.Rounded.DeleteOutline, "关闭", tint = palette.danger, modifier = Modifier.size(18.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(38.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(palette.primarySoft),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(Icons.Rounded.Terminal, null, tint = palette.primaryText, modifier = Modifier.size(20.dp))
+                                }
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        sess.name.ifBlank { "终端 #${sess.termId}" },
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = palette.text,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    Text(
+                                        "${sess.title.ifBlank { "shell" }} · ${sess.cwd.ifBlank { "~" }}",
+                                        fontSize = 12.sp,
+                                        color = palette.muted,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                                IconButton(
+                                    onClick = {
+                                        renameTarget = sess
+                                        renameDraft = sess.name
+                                    },
+                                    modifier = Modifier.size(44.dp),
+                                ) {
+                                    Icon(Icons.Rounded.Edit, "重命名", tint = palette.muted, modifier = Modifier.size(18.dp))
+                                }
+                                IconButton(
+                                    onClick = { viewModel.closeTerminal(sess.termId) },
+                                    modifier = Modifier.size(44.dp),
+                                ) {
+                                    Icon(Icons.Rounded.DeleteOutline, "关闭", tint = palette.danger, modifier = Modifier.size(18.dp))
+                                }
                             }
                         }
                     }
                 }
             }
         } else {
-            // View 2: Interactive Multi-Tab PTY Terminal
+            // Interactive Multi-Tab PTY Terminal (SessionPalette)
+            HorizontalDivider(color = SessionPalette.border, thickness = 1.dp)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(Color(0xFF161B22))
+                    .background(SessionPalette.chrome)
                     .horizontalScroll(rememberScrollState())
                     .padding(horizontal = 10.dp, vertical = 6.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -241,27 +261,39 @@ fun TerminalScreen(
                     val active = tab.termId == activeTermId
                     Row(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(if (active) Color(0xFF283448) else Color(0xFF1D232E))
+                            .defaultMinSize(minHeight = 34.dp)
+                            .clip(RoundedCornerShape(RabbitRadius.Sm))
+                            .background(if (active) SessionPalette.surfaceActive else SessionPalette.surface)
+                            .border(
+                                1.dp,
+                                if (active) SessionPalette.accent else SessionPalette.border,
+                                RoundedCornerShape(RabbitRadius.Sm),
+                            )
                             .clickable { viewModel.selectTab(tab.termId) }
-                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                            .padding(start = 10.dp, end = 6.dp, top = 5.dp, bottom = 5.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(tab.name, color = Color.White, fontSize = 12.sp)
+                        Text(tab.name, color = SessionPalette.text, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                         Spacer(modifier = Modifier.width(6.dp))
-                        Icon(
-                            Icons.Rounded.Close,
-                            "关闭",
-                            tint = Color(0xFF94A3B8),
+                        Box(
                             modifier = Modifier
-                                .size(14.dp)
+                                .size(24.dp)
+                                .clip(RoundedCornerShape(6.dp))
                                 .clickable { viewModel.closeTerminal(tab.termId) },
-                        )
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.Rounded.Close,
+                                "关闭",
+                                tint = SessionPalette.muted,
+                                modifier = Modifier.size(14.dp),
+                            )
+                        }
                     }
                 }
             }
+            HorizontalDivider(color = SessionPalette.border, thickness = 1.dp)
 
-            // Terminal Viewport
             val vScroll = rememberScrollState()
             val hScroll = rememberScrollState()
             LaunchedEffect(renderedText) {
@@ -272,7 +304,7 @@ fun TerminalScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .background(Color(0xFF0D1117))
+                    .background(SessionPalette.trackpad)
                     .padding(10.dp),
             ) {
                 val estCols = (maxWidth.value / 7.4f).toInt().coerceIn(36, 180)
@@ -286,7 +318,7 @@ fun TerminalScreen(
                     fontFamily = FontFamily.Monospace,
                     fontSize = 12.5.sp,
                     lineHeight = 17.sp,
-                    color = Color(0xFFE6EDF7),
+                    color = SessionPalette.text,
                     modifier = Modifier
                         .fillMaxSize()
                         .verticalScroll(vScroll)
@@ -294,14 +326,14 @@ fun TerminalScreen(
                 )
             }
 
-            // Direct Command Input + Geek Key Strip
             var inputLine by remember { mutableStateOf("") }
+            HorizontalDivider(color = SessionPalette.border, thickness = 1.dp)
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(Color(0xFF161B22))
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
+                    .background(SessionPalette.chrome)
+                    .padding(horizontal = 8.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Row(
                     modifier = Modifier
@@ -327,10 +359,11 @@ fun TerminalScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(Color(0xFF0D1117))
-                        .border(1.dp, Color(0xFF2B3444), RoundedCornerShape(10.dp))
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                        .defaultMinSize(minHeight = 44.dp)
+                        .clip(RoundedCornerShape(RabbitRadius.Md))
+                        .background(SessionPalette.trackpad)
+                        .border(1.dp, SessionPalette.border, RoundedCornerShape(RabbitRadius.Md))
+                        .padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     BasicTextField(
@@ -344,8 +377,8 @@ fun TerminalScreen(
                                 inputLine = next
                             }
                         },
-                        textStyle = TextStyle(color = Color.White, fontFamily = FontFamily.Monospace, fontSize = 14.sp),
-                        cursorBrush = SolidColor(Color(0xFF3370FF)),
+                        textStyle = TextStyle(color = SessionPalette.text, fontFamily = FontFamily.Monospace, fontSize = 14.sp),
+                        cursorBrush = SolidColor(SessionPalette.accent),
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                         keyboardActions = KeyboardActions(
@@ -357,7 +390,7 @@ fun TerminalScreen(
                         modifier = Modifier.weight(1f),
                         decorationBox = { inner ->
                             if (inputLine.isEmpty()) {
-                                Text("输入命令或文本后发送…", color = Color(0xFF64748B), fontSize = 13.sp)
+                                Text("输入命令或文本后发送…", color = SessionPalette.muted, fontSize = 13.sp)
                             }
                             inner()
                         },
@@ -367,9 +400,9 @@ fun TerminalScreen(
                             viewModel.sendTextOrCommand(inputLine + "\r")
                             inputLine = ""
                         },
-                        modifier = Modifier.size(34.dp),
+                        modifier = Modifier.size(40.dp),
                     ) {
-                        Icon(Icons.AutoMirrored.Rounded.Send, "发送", tint = Color(0xFF3370FF), modifier = Modifier.size(18.dp))
+                        Icon(Icons.AutoMirrored.Rounded.Send, "发送", tint = SessionPalette.accentText, modifier = Modifier.size(18.dp))
                     }
                 }
             }
@@ -378,48 +411,54 @@ fun TerminalScreen(
 
     if (renameTarget != null) {
         val target = renameTarget!!
-        AlertDialog(
+        RabbitDialog(
+            title = "重命名终端",
             onDismissRequest = { renameTarget = null },
-            title = { Text("重命名终端") },
-            text = {
-                OutlinedTextField(
-                    value = renameDraft,
-                    onValueChange = { renameDraft = it },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+            dismissLabel = "取消",
+            confirmLabel = "保存",
+            confirmEnabled = renameDraft.isNotBlank(),
+            onConfirm = {
+                viewModel.renameTerminal(target.termId, renameDraft)
+                renameTarget = null
             },
-            confirmButton = {
-                TextButton(onClick = {
-                    viewModel.renameTerminal(target.termId, renameDraft)
-                    renameTarget = null
-                }) { Text("保存") }
-            },
-            dismissButton = {
-                TextButton(onClick = { renameTarget = null }) { Text("取消") }
-            },
-        )
+        ) {
+            RabbitTextField(
+                value = renameDraft,
+                onValueChange = { renameDraft = it },
+                placeholder = "输入终端名称",
+            )
+        }
     }
 
     if (!error.isNullOrBlank()) {
-        AlertDialog(
+        RabbitDialog(
+            title = "终端提示",
+            message = error.orEmpty(),
             onDismissRequest = viewModel::clearError,
-            title = { Text("终端提示") },
-            text = { Text(error.orEmpty()) },
-            confirmButton = { TextButton(onClick = viewModel::clearError) { Text("确定") } },
+            confirmLabel = "知道了",
+            onConfirm = viewModel::clearError,
         )
     }
 }
 
 @Composable
 private fun TermKeyChip(label: String, active: Boolean = false, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(RabbitRadius.Sm)
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(if (active) Color(0xFF3370FF) else Color(0xFF222936))
+            .defaultMinSize(minWidth = 38.dp, minHeight = 36.dp)
+            .clip(shape)
+            .background(if (active) SessionPalette.accent else SessionPalette.surface)
+            .border(1.dp, if (active) SessionPalette.accent else SessionPalette.border, shape)
             .clickable(onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 6.dp),
+        contentAlignment = Alignment.Center,
     ) {
-        Text(label, color = Color.White, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+        Text(
+            label,
+            color = if (active) Color.White else SessionPalette.text,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 12.sp,
+        )
     }
 }

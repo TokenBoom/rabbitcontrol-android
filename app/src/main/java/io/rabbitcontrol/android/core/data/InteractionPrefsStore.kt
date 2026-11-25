@@ -11,9 +11,21 @@ enum class TouchInputMode(val label: String) {
 }
 
 enum class OrientationPreference(val label: String) {
-    LandscapeFirst("横屏沉浸优先"),
-    AutoSensor("跟随系统旋转"),
-    PortraitTrackpad("竖屏单手触控"),
+    AutoSensor("自动旋转"),
+    LandscapeFirst("锁定横屏"),
+    PortraitTrackpad("锁定竖屏"),
+}
+
+enum class PortraitLayoutMode(val label: String) {
+    Auto("智能"),
+    Fullscreen("竖屏全屏"),
+    SplitTrackpad("触控板分屏"),
+}
+
+enum class AppThemeMode(val label: String) {
+    System("跟随系统"),
+    Light("浅色"),
+    Dark("深色"),
 }
 
 data class InteractionPrefs(
@@ -22,10 +34,13 @@ data class InteractionPrefs(
     val naturalScroll: Boolean = true,
     val directTouchOffset: Boolean = true,
     val showHud: Boolean = true,
-    val orientationPref: OrientationPreference = OrientationPreference.LandscapeFirst,
+    val orientationPref: OrientationPreference = OrientationPreference.AutoSensor,
+    val portraitLayoutMode: PortraitLayoutMode = PortraitLayoutMode.Auto,
     val lockScreenTimeoutSec: Int = 60,
     val audioEnabledDefault: Boolean = true,
     val clipboardEnabledDefault: Boolean = true,
+    val themeMode: AppThemeMode = AppThemeMode.System,
+    val hostAllowRemoteAssist: Boolean = false,
 )
 
 class InteractionPrefsStore(context: Context) {
@@ -36,8 +51,14 @@ class InteractionPrefsStore(context: Context) {
     private fun load(): InteractionPrefs {
         val touchMode = TouchInputMode.entries.getOrNull(prefs.getInt("touch_mode", 0))
             ?: TouchInputMode.Trackpad
-        val orientationPref = OrientationPreference.entries.getOrNull(prefs.getInt("orientation_pref", 0))
-            ?: OrientationPreference.LandscapeFirst
+        val orientationPrefName = prefs.getString("orientation_pref_v2", null)
+        val orientationPref = OrientationPreference.entries.firstOrNull { it.name == orientationPrefName }
+            ?: OrientationPreference.AutoSensor
+        val portraitModeName = prefs.getString("portrait_layout_mode", null)
+        val portraitLayoutMode = PortraitLayoutMode.entries.firstOrNull { it.name == portraitModeName }
+            ?: PortraitLayoutMode.Auto
+        val themeMode = AppThemeMode.entries.getOrNull(prefs.getInt("theme_mode", 0))
+            ?: AppThemeMode.System
         return InteractionPrefs(
             touchMode = touchMode,
             pointerSensitivity = prefs.getFloat("sensitivity", 1.15f).coerceIn(0.4f, 3.0f),
@@ -45,9 +66,12 @@ class InteractionPrefsStore(context: Context) {
             directTouchOffset = prefs.getBoolean("direct_offset", true),
             showHud = prefs.getBoolean("show_hud", true),
             orientationPref = orientationPref,
+            portraitLayoutMode = portraitLayoutMode,
             lockScreenTimeoutSec = prefs.getInt("lock_timeout_sec", 60),
             audioEnabledDefault = prefs.getBoolean("audio_default", true),
             clipboardEnabledDefault = prefs.getBoolean("clipboard_default", true),
+            themeMode = themeMode,
+            hostAllowRemoteAssist = prefs.getBoolean("host_allow_remote_assist", false),
         )
     }
 
@@ -60,10 +84,13 @@ class InteractionPrefsStore(context: Context) {
             .putBoolean("natural_scroll", next.naturalScroll)
             .putBoolean("direct_offset", next.directTouchOffset)
             .putBoolean("show_hud", next.showHud)
-            .putInt("orientation_pref", next.orientationPref.ordinal)
+            .putString("orientation_pref_v2", next.orientationPref.name)
+            .putString("portrait_layout_mode", next.portraitLayoutMode.name)
             .putInt("lock_timeout_sec", next.lockScreenTimeoutSec)
             .putBoolean("audio_default", next.audioEnabledDefault)
             .putBoolean("clipboard_default", next.clipboardEnabledDefault)
+            .putInt("theme_mode", next.themeMode.ordinal)
+            .putBoolean("host_allow_remote_assist", next.hostAllowRemoteAssist)
             .apply()
     }
 }

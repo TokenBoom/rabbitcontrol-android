@@ -42,6 +42,7 @@ class PrecisionTouchLayer(
     private enum class Gesture {
         Idle,
         TrackpadMove,
+        LongPressPending,
         TrackpadDrag,
         DirectTap,
         DirectDrag,
@@ -56,6 +57,18 @@ class PrecisionTouchLayer(
     var sensitivity: Float = 1.15f
     var naturalScroll: Boolean = true
     var directTouchOffset: Boolean = true
+    var rightClickModifierHeld: Boolean = false
+    var dragModifierHeld: Boolean = false
+        set(value) {
+            val prev = field
+            field = value
+            if (prev && !value && leftButtonHeld) {
+                leftButtonHeld = false
+                onButton(0, false)
+                if (gesture == Gesture.TrackpadDrag) gesture = Gesture.TrackpadMove
+                if (gesture == Gesture.DirectDrag) gesture = Gesture.Consumed
+            }
+        }
     var watchOnly: Boolean = false
         set(value) {
             field = value
@@ -86,6 +99,9 @@ class PrecisionTouchLayer(
 
     // Two-finger scroll & pinch tracking
     private var twoDownTimeMs = 0L
+    private var twoDownCenterX = 0f
+    private var twoDownCenterY = 0f
+    private var twoDownSpan = 0f
     private var twoCenterX = 0f
     private var twoCenterY = 0f
     private var twoSpan = 0f
@@ -103,10 +119,20 @@ class PrecisionTouchLayer(
     private val handlerMain = Handler(Looper.getMainLooper())
     private val longPressRunnable = Runnable {
         if (watchOnly) return@Runnable
-        if ((gesture == Gesture.DirectTap || gesture == Gesture.TrackpadMove) && !movedBeyondSlop) {
-            performClickRight()
-            gesture = Gesture.Consumed
-            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+        if (!movedBeyondSlop) {
+            when (gesture) {
+                Gesture.TrackpadMove -> {
+                    gesture = Gesture.LongPressPending
+                    triggerRipple(0xFF3370FF.toInt())
+                    performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                }
+                Gesture.DirectTap -> {
+                    performClickRight()
+                    gesture = Gesture.Consumed
+                    performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                }
+                else -> Unit
+            }
         }
     }
 
@@ -279,14 +305,30 @@ class PrecisionTouchLayer(
                     val isSecondTap = (nowMs - lastTapUpTimeMs) <= doubleTapTimeout &&
                         hypot(event.x - lastTapUpX, event.y - lastTapUpY) < 42f * density
                     pendingTapDrag = isSecondTap
-                    gesture = Gesture.TrackpadMove
-                    if (!isSecondTap) {
-                        handlerMain.postDelayed(longPressRunnable, longPressTimeout)
+                    if (dragModifierHeld && !rightClickModifierHeld) {
+                        leftButtonHeld = true
+                        onButton(0, true)
+                        gesture = Gesture.TrackpadDrag
+                        performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                    } else {
+                        gesture = Gesture.TrackpadMove
+                        if (!isSecondTap && !rightClickModifierHeld) {
+                            handlerMain.postDelayed(longPressRunnable, longPressTimeout)
+                        }
                     }
                 } else {
                     mapDirectAndMove(event.x, event.y)
-                    gesture = Gesture.DirectTap
-                    handlerMain.postDelayed(longPressRunnable, longPressTimeout)
+                    if (dragModifierHeld && !rightClickModifierHeld) {
+                        leftButtonHeld = true
+                        onButton(0, true)
+                        gesture = Gesture.DirectDrag
+                        performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                    } else {
+                        gesture = Gesture.DirectTap
+                        if (!rightClickModifierHeld) {
+                            handlerMain.postDelayed(longPressRunnable, longPressTimeout)
+                        }
+                    }
                 }
             }
 
@@ -302,6 +344,9 @@ class PrecisionTouchLayer(
                     twoCenterX = (event.getX(0) + event.getX(1)) * 0.5f
                     twoCenterY = (event.getY(0) + event.getY(1)) * 0.5f
                     twoSpan = hypot(event.getX(0) - event.getX(1), event.getY(0) - event.getY(1))
+                    twoDownCenterX = twoCenterX
+                    twoDownCenterY = twoCenterY
+                    twoDownSpan = twoSpan
                     scrollAccumX = 0f
                     scrollAccumY = 0f
                     twoMoved = false
@@ -324,12 +369,26 @@ class PrecisionTouchLayer(
             MotionEvent.ACTION_MOVE -> {
                 velocityTracker?.addMovement(event)
                 when (gesture) {
+                    Gesture.LongPressPending -> {
+                        val dist = hypot(event.x - downX, event.y - downY)
+                        if (dist > touchSlop * 0.6f) {
+                            movedBeyondSlop = true
+                            leftButtonHeld = true
+                            onButton(0, true)
+                            gesture = Gesture.TrackpadDrag
+                            prevX = event.x
+                            prevY = event.y
+                            prevEventMs = nowMs
+                            performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                        }
+                    }
+
                     Gesture.TrackpadMove, Gesture.TrackpadDrag -> {
                         val dist = hypot(event.x - downX, event.y - downY)
                         if (!movedBeyondSlop && dist > touchSlop) {
                             movedBeyondSlop = true
                             handlerMain.removeCallbacks(longPressRunnable)
-                            if (pendingTapDrag && !leftButtonHeld) {
+                            if ((pendingTapDrag || dragModifierHeld) && !leftButtonHeld && !rightClickModifierHeld) {
                                 leftButtonHeld = true
                                 onButton(0, true)
                                 gesture = Gesture.TrackpadDrag
@@ -369,45 +428,51 @@ class PrecisionTouchLayer(
                             val span = hypot(event.getX(0) - event.getX(1), event.getY(0) - event.getY(1))
 
                             if (gesture == Gesture.TwoFingerPending) {
-                                val centerMove = hypot(cx - twoCenterX, cy - twoCenterY)
-                                val spanDiff = abs(span - twoSpan)
-                                if (!trackpadOnly && spanDiff > touchSlop * 2.2f && spanDiff > centerMove * 0.9f) {
+                                val centerMove = hypot(cx - twoDownCenterX, cy - twoDownCenterY)
+                                val spanDiff = abs(span - twoDownSpan)
+                                if (!trackpadOnly && spanDiff > touchSlop * 1.2f && spanDiff > centerMove * 0.7f) {
                                     gesture = Gesture.TwoFingerPinch
                                     twoMoved = true
+                                    twoCenterX = cx
+                                    twoCenterY = cy
+                                    twoSpan = span
                                 } else if (centerMove > touchSlop * 0.8f) {
                                     gesture = Gesture.TwoFingerScroll
                                     twoMoved = true
+                                    twoCenterX = cx
+                                    twoCenterY = cy
+                                    twoSpan = span
                                 }
+                            } else {
+                                if (gesture == Gesture.TwoFingerPinch && !trackpadOnly) {
+                                    val stage = stageProvider()
+                                    if (stage != null && twoSpan > 20f) {
+                                        val factor = span / twoSpan
+                                        val newScale = (stage.zoomScale * factor).coerceIn(1f, 4f)
+                                        val dx = cx - twoCenterX
+                                        val dy = cy - twoCenterY
+                                        stage.setZoomAndPan(newScale, stage.panX + dx, stage.panY + dy)
+                                        invalidate()
+                                    }
+                                } else if (gesture == Gesture.TwoFingerScroll) {
+                                    val stepPx = 18f * density
+                                    scrollAccumX += (cx - twoCenterX)
+                                    scrollAccumY += (cy - twoCenterY)
+                                    val hLines = (scrollAccumX / stepPx).toInt()
+                                    val vLines = (scrollAccumY / stepPx).toInt()
+                                    if (hLines != 0) {
+                                        emitWheel(hLines, horizontal = true)
+                                        scrollAccumX -= hLines * stepPx
+                                    }
+                                    if (vLines != 0) {
+                                        emitWheel(vLines, horizontal = false)
+                                        scrollAccumY -= vLines * stepPx
+                                    }
+                                }
+                                twoCenterX = cx
+                                twoCenterY = cy
+                                twoSpan = span
                             }
-
-                            if (gesture == Gesture.TwoFingerPinch && !trackpadOnly) {
-                                val stage = stageProvider()
-                                if (stage != null && twoSpan > 20f) {
-                                    val factor = span / twoSpan
-                                    val newScale = (stage.zoomScale * factor).coerceIn(1f, 4f)
-                                    val dx = cx - twoCenterX
-                                    val dy = cy - twoCenterY
-                                    stage.setZoomAndPan(newScale, stage.panX + dx, stage.panY + dy)
-                                    invalidate()
-                                }
-                            } else if (gesture == Gesture.TwoFingerScroll) {
-                                val stepPx = 18f * density
-                                scrollAccumX += (cx - twoCenterX)
-                                scrollAccumY += (cy - twoCenterY)
-                                val hLines = (scrollAccumX / stepPx).toInt()
-                                val vLines = (scrollAccumY / stepPx).toInt()
-                                if (hLines != 0) {
-                                    emitWheel(hLines, horizontal = true)
-                                    scrollAccumX -= hLines * stepPx
-                                }
-                                if (vLines != 0) {
-                                    emitWheel(vLines, horizontal = false)
-                                    scrollAccumY -= vLines * stepPx
-                                }
-                            }
-                            twoCenterX = cx
-                            twoCenterY = cy
-                            twoSpan = span
                         }
                     }
 
@@ -465,13 +530,22 @@ class PrecisionTouchLayer(
             MotionEvent.ACTION_UP -> {
                 handlerMain.removeCallbacks(longPressRunnable)
                 when (gesture) {
+                    Gesture.LongPressPending -> {
+                        performClickRight()
+                        performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                    }
                     Gesture.TrackpadMove -> {
                         if (!movedBeyondSlop) {
-                            performClickLeft()
-                            lastTapUpTimeMs = nowMs
-                            lastTapUpX = event.x
-                            lastTapUpY = event.y
-                            performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                            if (rightClickModifierHeld) {
+                                performClickRight()
+                                performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                            } else {
+                                performClickLeft()
+                                lastTapUpTimeMs = nowMs
+                                lastTapUpX = event.x
+                                lastTapUpY = event.y
+                                performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                            }
                         }
                     }
                     Gesture.TrackpadDrag, Gesture.DirectDrag, Gesture.ThreeFingerDrag -> {
@@ -483,8 +557,13 @@ class PrecisionTouchLayer(
                     Gesture.DirectTap -> {
                         if (!movedBeyondSlop) {
                             mapDirectAndMove(event.x, event.y)
-                            performClickLeft()
-                            performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                            if (rightClickModifierHeld) {
+                                performClickRight()
+                                performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                            } else {
+                                performClickLeft()
+                                performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                            }
                         }
                     }
                     else -> Unit

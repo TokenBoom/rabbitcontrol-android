@@ -1,5 +1,6 @@
 package io.rabbitcontrol.android.ui.screens.home
 
+import android.content.Intent
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.rabbitcontrol.android.core.data.AccountRepository
@@ -7,17 +8,21 @@ import io.rabbitcontrol.android.core.data.InteractionPrefs
 import io.rabbitcontrol.android.core.data.InteractionPrefsStore
 import io.rabbitcontrol.android.core.data.TargetHistoryStore
 import io.rabbitcontrol.android.core.data.WallpaperCache
+import io.rabbitcontrol.android.core.host.HostManager
+import io.rabbitcontrol.android.core.host.HostUiState
 import io.rabbitcontrol.android.core.nativebridge.RemoteDevice
 import io.rabbitcontrol.android.core.nativebridge.ServerConfigModel
 import io.rabbitcontrol.android.core.nativebridge.SignalStatusSnapshot
 import io.rabbitcontrol.android.core.nativebridge.UserProfile
 import io.rabbitcontrol.android.core.session.ActiveSessionState
 import io.rabbitcontrol.android.core.session.SessionManager
+import io.rabbitcontrol.android.core.session.SessionStatus
 import io.rabbitcontrol.android.session.Core
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -33,6 +38,7 @@ class HomeViewModel(
     val wallpaperCache: WallpaperCache,
     private val prefsStore: InteractionPrefsStore,
     private val sessionManager: SessionManager,
+    private val hostManager: HostManager,
 ) : ViewModel() {
 
     val servers: StateFlow<List<ServerConfigModel>> = accountRepo.servers
@@ -45,6 +51,7 @@ class HomeViewModel(
     val favoriteTargets: StateFlow<List<String>> = historyStore.favorites
     val prefs: StateFlow<InteractionPrefs> = prefsStore.state
     val activeSession: StateFlow<ActiveSessionState> = sessionManager.state
+    val hostState: StateFlow<HostUiState> = hostManager.state
     val wallpaperVersion: StateFlow<Long> = wallpaperCache.version
     val kickedNotice: StateFlow<String?> = accountRepo.kickedNotice
 
@@ -68,12 +75,50 @@ class HomeViewModel(
 
     init {
         restoreSession()
+        observeRecovery()
+    }
+
+    private fun observeRecovery() {
+        viewModelScope.launch {
+            var prevState: String? = null
+            accountRepo.signalStatus.collect { snap ->
+                if (snap.state == "connected") {
+                    if (prevState != null && prevState != "connected") {
+                        _deviceError.value = null
+                        if (accountRepo.profile.value?.needsPassword == false && !_refreshingDevices.value) {
+                            refreshDevices()
+                        }
+                    }
+                }
+                prevState = snap.state
+            }
+        }
+        viewModelScope.launch {
+            sessionManager.state.collect { st ->
+                if (st.status is SessionStatus.Streaming && _deviceError.value != null) {
+                    _deviceError.value = null
+                }
+            }
+        }
+        viewModelScope.launch {
+            accountRepo.devices.drop(1).collect { list ->
+                if (list.isNotEmpty() && accountRepo.signalStatus.value.state == "connected" && _deviceError.value != null) {
+                    _deviceError.value = null
+                }
+            }
+        }
+    }
+
+    fun dismissDeviceError() {
+        _deviceError.value = null
     }
 
     fun restoreSession() {
-        _restoring.value = true
+        _restoring.value = !accountRepo.restored.value
         viewModelScope.launch {
-            runCatching { accountRepo.restore() }
+            if (!accountRepo.restored.value) {
+                runCatching { accountRepo.restore() }
+            }
             _restoring.value = false
             if (accountRepo.profile.value?.needsPassword == false) {
                 refreshDevices()
@@ -101,21 +146,13 @@ class HomeViewModel(
     }
 
     fun updateAssistInput(raw: String) {
-        _assistTargetInput.value = raw
+        _assistTargetInput.value = raw.filter { it.isDigit() }.take(9)
     }
 
-    fun parseTargetOrIpPort(raw: String): String? {
-        val trimmed = raw.trim()
-        Core.deviceId(trimmed)?.let { return it }
-        // Support direct LAN IP:port debugging target
-        val colon = trimmed.lastIndexOf(':')
-        if (colon > 0 && colon < trimmed.length - 1) {
-            val port = trimmed.substring(colon + 1).toIntOrNull()
-            if (port != null && port in 1..65535) {
-                return trimmed
-            }
-        }
-        return null
+    fun parseDeviceCode(raw: String): String? {
+        val digits = raw.filter { it.isDigit() }
+        if (digits.length != 9) return null
+        return Core.deviceId(digits)
     }
 
     fun recordTarget(target: String) {
@@ -151,4 +188,20 @@ class HomeViewModel(
     }
 
     fun dismissKicked() = accountRepo.dismissKickedNotice()
+
+    fun enableHostWithProjection(resultCode: Int, data: Intent) =
+        hostManager.enableHostWithProjection(resultCode, data)
+
+    fun stopHost() = hostManager.stopHost()
+
+    fun setHostAllowRemoteAssist(allow: Boolean) = hostManager.setAllowRemoteAssist(allow)
+
+    fun respondHostApproval(generation: Long, accepted: Boolean) =
+        hostManager.respondApproval(generation, accepted)
+
+    fun disconnectHostClient() = hostManager.disconnectClient()
+
+    fun rotateHostTempCode() = hostManager.rotateTempCode()
+
+    fun refreshAccessibilityState() = hostManager.refreshAccessibilityState()
 }

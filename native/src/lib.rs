@@ -11,6 +11,7 @@ use std::ptr;
 
 mod account;
 mod annexb;
+mod host_android;
 mod ndk_audio;
 mod ndk_media;
 mod platform_android;
@@ -366,6 +367,108 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_toolCall(
             throw_illegal_state(&mut env, &err);
             ptr::null_mut()
         }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_setHostScreenMetrics(
+    _: JNIEnv,
+    _: JObject,
+    width: jint,
+    height: jint,
+) {
+    if width > 0 && height > 0 {
+        host_android::set_host_screen_metrics(width as u32, height as u32);
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_startHost(
+    mut env: JNIEnv,
+    _: JObject,
+    config_json: JString,
+) -> jstring {
+    let Some(rt) = runtime::global_runtime() else {
+        throw_illegal_state(&mut env, "运行时尚未初始化");
+        return ptr::null_mut();
+    };
+    let raw = jstr_to_string(&mut env, &config_json).unwrap_or_else(|| "{}".to_string());
+    let req: runtime::StartHostRequest = serde_json::from_str(&raw).unwrap_or_default();
+    match rt.start_host(req) {
+        Ok(val) => string_to_jstr(&mut env, &val.to_string()),
+        Err(err) => {
+            throw_illegal_state(&mut env, &err);
+            ptr::null_mut()
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_stopHost(
+    _: JNIEnv,
+    _: JObject,
+) {
+    if let Some(rt) = runtime::global_runtime() {
+        rt.stop_host();
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_hostCommand(
+    mut env: JNIEnv,
+    _: JObject,
+    command_json: JString,
+) -> jstring {
+    let Some(rt) = runtime::global_runtime() else {
+        throw_illegal_state(&mut env, "运行时尚未初始化");
+        return ptr::null_mut();
+    };
+    let Some(raw) = jstr_to_string(&mut env, &command_json) else {
+        throw_illegal_state(&mut env, "无效被控端指令");
+        return ptr::null_mut();
+    };
+    let cmd: Value = match serde_json::from_str(&raw) {
+        Ok(v) => v,
+        Err(e) => {
+            throw_illegal_state(&mut env, &format!("解析被控端指令失败: {e}"));
+            return ptr::null_mut();
+        }
+    };
+    match rt.host_command(&cmd) {
+        Ok(val) => string_to_jstr(&mut env, &val.to_string()),
+        Err(err) => {
+            throw_illegal_state(&mut env, &err);
+            ptr::null_mut()
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_pollHostEvents(
+    mut env: JNIEnv,
+    _: JObject,
+) -> jstring {
+    let Some(rt) = runtime::global_runtime() else {
+        return string_to_jstr(
+            &mut env,
+            "{\"running\":false,\"updates\":[],\"encoderCommands\":[],\"inputEvents\":[]}",
+        );
+    };
+    string_to_jstr(&mut env, &rt.poll_host_events().to_string())
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_pushHostEncodedFrame(
+    env: JNIEnv,
+    _: JObject,
+    data: jni::objects::JByteArray,
+    is_keyframe: jboolean,
+) {
+    if data.is_null() {
+        return;
+    }
+    if let Ok(bytes) = env.convert_byte_array(&data) {
+        host_android::push_host_encoded_frame(bytes, is_keyframe != 0);
     }
 }
 

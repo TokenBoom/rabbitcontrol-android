@@ -15,6 +15,7 @@ rc-audio = { path = "../rabbitcontrol-core/crates/rc-audio" }
 rc-capture = { path = "../rabbitcontrol-core/crates/rc-capture" }
 rc-client-core = { path = "../rabbitcontrol-core/crates/rc-client-core" }
 rc-decode = { path = "../rabbitcontrol-core/crates/rc-decode" }
+rc-encode = { path = "../rabbitcontrol-core/crates/rc-encode" }
 rc-input = { path = "../rabbitcontrol-core/crates/rc-input" }
 rc-pipeline = { path = "../rabbitcontrol-core/crates/rc-pipeline" }
 rc-render = { path = "../rabbitcontrol-core/crates/rc-render" }

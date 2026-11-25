@@ -9,6 +9,7 @@ data class ServerConfigModel(
     val caPem: String,
     val name: String = "",
     val allowRegistration: Boolean = true,
+    val authPubkeyHex: String = "",
 ) {
     val id: String
         get() = "${address.trim().lowercase()}|${fingerprint.trim().lowercase()}"

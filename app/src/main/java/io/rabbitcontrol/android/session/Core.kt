@@ -38,4 +38,11 @@ internal object Core {
     external fun pushClipboardLocal(text: String)
     external fun pushImeSilent(text: String)
     external fun toolCall(requestJson: String): String
+
+    external fun setHostScreenMetrics(width: Int, height: Int)
+    external fun startHost(configJson: String): String
+    external fun stopHost()
+    external fun hostCommand(commandJson: String): String
+    external fun pollHostEvents(): String
+    external fun pushHostEncodedFrame(data: ByteArray, isKeyframe: Boolean)
 }

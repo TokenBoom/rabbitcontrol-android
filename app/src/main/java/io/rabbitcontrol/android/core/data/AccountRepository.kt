@@ -54,6 +54,9 @@ class AccountRepository(context: Context) {
     private val _kickedNotice = MutableStateFlow<String?>(null)
     val kickedNotice: StateFlow<String?> = _kickedNotice.asStateFlow()
 
+    private val _restored = MutableStateFlow(false)
+    val restored: StateFlow<Boolean> = _restored.asStateFlow()
+
     init {
         migrateLegacyIfNeeded()
         val loaded = loadServers()
@@ -158,6 +161,7 @@ class AccountRepository(context: Context) {
         .put("ca", caPem)
         .put("name", name)
         .put("allowRegistration", allowRegistration)
+        .put("authPubkeyHex", authPubkeyHex)
 
     private fun parseServerJson(obj: JSONObject): ServerConfigModel? = runCatching {
         ServerConfigModel(
@@ -166,6 +170,7 @@ class AccountRepository(context: Context) {
             caPem = obj.getString("ca"),
             name = obj.optString("name", ""),
             allowRegistration = obj.optBoolean("allowRegistration", true),
+            authPubkeyHex = obj.optString("authPubkeyHex", ""),
         )
     }.getOrNull()
 
@@ -225,17 +230,21 @@ class AccountRepository(context: Context) {
     }
 
     suspend fun restore(): Unit = withContext(Dispatchers.IO) {
-        val list = loadServers()
-        _servers.value = list
-        val selected = loadActiveServer(list)
-        _server.value = selected
-        _savedAccountEmails.value = loadSavedEmails(list)
-        if (selected == null) {
-            tokens = null
-            _profile.value = null
-            return@withContext
+        try {
+            val list = loadServers()
+            _servers.value = list
+            val selected = loadActiveServer(list)
+            _server.value = selected
+            _savedAccountEmails.value = loadSavedEmails(list)
+            if (selected == null) {
+                tokens = null
+                _profile.value = null
+                return@withContext
+            }
+            restoreForServer(selected)
+        } finally {
+            _restored.value = true
         }
-        restoreForServer(selected)
     }
 
     private fun restoreForServer(selected: ServerConfigModel): Boolean {
@@ -270,6 +279,7 @@ class AccountRepository(context: Context) {
                 .put("pin", selected.fingerprint)
                 .put("ca", selected.caPem)
                 .put("tokens", parsed)
+            if (selected.authPubkeyHex.isNotBlank()) req.put("authPubkeyHex", selected.authPubkeyHex)
             prefs.getString(deviceIdKey(selected), null)?.let { req.put("deviceId", it) }
             runCatching { Core.account(req.toString()) }
                 .onSuccess { android.util.Log.i("RC_DIAG", "Core.account(restore) ok: $it") }
@@ -300,6 +310,7 @@ class AccountRepository(context: Context) {
             caPem = response.getString("caPem"),
             name = name.trim(),
             allowRegistration = response.optBoolean("allowRegistration", true),
+            authPubkeyHex = response.optString("authPubkeyHex", ""),
         )
         val health = if (response.getString("status") == "ok") "连接正常" else "服务状态异常"
         val report = "$health · ${response.getLong("elapsedMs")} ms"
@@ -365,8 +376,10 @@ class AccountRepository(context: Context) {
     suspend fun fetchAuthConfig(target: ServerConfigModel): Boolean = withContext(Dispatchers.IO) {
         val resp = request("auth_config", target)
         val allowReg = resp.optBoolean("allowRegistration", true)
-        if (target.allowRegistration != allowReg) {
-            val updatedTarget = target.copy(allowRegistration = allowReg)
+        val fetchedPubkey = resp.optString("authPubkeyHex", "").takeIf { it.isNotBlank() && it != "null" }
+        val nextPubkey = target.authPubkeyHex.ifBlank { fetchedPubkey.orEmpty() }
+        if (target.allowRegistration != allowReg || target.authPubkeyHex != nextPubkey) {
+            val updatedTarget = target.copy(allowRegistration = allowReg, authPubkeyHex = nextPubkey)
             val nextList = _servers.value.map { if (it.id == target.id) updatedTarget else it }
             persistServers(nextList)
             if (_server.value?.id == target.id) {
@@ -505,6 +518,7 @@ class AccountRepository(context: Context) {
         val req = JSONObject().put("action", action)
         selected?.let {
             req.put("address", it.address).put("ca", it.caPem).put("pin", it.fingerprint)
+            if (it.authPubkeyHex.isNotBlank()) req.put("authPubkeyHex", it.authPubkeyHex)
             prefs.getString(deviceIdKey(it), null)?.let { did -> req.put("deviceId", did) }
         }
         args.forEach { (key, value) -> req.put(key, value) }

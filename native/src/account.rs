@@ -36,6 +36,7 @@ fn build_server_config(
     address: &str,
     ca_pem: &str,
     ca_pin: Option<&str>,
+    auth_pubkey_hex: Option<String>,
     device_key: String,
     cached_device_id: Option<String>,
 ) -> Result<ServerConfig, AuthClientError> {
@@ -50,7 +51,7 @@ fn build_server_config(
         use_https: true,
         ca_fingerprint_sha256: ca_pin.map(|s| s.to_ascii_lowercase()),
         ca_cert_pem: Some(ca_pem.to_string()),
-        server_auth_pubkey_hex: None,
+        server_auth_pubkey_hex: auth_pubkey_hex,
         device_key,
         cached_device_id,
     })
@@ -82,6 +83,7 @@ fn sync_runtime_session(
     address: &str,
     ca_pem: &str,
     ca_pin: Option<&str>,
+    auth_pubkey_hex: Option<String>,
     tokens: &Value,
     cached_device_id: Option<String>,
     is_restore: bool,
@@ -92,13 +94,22 @@ fn sync_runtime_session(
     let Ok((host, api_port)) = parse_server_input(address, DEFAULT_API_PORT) else {
         return;
     };
+    let existing_cfg = rt.auth.server_config();
     let dev_id = tokens["device"]["device_id"]
         .as_str()
         .map(str::to_string)
         .or(cached_device_id)
-        .or_else(|| rt.auth.server_config().cached_device_id);
+        .or(existing_cfg.cached_device_id);
+    let resolved_auth_pubkey = auth_pubkey_hex.or(existing_cfg.server_auth_pubkey_hex);
     let device_key = rt.device_key();
-    let Ok(cfg) = build_server_config(address, ca_pem, ca_pin, device_key, dev_id.clone()) else {
+    let Ok(cfg) = build_server_config(
+        address,
+        ca_pem,
+        ca_pin,
+        resolved_auth_pubkey,
+        device_key,
+        dev_id.clone(),
+    ) else {
         return;
     };
     rt.auth.update_server_config(cfg);
@@ -133,7 +144,7 @@ fn sync_runtime_session(
                 }
             });
         let stored = to_stored_session(&host, api_port, access, refresh, access_expires_at, &user);
-        rt.auth.apply_external_session(stored);
+        rt.apply_and_persist_session(stored);
         if !user.must_change_password {
             if let Some(ref did) = dev_id {
                 let _ = rt.auth.ensure_device_cert(did);
@@ -163,6 +174,7 @@ fn probe(address: &str, fingerprint: &str) -> Result<Value, AuthClientError> {
         "elapsedMs": result.latency_ms,
         "caSha256": ca.ca_fingerprint_sha256,
         "caPem": ca.ca_cert_pem,
+        "authPubkeyHex": ca.auth_pubkey_hex,
         "allowRegistration": result.allow_registration,
     }))
 }
@@ -182,6 +194,7 @@ fn request(args: &Value) -> Result<Value, AuthClientError> {
     }
     let ca_pem = field(args, "ca")?;
     let ca_pin = opt_field(args, "pin");
+    let auth_pubkey_hex = opt_field(args, "authPubkeyHex").map(str::to_string);
     let (host, port) =
         parse_server_input(address, DEFAULT_API_PORT).map_err(AuthClientError::Config)?;
     let client = AuthHttpClient::new(host, port, true, Some(ca_pem.into()))?;
@@ -197,7 +210,14 @@ fn request(args: &Value) -> Result<Value, AuthClientError> {
     match action {
         "auth_config" => {
             let cfg = client.fetch_auth_config()?;
-            Ok(json!({ "allowRegistration": cfg.allow_registration }))
+            let fetched_pubkey = client
+                .fetch_ca_bundle()
+                .ok()
+                .map(|b| b.auth_pubkey_hex);
+            Ok(json!({
+                "allowRegistration": cfg.allow_registration,
+                "authPubkeyHex": fetched_pubkey,
+            }))
         }
         "register" => {
             let (device_key, hostname, device_pubkey) = match rt_info {
@@ -216,7 +236,7 @@ fn request(args: &Value) -> Result<Value, AuthClientError> {
             let mut val = json!(tokens);
             let expires_at = now_unix_sec().saturating_add(tokens.expires_in_sec);
             val["access_expires_at_unix_sec"] = json!(expires_at);
-            sync_runtime_session(address, ca_pem, ca_pin, &val, None, false);
+            sync_runtime_session(address, ca_pem, ca_pin, auth_pubkey_hex, &val, None, false);
             Ok(val)
         }
         "login" => {
@@ -235,13 +255,13 @@ fn request(args: &Value) -> Result<Value, AuthClientError> {
             let mut val = json!(tokens);
             let expires_at = now_unix_sec().saturating_add(tokens.expires_in_sec);
             val["access_expires_at_unix_sec"] = json!(expires_at);
-            sync_runtime_session(address, ca_pem, ca_pin, &val, None, false);
+            sync_runtime_session(address, ca_pem, ca_pin, auth_pubkey_hex, &val, None, false);
             Ok(val)
         }
         "restore" => {
             let tokens = &args["tokens"];
             let cached_did = opt_field(args, "deviceId").map(str::to_string);
-            sync_runtime_session(address, ca_pem, ca_pin, tokens, cached_did, true);
+            sync_runtime_session(address, ca_pem, ca_pin, auth_pubkey_hex, tokens, cached_did, true);
             Ok(json!({ "ok": true }))
         }
         "refresh" => {
@@ -253,6 +273,7 @@ fn request(args: &Value) -> Result<Value, AuthClientError> {
                 address,
                 ca_pem,
                 ca_pin,
+                auth_pubkey_hex,
                 &val,
                 opt_field(args, "deviceId").map(str::to_string),
                 false,
@@ -272,6 +293,7 @@ fn request(args: &Value) -> Result<Value, AuthClientError> {
                 address,
                 ca_pem,
                 ca_pin,
+                auth_pubkey_hex,
                 &val,
                 opt_field(args, "deviceId").map(str::to_string),
                 false,
@@ -320,7 +342,10 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_account(
             .new_string(response.to_string())
             .map_or(ptr::null_mut(), JString::into_raw),
         Err(error) => {
-            let class = if error.is_unauthorized() || error.is_token_reuse() {
+            let class = if error.is_unauthorized()
+                || error.is_token_reuse()
+                || matches!(error, AuthClientError::ReloginRequired(_))
+            {
                 "java/lang/SecurityException"
             } else {
                 "java/lang/IllegalStateException"

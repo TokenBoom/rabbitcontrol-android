@@ -75,6 +75,8 @@ class AuthViewModel(
     fun updateNewPassword(v: String) { _ui.value = _ui.value.copy(newPassword = v, error = null) }
     fun updateConfirmPassword(v: String) { _ui.value = _ui.value.copy(confirmPassword = v, error = null) }
 
+    fun clearError() { _ui.value = _ui.value.copy(error = null) }
+
     fun goToServerEdit() {
         _ui.value = _ui.value.copy(step = AuthStep.Server, error = null)
     }

@@ -644,6 +644,7 @@ dependencies = [
  "rc-capture",
  "rc-client-core",
  "rc-decode",
+ "rc-encode",
  "rc-input",
  "rc-pipeline",
  "rc-render",

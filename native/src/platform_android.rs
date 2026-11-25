@@ -5,13 +5,20 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
 use rc_audio::{AudioBackendProvider, AudioCapture, AudioPlayer};
-use rc_client_core::platform::{ClientPlatformHooks, HardwareRendererOutput, PreallocatedRenderSurface};
+use rc_capture::CaptureBackend;
+use rc_client_core::platform::{
+    ClientPlatformHooks, HardwareRendererOutput, PlatformDisplayMode, PreallocatedRenderSurface,
+};
 use rc_decode::Decoder;
+use rc_encode::Encoder;
 use rc_pipeline::{PipelineConfig, PlatformMediaProvider};
 use rc_render::Renderer;
 use rc_session::ClipboardBackend;
-use rc_types::Result;
+use rc_types::{Resolution, Result};
 
+use crate::host_android::{
+    self, AndroidCaptureBackend, AndroidInputInjector, AndroidPassthroughEncoder,
+};
 use crate::ndk_audio::AAudioPlayer;
 use crate::ndk_media::{AndroidSurfaceDecoder, AndroidSurfaceRenderer};
 
@@ -81,6 +88,19 @@ impl ClipboardBackend for AndroidClipboardBackend {
 struct AndroidMediaProvider;
 
 impl PlatformMediaProvider for AndroidMediaProvider {
+    fn host_clock_us(&self) -> Option<u64> {
+        Some(host_android::host_clock_us())
+    }
+
+    fn create_capture(&self, cfg: &PipelineConfig) -> Result<(Box<dyn CaptureBackend>, &'static str)> {
+        let cap = AndroidCaptureBackend::new(cfg);
+        Ok((Box::new(cap), "mediaprojection"))
+    }
+
+    fn create_encoder(&self, _cfg: &PipelineConfig) -> Result<(Box<dyn Encoder>, &'static str)> {
+        Ok((Box::new(AndroidPassthroughEncoder), "mediacodec-enc"))
+    }
+
     fn create_decoder(&self, cfg: &PipelineConfig) -> Result<(Box<dyn Decoder>, &'static str)> {
         let dec = AndroidSurfaceDecoder::new(cfg.resolution.width, cfg.resolution.height);
         Ok((Box::new(dec), "mediacodec"))
@@ -94,6 +114,44 @@ impl PlatformMediaProvider for AndroidMediaProvider {
 struct AndroidPlatformHooks;
 
 impl ClientPlatformHooks for AndroidPlatformHooks {
+    fn main_display_logical_resolution(&self) -> Option<Resolution> {
+        Some(host_android::current_screen_resolution())
+    }
+
+    fn main_display_backing_resolution(&self) -> Option<Resolution> {
+        Some(host_android::current_screen_resolution())
+    }
+
+    fn list_main_display_modes(&self) -> Vec<PlatformDisplayMode> {
+        let res = host_android::current_screen_resolution();
+        let mut modes = vec![PlatformDisplayMode {
+            width: res.width,
+            height: res.height,
+            is_hidpi: true,
+        }];
+        if res.width > 800 {
+            let scaled_w = 720u32;
+            let scaled_h = (((u64::from(res.height) * u64::from(scaled_w)) / u64::from(res.width)) as u32)
+                .max(2)
+                & !1;
+            modes.push(PlatformDisplayMode {
+                width: scaled_w,
+                height: scaled_h,
+                is_hidpi: false,
+            });
+        }
+        modes
+    }
+
+    fn lock_screen_now(&self) -> bool {
+        host_android::push_lock_screen();
+        true
+    }
+
+    fn create_main_display_injector(&self) -> Option<Box<dyn rc_input::InputInjector>> {
+        Some(Box::new(AndroidInputInjector))
+    }
+
     fn create_hardware_renderer(
         &self,
         _width: u32,

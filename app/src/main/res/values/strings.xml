@@ -14,4 +14,5 @@
     <string name="input_result">本地 · %1$s · %2$d 字节</string>
     <string name="address_label">服务器地址</string>
     <string name="pin_label">CA 指纹（可选）</string>
+    <string name="accessibility_service_desc">允许 RabbitControl 在开启手机被控端模式时执行远程点击、滑动、滚轮及系统返回操作。</string>
 </resources>

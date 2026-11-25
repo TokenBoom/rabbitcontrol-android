@@ -1,5 +1,6 @@
 package io.rabbitcontrol.android.ui.screens.detail
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -7,20 +8,23 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.ArrowDownward
@@ -32,25 +36,27 @@ import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.LaptopMac
-import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.StarOutline
 import androidx.compose.material.icons.rounded.Terminal
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Visibility
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -59,6 +65,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -69,16 +76,33 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.rabbitcontrol.android.core.data.DeviceToolKind
 import io.rabbitcontrol.android.core.nativebridge.RemoteDevice
+import io.rabbitcontrol.android.ui.components.RabbitCard
+import io.rabbitcontrol.android.ui.components.RabbitDialog
+import io.rabbitcontrol.android.ui.components.RabbitPrimaryButton
+import io.rabbitcontrol.android.ui.components.RabbitSecondaryButton
+import io.rabbitcontrol.android.ui.components.RabbitSectionHeader
+import io.rabbitcontrol.android.ui.components.RabbitStatusPill
+import io.rabbitcontrol.android.ui.components.RabbitTopBar
+import io.rabbitcontrol.android.ui.components.StatusTone
 import io.rabbitcontrol.android.ui.theme.LocalRabbitPalette
+import io.rabbitcontrol.android.ui.theme.RabbitElevation
+import io.rabbitcontrol.android.ui.theme.RabbitRadius
+import io.rabbitcontrol.android.ui.theme.RabbitSpacing
 import kotlinx.coroutines.launch
 import org.koin.androidx.compose.koinViewModel
 
+private enum class DetailSheetMode {
+    ReorderTools,
+    MoreTools,
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DeviceDetailScreen(
     device: RemoteDevice,
@@ -105,8 +129,9 @@ fun DeviceDetailScreen(
     val isCurrentConnected = activeSession.targetId == device.id && activeSession.negotiated != null
     val isFav = device.id in favorites
 
-    var showMoreTools by remember { mutableStateOf(false) }
+    var sheetMode by remember { mutableStateOf<DetailSheetMode?>(null) }
     var powerConfirmKind by remember { mutableStateOf<String?>(null) }
+    val osLabel = remember(device.os) { formatDetailOs(device.os) }
 
     fun triggerTool(kind: DeviceToolKind) {
         when (kind) {
@@ -130,54 +155,47 @@ fun DeviceDetailScreen(
             .systemBarsPadding(),
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // Top bar
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(onClick = onBack) {
-                    Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回", tint = palette.text)
-                }
-                Text(
-                    device.name,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = palette.text,
-                    modifier = Modifier.weight(1f),
-                )
-                IconButton(onClick = { viewModel.toggleFavorite(device.id) }) {
-                    Icon(
-                        imageVector = if (isFav) Icons.Rounded.Star else Icons.Rounded.StarOutline,
-                        contentDescription = "收藏",
-                        tint = if (isFav) palette.primary else palette.muted,
-                    )
-                }
-            }
+            RabbitTopBar(
+                title = device.name,
+                subtitle = osLabel,
+                onBack = onBack,
+                actions = {
+                    IconButton(
+                        onClick = { viewModel.toggleFavorite(device.id) },
+                        modifier = Modifier.size(48.dp),
+                    ) {
+                        Icon(
+                            imageVector = if (isFav) Icons.Rounded.Star else Icons.Rounded.StarOutline,
+                            contentDescription = "收藏",
+                            tint = if (isFav) palette.primaryText else palette.muted,
+                        )
+                    }
+                },
+            )
 
             Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp, vertical = 6.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
+                    .padding(horizontal = RabbitSpacing.Lg, vertical = RabbitSpacing.Sm),
+                verticalArrangement = Arrangement.spacedBy(RabbitSpacing.Lg),
             ) {
-                // Hero Card matching screenshot 1
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(palette.surface)
-                        .border(1.dp, palette.line, RoundedCornerShape(20.dp)),
+                // Compact Hero Card (0.dp shadow, hairline border)
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(RabbitRadius.Xl),
+                    color = palette.heroDarkBg,
+                    tonalElevation = 0.dp,
+                    shadowElevation = RabbitElevation.Card,
+                    border = BorderStroke(1.dp, palette.line),
                 ) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(250.dp)
+                            .height(196.dp)
                             .background(
-                                Brush.radialGradient(
-                                    colors = listOf(Color(0xFF282E3A), Color(0xFF171A21)),
+                                Brush.verticalGradient(
+                                    colors = listOf(palette.heroCardBg, palette.heroDarkBg),
                                 ),
                             ),
                         contentAlignment = Alignment.Center,
@@ -192,39 +210,31 @@ fun DeviceDetailScreen(
                             Box(
                                 modifier = Modifier
                                     .fillMaxSize()
-                                    .background(Color(0x9912151C)),
+                                    .background(Color(0xA60A0A0A)),
                             )
                         }
 
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.padding(horizontal = 24.dp),
+                            modifier = Modifier.padding(horizontal = 20.dp),
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(58.dp)
-                                    .clip(RoundedCornerShape(16.dp))
-                                    .background(Color(0x3DFFFFFF))
-                                    .border(1.dp, Color(0x28FFFFFF), RoundedCornerShape(16.dp)),
+                                    .size(50.dp)
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(Color(0x2EFFFFFF))
+                                    .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(14.dp)),
                                 contentAlignment = Alignment.Center,
                             ) {
-                                Icon(Icons.Rounded.LaptopMac, null, tint = Color(0xFFE5EAF2), modifier = Modifier.size(30.dp))
+                                Icon(Icons.Rounded.LaptopMac, null, tint = Color.White, modifier = Modifier.size(26.dp))
                             }
-                            Spacer(modifier = Modifier.height(14.dp))
-                            Text(
-                                device.name,
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = Color.White,
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
+                            Spacer(modifier = Modifier.height(10.dp))
                             Text(
                                 text = if (isCurrentConnected) "当前会话已连接" else viewModel.lastConnectedLabel(device.id),
                                 fontSize = 13.sp,
-                                color = Color(0xFFAAB4C4),
+                                color = Color(0xFFD4D4D4),
                             )
-                            Spacer(modifier = Modifier.height(20.dp))
-
+                            Spacer(modifier = Modifier.height(16.dp))
                             Button(
                                 onClick = {
                                     viewModel.startSessionAndNavigate(device.id, device.name, device.os, watchOnly = false) {
@@ -232,12 +242,14 @@ fun DeviceDetailScreen(
                                     }
                                 },
                                 enabled = !connecting,
-                                shape = RoundedCornerShape(26.dp),
+                                shape = RoundedCornerShape(RabbitRadius.Pill),
+                                elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = palette.primary,
                                     contentColor = Color.White,
                                 ),
-                                modifier = Modifier.height(46.dp),
+                                contentPadding = PaddingValues(horizontal = 22.dp),
+                                modifier = Modifier.height(48.dp),
                             ) {
                                 if (connecting) {
                                     CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
@@ -251,104 +263,143 @@ fun DeviceDetailScreen(
                             }
                         }
                     }
+                }
 
-                    // Bottom White Action Strip matching screenshot 1
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(palette.surface)
-                            .padding(horizontal = 6.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        toolOrder.forEachIndexed { index, tool ->
-                            if (index > 0) {
-                                Box(
-                                    modifier = Modifier
-                                        .width(1.dp)
-                                        .height(22.dp)
-                                        .background(palette.line.copy(alpha = 0.7f)),
-                                )
-                            }
-                            Row(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .clickable(enabled = !connecting) { triggerTool(tool) }
-                                    .padding(vertical = 8.dp, horizontal = 4.dp),
-                                horizontalArrangement = Arrangement.Center,
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Icon(toolIcon(tool), null, tint = palette.text, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(tool.label, fontSize = 12.sp, color = palette.text, maxLines = 1)
-                            }
-                        }
-                        Box(
+                // 2x2 Quick Tools Grid
+                RabbitSectionHeader(
+                    title = "快捷工具",
+                    trailing = {
+                        Text(
+                            text = "自定义排序",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = palette.primaryText,
                             modifier = Modifier
-                                .width(1.dp)
-                                .height(22.dp)
-                                .background(palette.line.copy(alpha = 0.7f)),
+                                .clip(RoundedCornerShape(RabbitRadius.Sm))
+                                .clickable { sheetMode = DetailSheetMode.ReorderTools }
+                                .padding(horizontal = 6.dp, vertical = 4.dp),
                         )
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(10.dp))
-                                .clickable { showMoreTools = true }
-                                .padding(horizontal = 14.dp, vertical = 8.dp),
-                            contentAlignment = Alignment.Center,
+                    },
+                )
+
+                val rows = toolOrder.chunked(2)
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    rows.forEach { pair ->
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            modifier = Modifier.fillMaxWidth(),
                         ) {
-                            Icon(Icons.Rounded.MoreHoriz, contentDescription = "更多工具", tint = palette.text, modifier = Modifier.size(20.dp))
+                            pair.forEach { tool ->
+                                RabbitCard(
+                                    onClick = if (!connecting) {
+                                        { triggerTool(tool) }
+                                    } else {
+                                        null
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 14.dp),
+                                    modifier = Modifier.weight(1f),
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(34.dp)
+                                                .clip(RoundedCornerShape(9.dp))
+                                                .background(palette.primarySoft),
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            Icon(toolIcon(tool), null, tint = palette.primaryText, modifier = Modifier.size(18.dp))
+                                        }
+                                        Spacer(modifier = Modifier.width(10.dp))
+                                        Text(
+                                            text = tool.label,
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = palette.text,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+                                }
+                            }
+                            if (pair.size == 1) {
+                                Spacer(modifier = Modifier.weight(1f))
+                            }
                         }
                     }
                 }
 
-                // Device Metadata Card
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(18.dp))
-                        .background(palette.surface)
-                        .border(1.dp, palette.line, RoundedCornerShape(18.dp))
-                        .padding(horizontal = 16.dp, vertical = 14.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    MetaRow(
-                        icon = Icons.Rounded.Computer,
-                        label = "设备状态",
-                        value = when {
-                            device.disabled -> "已停用"
-                            device.busy -> "会话中"
-                            device.online -> "在线"
-                            else -> "离线"
-                        },
-                        valueColor = if (device.online || device.busy) palette.success else palette.muted,
-                    )
-                    HorizontalDivider(color = palette.line, thickness = 0.6.dp)
-                    MetaRow(
-                        icon = Icons.Rounded.LaptopMac,
-                        label = "系统信息",
-                        value = device.os.ifBlank { "未知系统" },
-                    )
+                // Device Metadata & Power Entry Card
+                RabbitCard(modifier = Modifier.fillMaxWidth()) {
+                    val (statusLabel, statusTone) = when {
+                        device.disabled -> "已停用" to StatusTone.Muted
+                        device.busy -> "会话中" to StatusTone.Primary
+                        device.online -> "在线" to StatusTone.Success
+                        else -> "离线" to StatusTone.Muted
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Rounded.Computer, null, tint = palette.muted, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text("设备状态", fontSize = 14.sp, color = palette.muted, modifier = Modifier.weight(1f))
+                        RabbitStatusPill(label = statusLabel, tone = statusTone)
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    HorizontalDivider(color = palette.line, thickness = 1.dp)
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Rounded.LaptopMac, null, tint = palette.muted, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text("系统信息", fontSize = 14.sp, color = palette.muted, modifier = Modifier.weight(1f))
+                        Text(osLabel, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = palette.text)
+                    }
+
                     if (device.id.isNotBlank()) {
-                        HorizontalDivider(color = palette.line, thickness = 0.6.dp)
+                        Spacer(modifier = Modifier.height(12.dp))
+                        HorizontalDivider(color = palette.line, thickness = 1.dp)
+                        Spacer(modifier = Modifier.height(8.dp))
                         val formatted = if (device.id.contains(':')) device.id else device.id.chunked(3).joinToString(" ")
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .defaultMinSize(minHeight = 44.dp)
+                                .clip(RoundedCornerShape(RabbitRadius.Sm))
                                 .clickable {
                                     clipboard.setText(AnnotatedString(device.id))
                                     scope.launch { snackbarHostState.showSnackbar("已复制设备 ID") }
-                                },
+                                }
+                                .padding(vertical = 4.dp),
                         ) {
                             Icon(Icons.Rounded.Key, null, tint = palette.muted, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(10.dp))
                             Text("设备 ID", fontSize = 14.sp, color = palette.muted, modifier = Modifier.weight(1f))
                             Text(formatted, fontFamily = FontFamily.Monospace, fontSize = 14.sp, color = palette.text)
                             Spacer(modifier = Modifier.width(6.dp))
-                            Icon(Icons.Rounded.ContentCopy, null, tint = palette.primary, modifier = Modifier.size(16.dp))
+                            Icon(Icons.Rounded.ContentCopy, null, tint = palette.primaryText, modifier = Modifier.size(16.dp))
                         }
                     }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    HorizontalDivider(color = palette.line, thickness = 1.dp)
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .defaultMinSize(minHeight = 44.dp)
+                            .clip(RoundedCornerShape(RabbitRadius.Sm))
+                            .clickable { sheetMode = DetailSheetMode.MoreTools }
+                            .padding(vertical = 4.dp),
+                    ) {
+                        Icon(Icons.Rounded.Tune, null, tint = palette.primaryText, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text("更多工具与电源管理", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = palette.text, modifier = Modifier.weight(1f))
+                        Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, tint = palette.muted)
+                    }
                 }
+                Spacer(modifier = Modifier.height(12.dp))
             }
         }
 
@@ -359,186 +410,314 @@ fun DeviceDetailScreen(
     }
 
     if (!connectError.isNullOrBlank()) {
-        AlertDialog(
+        RabbitDialog(
+            title = "无法建立连接",
+            message = connectError.orEmpty(),
             onDismissRequest = viewModel::clearError,
-            title = { Text("无法建立连接") },
-            text = { Text(connectError.orEmpty()) },
-            confirmButton = {
-                TextButton(onClick = viewModel::clearError) { Text("确定") }
-            },
+            confirmLabel = "知道了",
+            onConfirm = viewModel::clearError,
         )
     }
 
-    if (showMoreTools) {
-        MoreToolsDialog(
-            tools = toolOrder,
-            onSelectTool = { tool ->
-                showMoreTools = false
-                triggerTool(tool)
-            },
-            onSelectPower = { kind ->
-                showMoreTools = false
-                powerConfirmKind = kind
-            },
-            onSaveOrder = viewModel::saveToolOrder,
-            onDismiss = { showMoreTools = false },
-        )
+    val activeSheet = sheetMode
+    if (activeSheet != null) {
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        var draftOrder by remember(activeSheet, toolOrder) { mutableStateOf(toolOrder) }
+
+        ModalBottomSheet(
+            onDismissRequest = { sheetMode = null },
+            sheetState = sheetState,
+            containerColor = palette.surface,
+            tonalElevation = 0.dp,
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .navigationBarsPadding()
+                    .padding(horizontal = RabbitSpacing.Xl)
+                    .padding(bottom = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                if (activeSheet == DetailSheetMode.ReorderTools) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "自定义工具排序",
+                                fontSize = 17.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = palette.text,
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                "决定详情页快捷工具的展示顺序",
+                                fontSize = 12.sp,
+                                color = palette.muted,
+                            )
+                        }
+                        IconButton(
+                            onClick = { sheetMode = null },
+                            modifier = Modifier.size(36.dp),
+                        ) {
+                            Icon(Icons.Rounded.Close, "关闭", tint = palette.muted, modifier = Modifier.size(18.dp))
+                        }
+                    }
+
+                    draftOrder.forEachIndexed { idx, tool ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .defaultMinSize(minHeight = 56.dp)
+                                .clip(RoundedCornerShape(RabbitRadius.Md))
+                                .background(palette.field)
+                                .border(1.dp, palette.line, RoundedCornerShape(RabbitRadius.Md))
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(22.dp)
+                                    .clip(CircleShape)
+                                    .background(palette.surface)
+                                    .border(1.dp, palette.line, CircleShape),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    text = "${idx + 1}",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = palette.muted,
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Box(
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(palette.primarySoft),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(toolIcon(tool), null, tint = palette.primaryText, modifier = Modifier.size(18.dp))
+                            }
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                tool.label,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = palette.text,
+                                modifier = Modifier.weight(1f),
+                            )
+                            ReorderArrowButton(
+                                icon = Icons.Rounded.ArrowUpward,
+                                contentDescription = "上移",
+                                enabled = idx > 0,
+                                onClick = {
+                                    if (idx > 0) {
+                                        val m = draftOrder.toMutableList()
+                                        m[idx] = m[idx - 1].also { m[idx - 1] = m[idx] }
+                                        draftOrder = m
+                                    }
+                                },
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            ReorderArrowButton(
+                                icon = Icons.Rounded.ArrowDownward,
+                                contentDescription = "下移",
+                                enabled = idx < draftOrder.lastIndex,
+                                onClick = {
+                                    if (idx < draftOrder.lastIndex) {
+                                        val m = draftOrder.toMutableList()
+                                        m[idx] = m[idx + 1].also { m[idx + 1] = m[idx] }
+                                        draftOrder = m
+                                    }
+                                },
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        RabbitSecondaryButton(
+                            label = "取消",
+                            onClick = { sheetMode = null },
+                            modifier = Modifier.weight(1f),
+                        )
+                        RabbitPrimaryButton(
+                            label = "保存排序",
+                            onClick = {
+                                viewModel.saveToolOrder(draftOrder)
+                                sheetMode = null
+                            },
+                            modifier = Modifier.weight(1.4f),
+                        )
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "更多工具与电源管理",
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = palette.text,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(onClick = { sheetMode = DetailSheetMode.ReorderTools }) {
+                            Text("调整顺序", color = palette.primaryText)
+                        }
+                        IconButton(
+                            onClick = { sheetMode = null },
+                            modifier = Modifier.size(36.dp),
+                        ) {
+                            Icon(Icons.Rounded.Close, "关闭", tint = palette.muted, modifier = Modifier.size(18.dp))
+                        }
+                    }
+
+                    toolOrder.forEach { tool ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .defaultMinSize(minHeight = 52.dp)
+                                .clip(RoundedCornerShape(RabbitRadius.Md))
+                                .background(palette.field)
+                                .border(1.dp, palette.line, RoundedCornerShape(RabbitRadius.Md))
+                                .clickable {
+                                    sheetMode = null
+                                    triggerTool(tool)
+                                }
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(30.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(palette.primarySoft),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(toolIcon(tool), null, tint = palette.primaryText, modifier = Modifier.size(17.dp))
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Text(tool.label, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = palette.text, modifier = Modifier.weight(1f))
+                            Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, tint = palette.muted, modifier = Modifier.size(18.dp))
+                        }
+                    }
+
+                    HorizontalDivider(color = palette.line, thickness = 1.dp)
+                    Text("远程电源管理", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = palette.muted)
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                        PowerActionChip(
+                            icon = Icons.Rounded.RestartAlt,
+                            label = "重启设备",
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            sheetMode = null
+                            powerConfirmKind = "reboot"
+                        }
+                        PowerActionChip(
+                            icon = Icons.Rounded.PowerSettingsNew,
+                            label = "关闭电源",
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            sheetMode = null
+                            powerConfirmKind = "shutdown"
+                        }
+                    }
+                }
+            }
+        }
     }
 
     if (powerConfirmKind != null) {
         val isReboot = powerConfirmKind == "reboot"
         val verb = if (isReboot) "重启" else "关机"
-        AlertDialog(
+        RabbitDialog(
+            title = "${verb}设备",
+            message = "确认要${verb}「${device.name}」吗？",
             onDismissRequest = { powerConfirmKind = null },
-            title = { Text("${verb}设备") },
-            text = { Text("确认要${verb}「${device.name}」吗？") },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        powerConfirmKind = null
-                        scope.launch {
-                            snackbarHostState.showSnackbar("等待被控端支持远程电源协议（可使用「终端」执行 $verb）")
-                        }
-                    },
-                ) {
-                    Text("确认", color = palette.danger)
+            dismissLabel = "取消",
+            confirmLabel = "确认$verb",
+            destructive = true,
+            onConfirm = {
+                powerConfirmKind = null
+                scope.launch {
+                    snackbarHostState.showSnackbar("等待被控端支持远程电源协议（可使用「终端」执行 $verb）")
                 }
-            },
-            dismissButton = {
-                TextButton(onClick = { powerConfirmKind = null }) { Text("取消") }
             },
         )
     }
 }
 
 @Composable
-private fun MetaRow(icon: ImageVector, label: String, value: String, valueColor: Color? = null) {
-    val palette = LocalRabbitPalette.current
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-        Icon(icon, null, tint = palette.muted, modifier = Modifier.size(18.dp))
-        Spacer(modifier = Modifier.width(10.dp))
-        Text(label, fontSize = 14.sp, color = palette.muted, modifier = Modifier.weight(1f))
-        Text(value, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = valueColor ?: palette.text)
-    }
-}
-
-@Composable
-private fun MoreToolsDialog(
-    tools: List<DeviceToolKind>,
-    onSelectTool: (DeviceToolKind) -> Unit,
-    onSelectPower: (String) -> Unit,
-    onSaveOrder: (List<DeviceToolKind>) -> Unit,
-    onDismiss: () -> Unit,
+private fun PowerActionChip(
+    icon: ImageVector,
+    label: String,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
 ) {
     val palette = LocalRabbitPalette.current
-    var reordering by remember { mutableStateOf(false) }
-    var draftOrder by remember(tools) { mutableStateOf(tools) }
-
-    Dialog(onDismissRequest = onDismiss) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(20.dp))
-                .background(palette.surface)
-                .padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Text("更多工具", fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
-            Spacer(modifier = Modifier.height(2.dp))
-
-            draftOrder.forEachIndexed { idx, tool ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(palette.primarySoft)
-                        .border(1.dp, palette.primary.copy(alpha = 0.22f), RoundedCornerShape(12.dp))
-                        .clickable(enabled = !reordering) { onSelectTool(tool) }
-                        .padding(horizontal = 14.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(toolIcon(tool), null, tint = palette.primary, modifier = Modifier.size(20.dp))
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Text(tool.label, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = palette.text, modifier = Modifier.weight(1f))
-                    if (reordering) {
-                        IconButton(
-                            onClick = {
-                                if (idx > 0) {
-                                    val m = draftOrder.toMutableList()
-                                    m[idx] = m[idx - 1].also { m[idx - 1] = m[idx] }
-                                    draftOrder = m
-                                }
-                            },
-                            enabled = idx > 0,
-                            modifier = Modifier.size(32.dp),
-                        ) {
-                            Icon(Icons.Rounded.ArrowUpward, "上移", modifier = Modifier.size(18.dp))
-                        }
-                        IconButton(
-                            onClick = {
-                                if (idx < draftOrder.lastIndex) {
-                                    val m = draftOrder.toMutableList()
-                                    m[idx] = m[idx + 1].also { m[idx + 1] = m[idx] }
-                                    draftOrder = m
-                                }
-                            },
-                            enabled = idx < draftOrder.lastIndex,
-                            modifier = Modifier.size(32.dp),
-                        ) {
-                            Icon(Icons.Rounded.ArrowDownward, "下移", modifier = Modifier.size(18.dp))
-                        }
-                    } else {
-                        Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, tint = palette.muted, modifier = Modifier.size(18.dp))
-                    }
-                }
-            }
-
-            if (!reordering) {
-                Spacer(modifier = Modifier.height(2.dp))
-                PowerRow(icon = Icons.Rounded.RestartAlt, label = "重启") { onSelectPower("reboot") }
-                PowerRow(icon = Icons.Rounded.PowerSettingsNew, label = "关机") { onSelectPower("shutdown") }
-            }
-
-            Spacer(modifier = Modifier.height(6.dp))
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                OutlinedButton(
-                    onClick = {
-                        if (reordering) {
-                            onSaveOrder(draftOrder)
-                            reordering = false
-                        } else {
-                            reordering = true
-                        }
-                    },
-                    shape = RoundedCornerShape(10.dp),
-                ) {
-                    Text(if (reordering) "保存顺序" else "调整顺序")
-                }
-                OutlinedButton(onClick = onDismiss, shape = RoundedCornerShape(10.dp)) {
-                    Text("关闭")
-                }
-            }
-        }
+    Row(
+        modifier = modifier
+            .defaultMinSize(minHeight = 48.dp)
+            .clip(RoundedCornerShape(RabbitRadius.Md))
+            .background(palette.dangerSoft)
+            .border(1.dp, palette.danger.copy(alpha = 0.25f), RoundedCornerShape(RabbitRadius.Md))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, tint = palette.danger, modifier = Modifier.size(18.dp))
+        Spacer(modifier = Modifier.width(6.dp))
+        Text(label, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = palette.danger)
     }
 }
 
 @Composable
-private fun PowerRow(icon: ImageVector, label: String, onClick: () -> Unit) {
+private fun ReorderArrowButton(
+    icon: ImageVector,
+    contentDescription: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
     val palette = LocalRabbitPalette.current
-    Row(
+    Box(
         modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+            .size(34.dp)
+            .clip(RoundedCornerShape(8.dp))
             .background(palette.surface)
-            .border(1.dp, palette.line, RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .border(1.dp, palette.line, RoundedCornerShape(8.dp))
+            .alpha(if (enabled) 1f else 0.35f)
+            .clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, null, tint = palette.muted, modifier = Modifier.size(20.dp))
-        Spacer(modifier = Modifier.width(12.dp))
-        Text(label, fontSize = 15.sp, color = palette.text, modifier = Modifier.weight(1f))
-        Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, tint = palette.muted, modifier = Modifier.size(18.dp))
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = palette.text,
+            modifier = Modifier.size(17.dp),
+        )
+    }
+}
+
+private fun formatDetailOs(raw: String): String {
+    val normalized = raw.trim().lowercase()
+    return when {
+        normalized.isEmpty() -> "桌面设备"
+        normalized.contains("mac") || normalized.contains("darwin") -> "macOS"
+        normalized.contains("win") -> "Windows"
+        normalized.contains("linux") -> "Linux"
+        normalized.contains("android") -> "Android"
+        normalized.contains("ios") -> "iOS"
+        else -> raw.trim()
     }
 }
 

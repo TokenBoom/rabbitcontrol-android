@@ -1,74 +1,77 @@
 package io.rabbitcontrol.android.ui.session
 
 import android.content.res.Configuration
+import android.view.HapticFeedbackConstants
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.VolumeOff
-import androidx.compose.material.icons.automirrored.rounded.VolumeUp
-import androidx.compose.material.icons.rounded.Cable
-import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.ContentPaste
-import androidx.compose.material.icons.rounded.FolderOpen
+import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.Keyboard
-import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Mouse
-import androidx.compose.material.icons.rounded.PowerSettingsNew
-import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.ScreenRotation
-import androidx.compose.material.icons.rounded.Speed
-import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material.icons.rounded.TouchApp
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Visibility
-import androidx.compose.material.icons.rounded.ZoomOutMap
-import androidx.compose.material3.AlertDialog
+import androidx.compose.material.icons.rounded.ZoomIn
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Slider
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -79,9 +82,11 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -89,6 +94,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.rabbitcontrol.android.core.data.DeviceToolKind
 import io.rabbitcontrol.android.core.data.OrientationPreference
+import io.rabbitcontrol.android.core.data.PortraitLayoutMode
+import io.rabbitcontrol.android.core.data.QuickActionKind
 import io.rabbitcontrol.android.core.data.TouchInputMode
 import io.rabbitcontrol.android.core.input.ImeInputBridge
 import io.rabbitcontrol.android.core.input.PrecisionTouchLayer
@@ -96,8 +103,17 @@ import io.rabbitcontrol.android.core.input.ScancodeMapper
 import io.rabbitcontrol.android.core.session.SessionStatus
 import io.rabbitcontrol.android.core.video.NativeVideoStageView
 import io.rabbitcontrol.android.session.Core
+import io.rabbitcontrol.android.ui.components.RabbitDialog
+import io.rabbitcontrol.android.ui.theme.RabbitElevation
+import io.rabbitcontrol.android.ui.theme.RabbitRadius
+import io.rabbitcontrol.android.ui.theme.SessionPalette
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
+
+private data class EditingSlotTarget(
+    val side: SidebarSide,
+    val index: Int,
+)
 
 @Composable
 fun DesktopSessionScreen(
@@ -110,34 +126,58 @@ fun DesktopSessionScreen(
     val stickyMods by viewModel.stickyModifiers.collectAsStateWithLifecycle()
     val keyboardBarVisible by viewModel.keyboardBarVisible.collectAsStateWithLifecycle()
     val drawerOpen by viewModel.drawerOpen.collectAsStateWithLifecycle()
+    val sidebarConfig by viewModel.sidebarConfig.collectAsStateWithLifecycle()
+    val keymapState by viewModel.keymapState.collectAsStateWithLifecycle()
+    val keymapEditing by viewModel.keymapEditing.collectAsStateWithLifecycle()
 
     val isPortrait = LocalConfiguration.current.orientation == Configuration.ORIENTATION_PORTRAIT
     val isMacTarget = remember(state.deviceOs) { ScancodeMapper.isMacOsTarget(state.deviceOs) }
+
+    val streamW = state.displayConfig?.width ?: state.negotiated?.width ?: 1920
+    val streamH = state.displayConfig?.height ?: state.negotiated?.height ?: 1080
+    val isRemoteVertical = streamH > streamW
+    val usePortraitTrackpad = when (prefs.portraitLayoutMode) {
+        PortraitLayoutMode.Auto -> !isRemoteVertical
+        PortraitLayoutMode.Fullscreen -> false
+        PortraitLayoutMode.SplitTrackpad -> true
+    }
 
     var stageRef by remember { mutableStateOf<NativeVideoStageView?>(null) }
     var overlayTouchRef by remember { mutableStateOf<PrecisionTouchLayer?>(null) }
     var bottomTrackpadRef by remember { mutableStateOf<PrecisionTouchLayer?>(null) }
     var imeBridgeRef by remember { mutableStateOf<ImeInputBridge?>(null) }
+    var zoomScale by remember { mutableFloatStateOf(1f) }
+
+    var rightClickModHeld by remember { mutableStateOf(false) }
+    var dragModHeld by remember { mutableStateOf(false) }
 
     // Sync stream geometry & user touch prefs directly to native views without Compose recomposition
-    LaunchedEffect(state.negotiated, state.displayConfig) {
+    LaunchedEffect(stageRef, state.negotiated, state.displayConfig) {
         val w = state.displayConfig?.width ?: state.negotiated?.width ?: 1920
         val h = state.displayConfig?.height ?: state.negotiated?.height ?: 1080
         val fps = state.displayConfig?.fps ?: state.negotiated?.fps ?: 120
         stageRef?.updateStreamGeometry(w, h, fps)
     }
 
-    LaunchedEffect(prefs, state.watchOnly) {
+    LaunchedEffect(overlayTouchRef, bottomTrackpadRef, prefs, state.watchOnly, rightClickModHeld, dragModHeld) {
         listOfNotNull(overlayTouchRef, bottomTrackpadRef).forEach { layer ->
             layer.inputMode = prefs.touchMode
             layer.sensitivity = prefs.pointerSensitivity
             layer.naturalScroll = prefs.naturalScroll
             layer.directTouchOffset = prefs.directTouchOffset
             layer.watchOnly = state.watchOnly
+            layer.rightClickModifierHeld = rightClickModHeld
+            layer.dragModifierHeld = dragModHeld
         }
     }
 
-    // Idle dimming for the edge-snapped micro-pill
+    LaunchedEffect(isPortrait) {
+        zoomScale = 1f
+        rightClickModHeld = false
+        dragModHeld = false
+    }
+
+    // Idle dimming for the edge-snapped micro-pill (when sidebars are hidden)
     var lastPillTouchMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var pillDimmed by remember { mutableStateOf(false) }
     LaunchedEffect(lastPillTouchMs, drawerOpen) {
@@ -147,16 +187,64 @@ fun DesktopSessionScreen(
             pillDimmed = true
         }
     }
-    val pillAlpha by animateFloatAsState(targetValue = if (pillDimmed) 0.36f else 0.94f, label = "pillAlpha")
+    val pillAlpha by animateFloatAsState(targetValue = if (pillDimmed) 0.38f else 0.95f, label = "pillAlpha")
 
     var passwordInput by remember { mutableStateOf("") }
     var dragLocked by remember { mutableStateOf(false) }
     var disconnectConfirm by remember { mutableStateOf(false) }
+    var initialControlTab by remember { mutableStateOf(ControlPanelTab.Controls) }
+    var editingSlotTarget by remember { mutableStateOf<EditingSlotTarget?>(null) }
+    var showGestureGuideOverride by remember { mutableStateOf(false) }
+
+    val showGestureGuide = showGestureGuideOverride ||
+        (!sidebarConfig.gestureGuideSeen && state.status is SessionStatus.Streaming && (isPortrait || sidebarConfig.showLandscapeSidebars))
+
+    fun openControlPanel(tab: ControlPanelTab = ControlPanelTab.Controls) {
+        initialControlTab = tab
+        viewModel.setDrawerOpen(true)
+    }
+
+    fun toggleKeyboardAndIme() {
+        val next = !keyboardBarVisible
+        viewModel.setKeyboardBarVisible(next)
+        if (next) imeBridgeRef?.showSoftKeyboard() else imeBridgeRef?.hideSoftKeyboard()
+    }
+
+    fun handleQuickAction(kind: QuickActionKind) {
+        when (kind) {
+            QuickActionKind.ZoomIn -> zoomScale = stageRef?.stepZoomIn() ?: zoomScale
+            QuickActionKind.ZoomOut -> zoomScale = stageRef?.stepZoomOut() ?: zoomScale
+            QuickActionKind.ResetZoom -> {
+                stageRef?.resetZoom()
+                zoomScale = 1f
+            }
+            QuickActionKind.DragLock -> {
+                dragLocked = !dragLocked
+                Core.sendMouseButton(0, dragLocked)
+            }
+            QuickActionKind.ToggleKeyboard -> toggleKeyboardAndIme()
+            QuickActionKind.HoldRightClick -> viewModel.executeShortcutKey(QuickActionKind.RightClick)
+            QuickActionKind.HoldDrag -> {
+                dragLocked = !dragLocked
+                Core.sendMouseButton(0, dragLocked)
+            }
+            QuickActionKind.ToggleOrientation -> {
+                val next = if (isPortrait) {
+                    OrientationPreference.LandscapeFirst
+                } else {
+                    OrientationPreference.PortraitTrackpad
+                }
+                viewModel.setOrientationPref(next)
+            }
+            QuickActionKind.Empty -> Unit
+            else -> viewModel.executeShortcutKey(kind)
+        }
+    }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF07090D)),
+            .background(SessionPalette.canvas),
     ) {
         // Hidden 1x1 IME proxy
         AndroidView(
@@ -174,19 +262,25 @@ fun DesktopSessionScreen(
         )
 
         if (isPortrait) {
-            // ── Portrait One-Handed Ergonomic Mode: Top Desktop Viewport + Bottom Precision Trackpad ──
+            // Portrait Adaptive Mode: Fullscreen (vertical target / full view) or Split Trackpad (one-handed desktop)
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .systemBarsPadding(),
+                    .background(SessionPalette.canvas)
+                    .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Top))
+                    .statusBarsPadding()
+                    .navigationBarsPadding(),
             ) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(0.46f),
+                        .weight(if (usePortraitTrackpad) 0.45f else 1f),
                 ) {
                     VideoAndCursorAndroidView(
-                        onStageCreated = { stageRef = it },
+                        onStageCreated = { stg ->
+                            stg.onZoomChanged = { zoomScale = it }
+                            stageRef = stg
+                        },
                         onTouchCreated = { overlayTouchRef = it },
                         onSurfaceReady = viewModel::attachSurface,
                         onSurfaceLost = viewModel::detachSurface,
@@ -196,8 +290,38 @@ fun DesktopSessionScreen(
                         },
                     )
 
+                    SessionKeyMappingOverlay(
+                        keymapState = keymapState,
+                        editing = keymapEditing,
+                        onExecuteQuickAction = ::handleQuickAction,
+                        onSelectProfile = viewModel::selectKeymapProfile,
+                        onOpacityChange = viewModel::setKeymapOpacity,
+                        onMoveItem = viewModel::moveKeymapItem,
+                        onResizeItem = viewModel::resizeKeymapItem,
+                        onAddItem = viewModel::addKeymapItem,
+                        onRemoveItem = viewModel::removeKeymapItem,
+                        onResetProfile = viewModel::resetActiveKeymapProfile,
+                        onDoneEditing = { viewModel.setKeymapEditing(false) },
+                    )
+
                     if (state.watchOnly) {
                         WatchModeBadge(modifier = Modifier.align(Alignment.TopStart).padding(10.dp))
+                    }
+                    if (zoomScale > 1.02f) {
+                        ZoomBadge(
+                            zoomScale = zoomScale,
+                            onReset = { handleQuickAction(QuickActionKind.ResetZoom) },
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .padding(start = 10.dp, top = if (state.watchOnly) 42.dp else 10.dp),
+                        )
+                    }
+                    if (rightClickModHeld || dragModHeld) {
+                        ModifierModeBadge(
+                            text = if (rightClickModHeld) "右键模式 · 点击画面触发右键" else "拖动模式 · 单指滑动拖拽",
+                            accentColor = if (rightClickModHeld) Color(0xFF4C8DFF) else Color(0xFF34C759),
+                            modifier = Modifier.align(Alignment.TopCenter).padding(top = 10.dp),
+                        )
                     }
                     if (prefs.showHud && state.negotiated != null) {
                         MiniHudBadge(
@@ -205,114 +329,321 @@ fun DesktopSessionScreen(
                             res = state.hud.resolution,
                             rtt = state.hud.rttMs,
                             transport = state.hud.transport,
+                            onClick = { openControlPanel(ControlPanelTab.Display) },
                             modifier = Modifier.align(Alignment.TopEnd).padding(10.dp),
                         )
                     }
                 }
 
-                // Middle ergonomic action strip
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(Color(0xFF141820))
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    CompactStripButton(
-                        label = if (dragLocked) "锁定拖动中" else "左键",
-                        active = dragLocked,
-                        onClick = {
-                            if (dragLocked) {
-                                dragLocked = false
-                                Core.sendMouseButton(0, false)
-                            } else {
-                                Core.sendMouseButton(0, true)
-                                Core.sendMouseButton(0, false)
-                            }
-                        },
-                        modifier = Modifier.weight(1f),
-                    )
-                    CompactStripButton(
-                        label = if (dragLocked) "松开拖动" else "按住拖动",
-                        active = dragLocked,
-                        onClick = {
-                            dragLocked = !dragLocked
-                            Core.sendMouseButton(0, dragLocked)
-                        },
-                        modifier = Modifier.weight(1f),
-                    )
-                    CompactStripButton(
-                        label = "右键",
-                        active = false,
-                        onClick = {
-                            Core.sendMouseButton(1, true)
-                            Core.sendMouseButton(1, false)
-                        },
-                        modifier = Modifier.weight(0.8f),
-                    )
-                    IconButton(
-                        onClick = {
-                            viewModel.setKeyboardBarVisible(!keyboardBarVisible)
-                            if (!keyboardBarVisible) imeBridgeRef?.showSoftKeyboard() else imeBridgeRef?.hideSoftKeyboard()
-                        },
-                        modifier = Modifier.size(36.dp),
+                if (usePortraitTrackpad) {
+                    // Middle Ergonomic Action Dock
+                    HorizontalDivider(color = SessionPalette.border, thickness = 1.dp)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp)
+                            .background(SessionPalette.chrome)
+                            .padding(horizontal = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Icon(Icons.Rounded.Keyboard, "键盘", tint = if (keyboardBarVisible) Color(0xFF3370FF) else Color(0xFFD0D8E4))
+                        CompactStripButton(
+                            label = "左键",
+                            active = false,
+                            onClick = {
+                                if (dragLocked) {
+                                    dragLocked = false
+                                    Core.sendMouseButton(0, false)
+                                } else {
+                                    Core.sendMouseButton(0, true)
+                                    Core.sendMouseButton(0, false)
+                                }
+                            },
+                            modifier = Modifier.weight(1f),
+                        )
+                        CompactStripButton(
+                            label = if (dragLocked) "拖动中" else "拖动",
+                            active = dragLocked,
+                            onClick = { handleQuickAction(QuickActionKind.DragLock) },
+                            modifier = Modifier.weight(1f),
+                        )
+                        CompactStripButton(
+                            label = "右键",
+                            active = false,
+                            onClick = {
+                                Core.sendMouseButton(1, true)
+                                Core.sendMouseButton(1, false)
+                            },
+                            modifier = Modifier.weight(0.9f),
+                        )
+                        Box(modifier = Modifier.width(1.dp).height(22.dp).background(SessionPalette.border))
+                        IconButton(
+                            onClick = { viewModel.setPortraitLayoutMode(PortraitLayoutMode.Fullscreen) },
+                            modifier = Modifier.size(40.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Fullscreen,
+                                contentDescription = "竖屏全屏",
+                                tint = SessionPalette.text,
+                            )
+                        }
+                        IconButton(onClick = ::toggleKeyboardAndIme, modifier = Modifier.size(40.dp)) {
+                            Icon(
+                                imageVector = Icons.Rounded.Keyboard,
+                                contentDescription = "键盘",
+                                tint = if (keyboardBarVisible) SessionPalette.accentText else SessionPalette.text,
+                            )
+                        }
+                        IconButton(
+                            onClick = { openControlPanel(ControlPanelTab.Controls) },
+                            modifier = Modifier.size(40.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Tune,
+                                contentDescription = "控制中心",
+                                tint = SessionPalette.accentText,
+                            )
+                        }
                     }
-                    IconButton(
-                        onClick = { viewModel.setDrawerOpen(true) },
-                        modifier = Modifier.size(36.dp),
+                    HorizontalDivider(color = SessionPalette.border, thickness = 1.dp)
+
+                    // Dedicated Bottom Precision Trackpad
+                    DisposableEffect(Unit) {
+                        onDispose { bottomTrackpadRef = null }
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(0.55f)
+                            .background(SessionPalette.trackpad),
                     ) {
-                        Icon(Icons.Rounded.Tune, "控制中心", tint = Color(0xFFD0D8E4))
+                        AndroidView(
+                            factory = { ctx ->
+                                PrecisionTouchLayer(
+                                    context = ctx,
+                                    stageProvider = { stageRef },
+                                    trackpadOnly = true,
+                                    onMove = { nx, ny ->
+                                        Core.sendMouseMove(nx, ny)
+                                        overlayTouchRef?.syncNormalizedPosition(nx, ny)
+                                    },
+                                    onButton = { btn, pressed -> Core.sendMouseButton(btn, pressed) },
+                                    onWheel = { delta, horiz -> Core.sendMouseWheel(delta, horiz) },
+                                ).also { bottomTrackpadRef = it }
+                            },
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                        Text(
+                            text = "单指移动 · 轻点左键 · 双指右键/滚动 · 三指拖动",
+                            color = SessionPalette.muted.copy(alpha = 0.65f),
+                            fontSize = 11.sp,
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(bottom = 12.dp),
+                        )
+                    }
+                } else {
+                    // Compact Portrait Fullscreen Bottom Bar
+                    HorizontalDivider(color = SessionPalette.border, thickness = 1.dp)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(56.dp)
+                            .background(SessionPalette.chrome),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        PortraitHoldModifierButton(
+                            icon = Icons.Rounded.Mouse,
+                            label = if (rightClickModHeld) "右键中" else "按住右键",
+                            held = rightClickModHeld,
+                            activeTint = Color(0xFF4C8DFF),
+                            onHoldChanged = { rightClickModHeld = it },
+                            modifier = Modifier.weight(1f).fillMaxHeight(),
+                        )
+                        PortraitBarButton(
+                            icon = Icons.Rounded.TouchApp,
+                            label = "触控板",
+                            active = false,
+                            onClick = { viewModel.setPortraitLayoutMode(PortraitLayoutMode.SplitTrackpad) },
+                            modifier = Modifier.weight(1f).fillMaxHeight(),
+                        )
+                        PortraitBarButton(
+                            icon = Icons.Rounded.Keyboard,
+                            label = "键盘",
+                            active = keyboardBarVisible,
+                            onClick = ::toggleKeyboardAndIme,
+                            modifier = Modifier.weight(1f).fillMaxHeight(),
+                        )
+                        PortraitBarButton(
+                            icon = Icons.Rounded.ScreenRotation,
+                            label = "横屏",
+                            active = false,
+                            onClick = { handleQuickAction(QuickActionKind.ToggleOrientation) },
+                            modifier = Modifier.weight(1f).fillMaxHeight(),
+                        )
+                        PortraitBarButton(
+                            icon = Icons.Rounded.Tune,
+                            label = "操作",
+                            active = false,
+                            tintAccent = true,
+                            onClick = { openControlPanel(ControlPanelTab.Controls) },
+                            modifier = Modifier.weight(1f).fillMaxHeight(),
+                        )
+                    }
+                }
+            }
+        } else if (sidebarConfig.showLandscapeSidebars) {
+            // Landscape UU-Style Dual Sidebars (Left 3 Hold/Shortcut Zones + Center Viewport + Right Fixed 操作 + 3 Customizable Buttons)
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(SessionPalette.canvas),
+            ) {
+                LandscapeLeftSidebar(
+                    slots = sidebarConfig.leftSlots,
+                    zoomScale = zoomScale,
+                    rightClickHeld = rightClickModHeld,
+                    dragModHeld = dragModHeld,
+                    dragLocked = dragLocked,
+                    audioMuted = state.audioMuted,
+                    showHud = prefs.showHud,
+                    keymapEnabled = keymapState.enabled,
+                    onHoldRightClick = { rightClickModHeld = it },
+                    onHoldDrag = { dragModHeld = it },
+                    onSlotClick = { idx, action ->
+                        if (action == QuickActionKind.Empty) {
+                            editingSlotTarget = EditingSlotTarget(SidebarSide.Left, idx)
+                        } else {
+                            handleQuickAction(action)
+                        }
+                    },
+                    onSlotLongClick = { idx ->
+                        editingSlotTarget = EditingSlotTarget(SidebarSide.Left, idx)
+                    },
+                )
+
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight(),
+                ) {
+                    VideoAndCursorAndroidView(
+                        onStageCreated = { stg ->
+                            stg.onZoomChanged = { zoomScale = it }
+                            stageRef = stg
+                        },
+                        onTouchCreated = { overlayTouchRef = it },
+                        onSurfaceReady = viewModel::attachSurface,
+                        onSurfaceLost = viewModel::detachSurface,
+                        onSyncedMove = { nx, ny -> Core.sendMouseMove(nx, ny) },
+                    )
+
+                    SessionKeyMappingOverlay(
+                        keymapState = keymapState,
+                        editing = keymapEditing,
+                        onExecuteQuickAction = ::handleQuickAction,
+                        onSelectProfile = viewModel::selectKeymapProfile,
+                        onOpacityChange = viewModel::setKeymapOpacity,
+                        onMoveItem = viewModel::moveKeymapItem,
+                        onResizeItem = viewModel::resizeKeymapItem,
+                        onAddItem = viewModel::addKeymapItem,
+                        onRemoveItem = viewModel::removeKeymapItem,
+                        onResetProfile = viewModel::resetActiveKeymapProfile,
+                        onDoneEditing = { viewModel.setKeymapEditing(false) },
+                    )
+
+                    if (state.watchOnly) {
+                        WatchModeBadge(modifier = Modifier.align(Alignment.TopStart).padding(10.dp))
+                    }
+                    if (zoomScale > 1.02f) {
+                        ZoomBadge(
+                            zoomScale = zoomScale,
+                            onReset = { handleQuickAction(QuickActionKind.ResetZoom) },
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .padding(start = 10.dp, top = if (state.watchOnly) 42.dp else 10.dp),
+                        )
+                    }
+                    if (rightClickModHeld || dragModHeld) {
+                        ModifierModeBadge(
+                            text = if (rightClickModHeld) "右键模式 · 点击桌面触发右键" else "拖动模式 · 单指滑动拖拽",
+                            accentColor = if (rightClickModHeld) Color(0xFF4C8DFF) else Color(0xFF34C759),
+                            modifier = Modifier.align(Alignment.TopCenter).padding(top = 10.dp),
+                        )
+                    }
+                    if (prefs.showHud && state.negotiated != null) {
+                        MiniHudBadge(
+                            fps = state.hud.fps,
+                            res = state.hud.resolution,
+                            rtt = state.hud.rttMs,
+                            transport = state.hud.transport,
+                            onClick = { openControlPanel(ControlPanelTab.Display) },
+                            modifier = Modifier.align(Alignment.TopEnd).padding(10.dp),
+                        )
                     }
                 }
 
-                // Dedicated Bottom-Half Precision Glass Trackpad
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(0.54f)
-                        .background(Color(0xFF0E1117))
-                        .border(1.dp, Color(0xFF1F2633)),
-                ) {
-                    AndroidView(
-                        factory = { ctx ->
-                            PrecisionTouchLayer(
-                                context = ctx,
-                                stageProvider = { stageRef },
-                                trackpadOnly = true,
-                                onMove = { nx, ny ->
-                                    Core.sendMouseMove(nx, ny)
-                                    overlayTouchRef?.syncNormalizedPosition(nx, ny)
-                                },
-                                onButton = { btn, pressed -> Core.sendMouseButton(btn, pressed) },
-                                onWheel = { delta, horiz -> Core.sendMouseWheel(delta, horiz) },
-                            ).also { bottomTrackpadRef = it }
-                        },
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                    Text(
-                        "单指移动 · 轻点左键 · 双指轻点右键 · 双指惯性滚动 · 三指拖动",
-                        color = Color(0xFF5D697D),
-                        fontSize = 11.sp,
-                        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 10.dp),
-                    )
-                }
+                LandscapeRightSidebar(
+                    slots = sidebarConfig.rightSlots,
+                    zoomScale = zoomScale,
+                    dragLocked = dragLocked,
+                    audioMuted = state.audioMuted,
+                    showHud = prefs.showHud,
+                    keymapEnabled = keymapState.enabled,
+                    keyboardVisible = keyboardBarVisible,
+                    onOpenControls = { openControlPanel(ControlPanelTab.Controls) },
+                    onSlotClick = { idx, action ->
+                        if (action == QuickActionKind.Empty) {
+                            editingSlotTarget = EditingSlotTarget(SidebarSide.Right, idx)
+                        } else {
+                            handleQuickAction(action)
+                        }
+                    },
+                    onSlotLongClick = { idx ->
+                        editingSlotTarget = EditingSlotTarget(SidebarSide.Right, idx)
+                    },
+                )
             }
         } else {
-            // ── Landscape Fullscreen Immersive Mode ──
+            // Landscape Pure Fullscreen Mode (Micro-Pill fallback)
             Box(modifier = Modifier.fillMaxSize()) {
                 VideoAndCursorAndroidView(
-                    onStageCreated = { stageRef = it },
+                    onStageCreated = { stg ->
+                        stg.onZoomChanged = { zoomScale = it }
+                        stageRef = stg
+                    },
                     onTouchCreated = { overlayTouchRef = it },
                     onSurfaceReady = viewModel::attachSurface,
                     onSurfaceLost = viewModel::detachSurface,
                     onSyncedMove = { nx, ny -> Core.sendMouseMove(nx, ny) },
                 )
 
+                SessionKeyMappingOverlay(
+                    keymapState = keymapState,
+                    editing = keymapEditing,
+                    onExecuteQuickAction = ::handleQuickAction,
+                    onSelectProfile = viewModel::selectKeymapProfile,
+                    onOpacityChange = viewModel::setKeymapOpacity,
+                    onMoveItem = viewModel::moveKeymapItem,
+                    onResizeItem = viewModel::resizeKeymapItem,
+                    onAddItem = viewModel::addKeymapItem,
+                    onRemoveItem = viewModel::removeKeymapItem,
+                    onResetProfile = viewModel::resetActiveKeymapProfile,
+                    onDoneEditing = { viewModel.setKeymapEditing(false) },
+                )
+
                 if (state.watchOnly) {
                     WatchModeBadge(modifier = Modifier.align(Alignment.TopStart).systemBarsPadding().padding(14.dp))
+                }
+                if (zoomScale > 1.02f) {
+                    ZoomBadge(
+                        zoomScale = zoomScale,
+                        onReset = { handleQuickAction(QuickActionKind.ResetZoom) },
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .systemBarsPadding()
+                            .padding(start = 14.dp, top = if (state.watchOnly) 48.dp else 14.dp),
+                    )
                 }
                 if (prefs.showHud && state.negotiated != null) {
                     MiniHudBadge(
@@ -320,37 +651,43 @@ fun DesktopSessionScreen(
                         res = state.hud.resolution,
                         rtt = state.hud.rttMs,
                         transport = state.hud.transport,
+                        onClick = { openControlPanel(ControlPanelTab.Display) },
                         modifier = Modifier.align(Alignment.TopEnd).systemBarsPadding().padding(14.dp),
                     )
                 }
 
-                // Edge-snapped draggable micro-pill
                 EdgeSnappedMicroPill(
                     alpha = pillAlpha,
+                    keyboardActive = keyboardBarVisible,
+                    touchMode = prefs.touchMode,
                     onTouch = { lastPillTouchMs = System.currentTimeMillis() },
-                    onClick = {
-                        lastPillTouchMs = System.currentTimeMillis()
-                        viewModel.setDrawerOpen(true)
-                    },
                     onToggleKeyboard = {
                         lastPillTouchMs = System.currentTimeMillis()
-                        val show = !keyboardBarVisible
-                        viewModel.setKeyboardBarVisible(show)
-                        if (show) imeBridgeRef?.showSoftKeyboard() else imeBridgeRef?.hideSoftKeyboard()
+                        toggleKeyboardAndIme()
+                    },
+                    onToggleTouchMode = {
+                        lastPillTouchMs = System.currentTimeMillis()
+                        handleQuickAction(QuickActionKind.ToggleTouchMode)
+                    },
+                    onOpenControlPanel = {
+                        lastPillTouchMs = System.currentTimeMillis()
+                        openControlPanel(ControlPanelTab.Controls)
                     },
                 )
             }
         }
 
-        // Floating Extended Keyboard Bar (sticky modifiers + macros + special keys)
+        // Pinned-Anchor Floating Extended Keyboard Bar
         AnimatedVisibility(
             visible = keyboardBarVisible && !state.watchOnly,
+            enter = fadeIn() + slideInVertically { it / 2 },
+            exit = fadeOut() + slideOutVertically { it / 2 },
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .systemBarsPadding()
-                .padding(bottom = 6.dp),
+                .padding(bottom = if (isPortrait && !usePortraitTrackpad) 64.dp else 8.dp),
         ) {
-            ExtendedKeyboardBar(
+            SessionKeyboardBar(
                 isMacHost = isMacTarget,
                 stickyMods = stickyMods,
                 onToggleMod = viewModel::toggleStickyModifier,
@@ -364,6 +701,17 @@ fun DesktopSessionScreen(
             )
         }
 
+        // 3-Step Interactive Gesture Onboarding Guide
+        if (showGestureGuide) {
+            SessionGestureGuide(
+                isPortrait = isPortrait,
+                onFinish = {
+                    showGestureGuideOverride = false
+                    viewModel.markGestureGuideSeen()
+                },
+            )
+        }
+
         // Connection / Auth / Switching Overlay
         when (val st = state.status) {
             is SessionStatus.Connecting, is SessionStatus.Switching -> {
@@ -371,27 +719,38 @@ fun DesktopSessionScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(Color(0xC807090D)),
+                        .background(SessionPalette.scrim),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(18.dp))
-                            .background(Color(0xFF1A202A))
-                            .padding(horizontal = 28.dp, vertical = 22.dp),
+                    Surface(
+                        shape = RoundedCornerShape(RabbitRadius.Xl),
+                        color = SessionPalette.chromeElevated,
+                        tonalElevation = 0.dp,
+                        shadowElevation = RabbitElevation.Floating,
+                        border = BorderStroke(1.dp, SessionPalette.border),
+                        modifier = Modifier.width(300.dp),
                     ) {
-                        CircularProgressIndicator(color = Color(0xFF3370FF))
-                        Spacer(modifier = Modifier.height(14.dp))
-                        Text(state.deviceName.ifBlank { state.targetId }, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(msg, color = Color(0xFFAAB4C4), fontSize = 13.sp)
-                        Spacer(modifier = Modifier.height(14.dp))
-                        TextButton(onClick = {
-                            viewModel.disconnect(false)
-                            onExitSession()
-                        }) {
-                            Text("取消连接", color = Color(0xFFFF8C94))
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.padding(horizontal = 24.dp, vertical = 22.dp),
+                        ) {
+                            CircularProgressIndicator(color = SessionPalette.accent, strokeWidth = 3.dp)
+                            Spacer(modifier = Modifier.height(14.dp))
+                            Text(
+                                state.deviceName.ifBlank { state.targetId },
+                                color = SessionPalette.text,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(msg, color = SessionPalette.muted, fontSize = 13.sp)
+                            Spacer(modifier = Modifier.height(14.dp))
+                            TextButton(onClick = {
+                                viewModel.disconnect(false)
+                                onExitSession()
+                            }) {
+                                Text("取消连接", color = SessionPalette.dangerText)
+                            }
                         }
                     }
                 }
@@ -403,49 +762,71 @@ fun DesktopSessionScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(Color(0xD807090D)),
+                        .background(SessionPalette.scrim),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Column(
+                    Surface(
+                        shape = RoundedCornerShape(RabbitRadius.Xl),
+                        color = SessionPalette.chromeElevated,
+                        tonalElevation = 0.dp,
+                        shadowElevation = RabbitElevation.Floating,
+                        border = BorderStroke(1.dp, SessionPalette.border),
                         modifier = Modifier
                             .width(340.dp)
-                            .clip(RoundedCornerShape(18.dp))
-                            .background(Color(0xFF1A202A))
-                            .padding(22.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
+                            .padding(horizontal = 16.dp),
                     ) {
-                        Text("会话未就绪", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(reason, color = Color(0xFFAAB4C4), fontSize = 13.sp)
-                        if (needsPassword) {
-                            Spacer(modifier = Modifier.height(14.dp))
-                            OutlinedTextField(
-                                value = passwordInput,
-                                onValueChange = { passwordInput = it },
-                                placeholder = { Text("输入被控端访问密码") },
-                                singleLine = true,
-                                visualTransformation = PasswordVisualTransformation(),
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Button(
-                                onClick = { viewModel.retryWithPassword(passwordInput) },
-                                enabled = passwordInput.isNotEmpty(),
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Text("验证并重连")
+                        Column(
+                            modifier = Modifier.padding(22.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Text("会话未就绪", color = SessionPalette.text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(reason, color = SessionPalette.muted, fontSize = 13.sp)
+                            if (needsPassword) {
+                                Spacer(modifier = Modifier.height(14.dp))
+                                OutlinedTextField(
+                                    value = passwordInput,
+                                    onValueChange = { passwordInput = it },
+                                    placeholder = { Text("输入被控端访问密码", color = SessionPalette.muted) },
+                                    singleLine = true,
+                                    visualTransformation = PasswordVisualTransformation(),
+                                    shape = RoundedCornerShape(RabbitRadius.Md),
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedTextColor = SessionPalette.text,
+                                        unfocusedTextColor = SessionPalette.text,
+                                        focusedContainerColor = SessionPalette.trackpad,
+                                        unfocusedContainerColor = SessionPalette.trackpad,
+                                        focusedBorderColor = SessionPalette.accent,
+                                        unfocusedBorderColor = SessionPalette.border,
+                                    ),
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Button(
+                                    onClick = { viewModel.retryWithPassword(passwordInput) },
+                                    enabled = passwordInput.isNotEmpty(),
+                                    shape = RoundedCornerShape(RabbitRadius.Md),
+                                    elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = SessionPalette.accent, contentColor = Color.White),
+                                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                                ) {
+                                    Text("验证并重连", fontWeight = FontWeight.Medium)
+                                }
+                            } else {
+                                Spacer(modifier = Modifier.height(14.dp))
+                                Button(
+                                    onClick = { viewModel.retryWithPassword(passwordInput) },
+                                    shape = RoundedCornerShape(RabbitRadius.Md),
+                                    elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = SessionPalette.accent, contentColor = Color.White),
+                                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                                ) {
+                                    Text("重新连接", fontWeight = FontWeight.Medium)
+                                }
                             }
-                        } else {
-                            Spacer(modifier = Modifier.height(14.dp))
-                            Button(
-                                onClick = { viewModel.retryWithPassword(passwordInput) },
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Text("重新连接")
-                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+                            TextButton(onClick = onExitSession) { Text("返回", color = SessionPalette.muted) }
                         }
-                        Spacer(modifier = Modifier.height(6.dp))
-                        TextButton(onClick = onExitSession) { Text("返回", color = Color(0xFFAAB4C4)) }
                     }
                 }
             }
@@ -453,15 +834,33 @@ fun DesktopSessionScreen(
             else -> Unit
         }
 
-        // Control Center Drawer Overlay
+        // Split-Rail Floating Control Center Overlay
         if (drawerOpen) {
-            ControlCenterOverlay(
+            SessionControlPanel(
                 viewModel = viewModel,
-                onResetZoom = { stageRef?.resetZoom() },
+                isPortrait = isPortrait,
+                initialTab = initialControlTab,
+                onQuickAction = ::handleQuickAction,
+                onEditSidebarSlot = { side, idx ->
+                    viewModel.setDrawerOpen(false)
+                    editingSlotTarget = EditingSlotTarget(side, idx)
+                },
+                onEditKeymap = {
+                    viewModel.setDrawerOpen(false)
+                    viewModel.setKeymapEditing(true)
+                },
+                onShowGestureGuide = {
+                    viewModel.setDrawerOpen(false)
+                    showGestureGuideOverride = true
+                },
                 onShowKeyboard = {
                     viewModel.setDrawerOpen(false)
                     viewModel.setKeyboardBarVisible(true)
                     imeBridgeRef?.showSoftKeyboard()
+                },
+                onPushClipboard = {
+                    viewModel.pushPhoneClipboard()
+                    viewModel.setDrawerOpen(false)
                 },
                 onOpenTool = { kind ->
                     viewModel.setDrawerOpen(false)
@@ -474,34 +873,68 @@ fun DesktopSessionScreen(
                 onDismiss = { viewModel.setDrawerOpen(false) },
             )
         }
+
+        // Left/Right Sidebar Customizer Modal
+        val target = editingSlotTarget
+        if (target != null) {
+            val currentSlots = if (target.side == SidebarSide.Left) {
+                sidebarConfig.leftSlots
+            } else {
+                sidebarConfig.rightSlots
+            }
+            SidebarSlotPickerOverlay(
+                side = target.side,
+                initialSlotIndex = target.index,
+                currentSlots = currentSlots,
+                onSelectSlotAction = { slotIdx, action ->
+                    if (target.side == SidebarSide.Left) {
+                        viewModel.setLeftSlot(slotIdx, action)
+                    } else {
+                        viewModel.setRightSlot(slotIdx, action)
+                    }
+                },
+                onDismiss = { editingSlotTarget = null },
+            )
+        }
     }
 
     if (disconnectConfirm) {
         var lockOnExit by remember { mutableStateOf(false) }
-        AlertDialog(
+        RabbitDialog(
+            title = "断开远程会话",
+            message = "确认结束当前对「${state.deviceName}」的控制？",
             onDismissRequest = { disconnectConfirm = false },
-            title = { Text("断开远程会话") },
-            text = {
-                Column {
-                    Text("确认结束当前对「${state.deviceName}」的控制？")
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("断开时锁定远端屏幕", modifier = Modifier.weight(1f), fontSize = 14.sp)
-                        Switch(checked = lockOnExit, onCheckedChange = { lockOnExit = it })
-                    }
-                }
+            dismissLabel = "取消",
+            confirmLabel = "断开连接",
+            destructive = true,
+            darkSessionStyle = true,
+            onConfirm = {
+                disconnectConfirm = false
+                viewModel.disconnect(lockOnExit)
+                onExitSession()
             },
-            confirmButton = {
-                TextButton(onClick = {
-                    disconnectConfirm = false
-                    viewModel.disconnect(lockOnExit)
-                    onExitSession()
-                }) { Text("断开", color = Color(0xFFFF6B73)) }
-            },
-            dismissButton = {
-                TextButton(onClick = { disconnectConfirm = false }) { Text("取消") }
-            },
-        )
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(RabbitRadius.Md))
+                    .background(SessionPalette.surface)
+                    .border(1.dp, SessionPalette.border, RoundedCornerShape(RabbitRadius.Md))
+                    .clickable { lockOnExit = !lockOnExit }
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+            ) {
+                Text("断开时锁定远端屏幕", color = SessionPalette.text, modifier = Modifier.weight(1f), fontSize = 14.sp)
+                Switch(
+                    checked = lockOnExit,
+                    onCheckedChange = { lockOnExit = it },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.White,
+                        checkedTrackColor = SessionPalette.accent,
+                    ),
+                )
+            }
+        }
     }
 }
 
@@ -538,50 +971,98 @@ private fun VideoAndCursorAndroidView(
 @Composable
 private fun EdgeSnappedMicroPill(
     alpha: Float,
+    keyboardActive: Boolean,
+    touchMode: TouchInputMode,
     onTouch: () -> Unit,
-    onClick: () -> Unit,
     onToggleKeyboard: () -> Unit,
+    onToggleTouchMode: () -> Unit,
+    onOpenControlPanel: () -> Unit,
 ) {
-    BoxWithConstraints(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxSize()
+            .systemBarsPadding(),
+    ) {
         val density = LocalDensity.current
         val maxW = with(density) { maxWidth.toPx() }
         val maxH = with(density) { maxHeight.toPx() }
-        val pillW = with(density) { 88.dp.toPx() }
-        val pillH = with(density) { 40.dp.toPx() }
+        val pillW = with(density) { 134.dp.toPx() }
+        val pillH = with(density) { 44.dp.toPx() }
 
+        var dragging by remember { mutableStateOf(false) }
         var offX by remember { mutableFloatStateOf((maxW - pillW - 24f).coerceAtLeast(16f)) }
         var offY by remember { mutableFloatStateOf((maxH * 0.42f).coerceAtLeast(24f)) }
+        val animatedX by animateFloatAsState(
+            targetValue = offX,
+            animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+            label = "pillSnapX",
+        )
+        val displayX = if (dragging) offX else animatedX
 
-        Row(
+        Surface(
             modifier = Modifier
-                .offset { IntOffset(offX.roundToInt(), offY.roundToInt()) }
+                .offset { IntOffset(displayX.roundToInt(), offY.roundToInt()) }
                 .alpha(alpha)
-                .clip(RoundedCornerShape(22.dp))
-                .background(Color(0xD9161B24))
-                .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(22.dp))
                 .pointerInput(maxW, maxH) {
                     detectDragGestures(
-                        onDragStart = { onTouch() },
+                        onDragStart = {
+                            dragging = true
+                            onTouch()
+                        },
                         onDragEnd = {
-                            // Snap horizontally to nearest screen edge
-                            offX = if (offX + pillW * 0.5f < maxW * 0.5f) 16f else (maxW - pillW - 16f).coerceAtLeast(16f)
+                            dragging = false
+                            offX = if (offX + pillW * 0.5f < maxW * 0.5f) {
+                                16f
+                            } else {
+                                (maxW - pillW - 16f).coerceAtLeast(16f)
+                            }
                             offY = offY.coerceIn(16f, (maxH - pillH - 16f).coerceAtLeast(16f))
                         },
+                        onDragCancel = { dragging = false },
                     ) { change, drag ->
                         change.consume()
                         offX = (offX + drag.x).coerceIn(0f, (maxW - pillW).coerceAtLeast(0f))
                         offY = (offY + drag.y).coerceIn(0f, (maxH - pillH).coerceAtLeast(0f))
                     }
-                }
-                .padding(horizontal = 6.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
+                },
+            shape = RoundedCornerShape(22.dp),
+            color = SessionPalette.chromeElevated.copy(alpha = 0.90f),
+            tonalElevation = 0.dp,
+            shadowElevation = RabbitElevation.Floating,
+            border = BorderStroke(1.dp, SessionPalette.borderSubtle),
         ) {
-            IconButton(onClick = onToggleKeyboard, modifier = Modifier.size(34.dp)) {
-                Icon(Icons.Rounded.Keyboard, "键盘", tint = Color.White, modifier = Modifier.size(18.dp))
-            }
-            Box(modifier = Modifier.width(1.dp).height(18.dp).background(Color(0x2EFFFFFF)))
-            IconButton(onClick = onClick, modifier = Modifier.size(34.dp)) {
-                Icon(Icons.Rounded.Tune, "控制中心", tint = Color(0xFF6094FF), modifier = Modifier.size(18.dp))
+            Row(
+                modifier = Modifier
+                    .height(44.dp)
+                    .padding(horizontal = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(onClick = onToggleKeyboard, modifier = Modifier.size(40.dp)) {
+                    Icon(
+                        imageVector = Icons.Rounded.Keyboard,
+                        contentDescription = "键盘",
+                        tint = if (keyboardActive) SessionPalette.accentText else SessionPalette.text,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+                Box(modifier = Modifier.width(1.dp).height(18.dp).background(SessionPalette.borderSubtle))
+                IconButton(onClick = onToggleTouchMode, modifier = Modifier.size(40.dp)) {
+                    Icon(
+                        imageVector = if (touchMode == TouchInputMode.Trackpad) Icons.Rounded.Mouse else Icons.Rounded.TouchApp,
+                        contentDescription = touchMode.label,
+                        tint = SessionPalette.text,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+                Box(modifier = Modifier.width(1.dp).height(18.dp).background(SessionPalette.borderSubtle))
+                IconButton(onClick = onOpenControlPanel, modifier = Modifier.size(40.dp)) {
+                    Icon(
+                        imageVector = Icons.Rounded.Tune,
+                        contentDescription = "控制中心",
+                        tint = SessionPalette.accentText,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
             }
         }
     }
@@ -592,30 +1073,55 @@ private fun WatchModeBadge(modifier: Modifier = Modifier) {
     Row(
         modifier = modifier
             .clip(RoundedCornerShape(16.dp))
-            .background(Color(0xBF141920))
-            .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(16.dp))
+            .background(SessionPalette.chromeElevated.copy(alpha = 0.85f))
+            .border(1.dp, SessionPalette.borderSubtle, RoundedCornerShape(16.dp))
             .padding(horizontal = 10.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(Icons.Rounded.Visibility, null, tint = Color(0xFF9FB4D1), modifier = Modifier.size(14.dp))
+        Icon(Icons.Rounded.Visibility, contentDescription = null, tint = SessionPalette.muted, modifier = Modifier.size(14.dp))
         Spacer(modifier = Modifier.width(5.dp))
-        Text("观看模式", color = Color(0xFFE6ECF5), fontSize = 11.sp)
+        Text("观看模式", color = SessionPalette.text, fontSize = 11.sp)
     }
 }
 
 @Composable
-private fun MiniHudBadge(fps: Double, res: String, rtt: Double?, transport: String, modifier: Modifier = Modifier) {
-    val rttStr = rtt?.let { "${it.roundToInt()}ms" } ?: "-"
+private fun ModifierModeBadge(
+    text: String,
+    accentColor: Color,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(accentColor.copy(alpha = 0.25f))
+            .border(1.dp, accentColor, RoundedCornerShape(16.dp))
+            .padding(horizontal = 12.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(text, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+    }
+}
+
+@Composable
+private fun ZoomBadge(
+    zoomScale: Float,
+    onReset: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Row(
         modifier = modifier
             .clip(RoundedCornerShape(14.dp))
-            .background(Color(0xB811151C))
-            .border(1.dp, Color(0x28FFFFFF), RoundedCornerShape(14.dp))
+            .background(SessionPalette.chromeElevated.copy(alpha = 0.85f))
+            .border(1.dp, SessionPalette.accent.copy(alpha = 0.55f), RoundedCornerShape(14.dp))
+            .clickable(onClick = onReset)
             .padding(horizontal = 10.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
+        Icon(Icons.Rounded.ZoomIn, contentDescription = null, tint = SessionPalette.accentText, modifier = Modifier.size(13.dp))
+        Spacer(modifier = Modifier.width(4.dp))
         Text(
-            "${fps.roundToInt()} fps · $res · $rttStr · $transport",
-            color = Color(0xFFD5DFED),
+            text = "${String.format("%.1f", zoomScale)}x · 点击还原",
+            color = SessionPalette.text,
             fontFamily = FontFamily.Monospace,
             fontSize = 11.sp,
         )
@@ -623,384 +1129,147 @@ private fun MiniHudBadge(fps: Double, res: String, rtt: Double?, transport: Stri
 }
 
 @Composable
-private fun CompactStripButton(label: String, active: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun MiniHudBadge(
+    fps: Double,
+    res: String,
+    rtt: Double?,
+    transport: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val rttStr = rtt?.let { "${it.roundToInt()}ms" } ?: "-"
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(SessionPalette.chromeElevated.copy(alpha = 0.82f))
+            .border(1.dp, SessionPalette.borderSubtle, RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 5.dp),
+    ) {
+        Text(
+            text = "${fps.roundToInt()} fps · $res · $rttStr · $transport",
+            color = SessionPalette.text,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 11.sp,
+        )
+    }
+}
+
+@Composable
+private fun CompactStripButton(
+    label: String,
+    active: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val shape = RoundedCornerShape(10.dp)
     Box(
         modifier = modifier
-            .height(36.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(if (active) Color(0xFF3370FF) else Color(0xFF212733))
+            .height(38.dp)
+            .clip(shape)
+            .background(if (active) SessionPalette.accent else SessionPalette.surface)
+            .border(
+                width = 1.dp,
+                color = if (active) SessionPalette.accent else SessionPalette.border,
+                shape = shape,
+            )
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Text(label, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+        Text(
+            text = label,
+            color = if (active) Color.White else SessionPalette.text,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+        )
     }
 }
 
 @Composable
-private fun ExtendedKeyboardBar(
-    isMacHost: Boolean,
-    stickyMods: Int,
-    onToggleMod: (bit: Int, scancode: Int) -> Unit,
-    onTapKey: (scancode: Int, extraModBit: Int, extraModScancode: Int?) -> Unit,
-    onShowIme: () -> Unit,
-    onPushClipboard: () -> Unit,
-    onClose: () -> Unit,
-) {
-    val primaryModBit = if (isMacHost) ScancodeMapper.MOD_LEFT_GUI else ScancodeMapper.MOD_LEFT_CTRL
-    val primaryModSc = if (isMacHost) ScancodeMapper.SC_LEFT_GUI else ScancodeMapper.SC_LEFT_CTRL
-    val primaryLabel = if (isMacHost) "⌘" else "Ctrl"
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 10.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .background(Color(0xEB151A23))
-            .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(14.dp))
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 8.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        KeyChip("软键盘", highlighted = true, onClick = onShowIme)
-        KeyChip(if (isMacHost) "⌘" else "Win", highlighted = (stickyMods and ScancodeMapper.MOD_LEFT_GUI) != 0) {
-            onToggleMod(ScancodeMapper.MOD_LEFT_GUI, ScancodeMapper.SC_LEFT_GUI)
-        }
-        KeyChip("Ctrl", highlighted = (stickyMods and ScancodeMapper.MOD_LEFT_CTRL) != 0) {
-            onToggleMod(ScancodeMapper.MOD_LEFT_CTRL, ScancodeMapper.SC_LEFT_CTRL)
-        }
-        KeyChip(if (isMacHost) "⌥" else "Alt", highlighted = (stickyMods and ScancodeMapper.MOD_LEFT_ALT) != 0) {
-            onToggleMod(ScancodeMapper.MOD_LEFT_ALT, ScancodeMapper.SC_LEFT_ALT)
-        }
-        KeyChip("Shift", highlighted = (stickyMods and ScancodeMapper.MOD_LEFT_SHIFT) != 0) {
-            onToggleMod(ScancodeMapper.MOD_LEFT_SHIFT, ScancodeMapper.SC_LEFT_SHIFT)
-        }
-
-        // OS-adaptive productivity macros
-        KeyChip("${primaryLabel}+C") { onTapKey(0x2E, primaryModBit, primaryModSc) }
-        KeyChip("${primaryLabel}+V") { onTapKey(0x2F, primaryModBit, primaryModSc) }
-        KeyChip("${primaryLabel}+Z") { onTapKey(0x2C, primaryModBit, primaryModSc) }
-        KeyChip("${primaryLabel}+A") { onTapKey(0x1E, primaryModBit, primaryModSc) }
-        if (isMacHost) {
-            KeyChip("⌘Space") { onTapKey(ScancodeMapper.SC_SPACE, ScancodeMapper.MOD_LEFT_GUI, ScancodeMapper.SC_LEFT_GUI) }
-            KeyChip("⌘Tab") { onTapKey(ScancodeMapper.SC_TAB, ScancodeMapper.MOD_LEFT_GUI, ScancodeMapper.SC_LEFT_GUI) }
-        } else {
-            KeyChip("Alt+Tab") { onTapKey(ScancodeMapper.SC_TAB, ScancodeMapper.MOD_LEFT_ALT, ScancodeMapper.SC_LEFT_ALT) }
-        }
-        KeyChip("Ctrl+C") { onTapKey(0x2E, ScancodeMapper.MOD_LEFT_CTRL, ScancodeMapper.SC_LEFT_CTRL) }
-        KeyChip("Esc") { onTapKey(ScancodeMapper.SC_ESC, 0, null) }
-        KeyChip("Tab") { onTapKey(ScancodeMapper.SC_TAB, 0, null) }
-        KeyChip("↑") { onTapKey(ScancodeMapper.SC_UP, 0, null) }
-        KeyChip("↓") { onTapKey(ScancodeMapper.SC_DOWN, 0, null) }
-        KeyChip("←") { onTapKey(ScancodeMapper.SC_LEFT, 0, null) }
-        KeyChip("→") { onTapKey(ScancodeMapper.SC_RIGHT, 0, null) }
-        KeyChip("Del") { onTapKey(ScancodeMapper.SC_DELETE, 0, null) }
-        KeyChip("F5") { onTapKey(ScancodeMapper.SC_F5, 0, null) }
-        KeyChip("F11") { onTapKey(ScancodeMapper.SC_F11, 0, null) }
-        KeyChip("发剪贴板", onClick = onPushClipboard)
-        IconButton(onClick = onClose, modifier = Modifier.size(30.dp)) {
-            Icon(Icons.Rounded.Close, "收起", tint = Color(0xFFAAB4C4), modifier = Modifier.size(16.dp))
-        }
-    }
-}
-
-@Composable
-private fun KeyChip(label: String, highlighted: Boolean = false, onClick: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(if (highlighted) Color(0xFF3370FF) else Color(0xFF252D3B))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 7.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(label, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun ControlCenterOverlay(
-    viewModel: SessionViewModel,
-    onResetZoom: () -> Unit,
-    onShowKeyboard: () -> Unit,
-    onOpenTool: (DeviceToolKind) -> Unit,
-    onRequestDisconnect: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val state by viewModel.sessionState.collectAsStateWithLifecycle()
-    val prefs by viewModel.prefs.collectAsStateWithLifecycle()
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0x99000000))
-            .clickable(onClick = onDismiss),
-        contentAlignment = Alignment.CenterEnd,
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxHeight()
-                .width(340.dp)
-                .background(Color(0xFF141821))
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = {},
-                )
-                .systemBarsPadding()
-                .verticalScroll(rememberScrollState())
-                .padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(state.deviceName.ifBlank { "控制中心" }, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
-                    val neg = state.negotiated
-                    val diag = state.media
-                    if (neg != null) {
-                        val hwTag = if (diag.hardware) "硬解" else "解码"
-                        Text("${neg.width}×${neg.height} @ ${neg.fps}fps · ${neg.transport} · $hwTag", color = Color(0xFF94A3B8), fontSize = 12.sp)
-                    }
-                }
-                IconButton(onClick = onDismiss) {
-                    Icon(Icons.Rounded.Close, "关闭", tint = Color.White)
-                }
-            }
-
-            // Quick Actions Grid
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                DrawerTile(
-                    icon = if (prefs.touchMode == TouchInputMode.Trackpad) Icons.Rounded.Mouse else Icons.Rounded.TouchApp,
-                    label = prefs.touchMode.label,
-                    active = true,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    val next = if (prefs.touchMode == TouchInputMode.Trackpad) TouchInputMode.DirectTouch else TouchInputMode.Trackpad
-                    viewModel.setTouchMode(next)
-                }
-                DrawerTile(Icons.Rounded.Keyboard, "键盘条", false, Modifier.weight(1f), onShowKeyboard)
-                DrawerTile(
-                    icon = if (state.audioMuted) Icons.AutoMirrored.Rounded.VolumeOff else Icons.AutoMirrored.Rounded.VolumeUp,
-                    label = if (state.audioMuted) "已静音" else "声音开",
-                    active = !state.audioMuted,
-                    modifier = Modifier.weight(1f),
-                ) { viewModel.setAudioMuted(!state.audioMuted) }
-            }
-
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                DrawerTile(Icons.Rounded.ContentPaste, if (state.clipboardEnabled) "剪贴板开" else "剪贴板关", state.clipboardEnabled, Modifier.weight(1f)) {
-                    viewModel.setClipboardEnabled(!state.clipboardEnabled)
-                }
-                DrawerTile(Icons.Rounded.Visibility, if (state.watchOnly) "观看模式" else "控制模式", state.watchOnly, Modifier.weight(1f)) {
-                    viewModel.setWatchOnly(!state.watchOnly)
-                }
-                DrawerTile(Icons.Rounded.ScreenRotation, when (prefs.orientationPref) {
-                    OrientationPreference.LandscapeFirst -> "横屏"
-                    OrientationPreference.AutoSensor -> "自动"
-                    OrientationPreference.PortraitTrackpad -> "竖屏单手"
-                }, false, Modifier.weight(1f)) {
-                    val entries = OrientationPreference.entries
-                    val next = entries[(prefs.orientationPref.ordinal + 1) % entries.size]
-                    viewModel.setOrientationPref(next)
-                }
-            }
-
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                DrawerTile(Icons.Rounded.Speed, if (prefs.showHud) "HUD 开" else "HUD 关", prefs.showHud, Modifier.weight(1f)) {
-                    viewModel.setShowHud(!prefs.showHud)
-                }
-                DrawerTile(Icons.Rounded.ZoomOutMap, "重置缩放", false, Modifier.weight(1f), onResetZoom)
-                DrawerTile(Icons.Rounded.Refresh, "刷新关键帧", false, Modifier.weight(1f)) { viewModel.requestIdr() }
-            }
-
-            HorizontalDivider(color = Color(0xFF252D3B))
-
-            // Pointer Tuning
-            Column {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("指针灵敏度", color = Color.White, fontSize = 13.sp)
-                    Text("${String.format("%.2f", prefs.pointerSensitivity)}x", color = Color(0xFF94A3B8), fontSize = 12.sp)
-                }
-                Slider(
-                    value = prefs.pointerSensitivity,
-                    onValueChange = viewModel::setSensitivity,
-                    valueRange = 0.5f..2.5f,
-                )
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    Text("自然滚动方向", color = Color(0xFFD0D8E4), fontSize = 13.sp, modifier = Modifier.weight(1f))
-                    Switch(checked = prefs.naturalScroll, onCheckedChange = viewModel::setNaturalScroll)
-                }
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    Text("直点指尖微偏置", color = Color(0xFFD0D8E4), fontSize = 13.sp, modifier = Modifier.weight(1f))
-                    Switch(checked = prefs.directTouchOffset, onCheckedChange = viewModel::setDirectTouchOffset)
-                }
-            }
-
-            HorizontalDivider(color = Color(0xFF252D3B))
-
-            // Stream Resolution, FPS & Bitrate Hot Switching
-            val dc = state.displayConfig
-            val curW = dc?.width ?: state.negotiated?.width ?: 0
-            val curH = dc?.height ?: state.negotiated?.height ?: 0
-            val curFps = dc?.fps ?: state.negotiated?.fps ?: 60
-            val activeBps = state.targetBitrateBps ?: state.negotiated?.bitrateBps
-            val presetSelection = remember(dc?.presets, curW, curH) {
-                selectCommonResolutionPresets(dc?.presets.orEmpty(), curW, curH, maxCommon = 5)
-            }
-            var showMoreResolutions by remember { mutableStateOf(false) }
-
-            Text("画质与帧率", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-
-            if (presetSelection.common.isNotEmpty()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text("常用分辨率", color = Color(0xFF94A3B8), fontSize = 12.sp)
-                    if (curW > 0 && curH > 0) {
-                        Text("${curW}×${curH}", color = Color(0xFF8DB2FF), fontSize = 12.sp, fontFamily = FontFamily.Monospace)
-                    }
-                }
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    presetSelection.common.forEach { preset ->
-                        val active = curW == preset.width && curH == preset.height
-                        KeyChip(formatCompactPresetLabel(preset), highlighted = active) {
-                            viewModel.setStreamParams(preset.width, preset.height, curFps)
-                        }
-                    }
-                    if (presetSelection.extra.isNotEmpty()) {
-                        KeyChip(
-                            label = if (showMoreResolutions) "收起" else "更多 (${presetSelection.extra.size})",
-                            highlighted = showMoreResolutions || presetSelection.extra.any { it.width == curW && it.height == curH },
-                        ) {
-                            showMoreResolutions = !showMoreResolutions
-                        }
-                    }
-                }
-                if (showMoreResolutions && presetSelection.extra.isNotEmpty()) {
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        presetSelection.extra.forEach { preset ->
-                            val active = curW == preset.width && curH == preset.height
-                            KeyChip(formatCompactPresetLabel(preset), highlighted = active) {
-                                viewModel.setStreamParams(preset.width, preset.height, curFps)
-                            }
-                        }
-                    }
-                }
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("帧率上限", color = Color(0xFF94A3B8), fontSize = 12.sp)
-                Text("${curFps}fps", color = Color(0xFF8DB2FF), fontSize = 12.sp, fontFamily = FontFamily.Monospace)
-            }
-            val maxFpsCap = maxOf(dc?.maxFps ?: 120, curFps, 60)
-            val fpsOptions = listOf(30, 60, 90, 120).filter { it <= maxFpsCap }
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                fpsOptions.forEach { fps ->
-                    KeyChip("${fps}fps", highlighted = curFps == fps) {
-                        viewModel.setStreamParams(curW, curH, fps)
-                    }
-                }
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("目标带宽", color = Color(0xFF94A3B8), fontSize = 12.sp)
-                if (activeBps != null && activeBps > 0) {
-                    Text("${activeBps / 1_000_000}M", color = Color(0xFF8DB2FF), fontSize = 12.sp, fontFamily = FontFamily.Monospace)
-                }
-            }
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                listOf(
-                    4_000_000 to "4M",
-                    8_000_000 to "8M",
-                    14_000_000 to "14M",
-                    24_000_000 to "24M",
-                    40_000_000 to "40M",
-                ).forEach { (bps, lbl) ->
-                    KeyChip(lbl, highlighted = activeBps == bps) {
-                        viewModel.setBitrate(bps)
-                    }
-                }
-            }
-
-            HorizontalDivider(color = Color(0xFF252D3B))
-
-            // Tools & Lock
-            Text("远控工具", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                DrawerTile(Icons.Rounded.FolderOpen, "文件", false, Modifier.weight(1f)) { onOpenTool(DeviceToolKind.FileTransfer) }
-                DrawerTile(Icons.Rounded.Terminal, "终端", false, Modifier.weight(1f)) { onOpenTool(DeviceToolKind.Terminal) }
-                DrawerTile(Icons.Rounded.Cable, "端口映射", false, Modifier.weight(1f)) { onOpenTool(DeviceToolKind.PortMap) }
-            }
-            OutlinedButton(
-                onClick = viewModel::lockRemoteScreen,
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Icon(Icons.Rounded.Lock, null, tint = Color.White, modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("立即锁定远端电脑", color = Color.White)
-            }
-
-            Button(
-                onClick = onRequestDisconnect,
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFA82932)),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth().height(46.dp),
-            ) {
-                Icon(Icons.Rounded.PowerSettingsNew, null, tint = Color.White, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("断开连接", color = Color.White, fontWeight = FontWeight.Medium)
-            }
-        }
-    }
-}
-
-@Composable
-private fun DrawerTile(
+private fun PortraitBarButton(
     icon: ImageVector,
     label: String,
     active: Boolean,
-    modifier: Modifier = Modifier,
+    tintAccent: Boolean = false,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .background(if (active) Color(0xFF22365E) else Color(0xFF1F2633))
-            .border(1.dp, if (active) Color(0xFF3370FF) else Color.Transparent, RoundedCornerShape(12.dp))
+            .background(if (active) SessionPalette.surfaceActive.copy(alpha = 0.50f) else Color.Transparent)
             .clickable(onClick = onClick)
-            .padding(vertical = 10.dp, horizontal = 6.dp),
+            .padding(horizontal = 4.dp, vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
     ) {
-        Icon(icon, null, tint = if (active) Color(0xFF8DB2FF) else Color(0xFFD0D8E4), modifier = Modifier.size(20.dp))
-        Spacer(modifier = Modifier.height(5.dp))
-        Text(label, color = Color.White, fontSize = 11.sp, maxLines = 1)
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            tint = when {
+                active || tintAccent -> SessionPalette.accentText
+                else -> SessionPalette.text.copy(alpha = 0.90f)
+            },
+            modifier = Modifier.size(20.dp),
+        )
+        Spacer(modifier = Modifier.height(3.dp))
+        Text(
+            text = label,
+            color = if (active || tintAccent) SessionPalette.accentText else SessionPalette.muted,
+            fontSize = 10.sp,
+            fontWeight = if (active || tintAccent) FontWeight.Medium else FontWeight.Normal,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun PortraitHoldModifierButton(
+    icon: ImageVector,
+    label: String,
+    held: Boolean,
+    activeTint: Color,
+    onHoldChanged: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val view = LocalView.current
+    val currentHold by rememberUpdatedState(onHoldChanged)
+
+    DisposableEffect(Unit) {
+        onDispose { currentHold(false) }
+    }
+
+    Column(
+        modifier = modifier
+            .background(if (held) activeTint.copy(alpha = 0.28f) else Color.Transparent)
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                    currentHold(true)
+                    waitForUpOrCancellation()
+                    currentHold(false)
+                }
+            }
+            .padding(horizontal = 4.dp, vertical = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            tint = if (held) activeTint else SessionPalette.text.copy(alpha = 0.90f),
+            modifier = Modifier.size(20.dp),
+        )
+        Spacer(modifier = Modifier.height(3.dp))
+        Text(
+            text = label,
+            color = if (held) Color.White else SessionPalette.muted,
+            fontSize = 10.sp,
+            fontWeight = if (held) FontWeight.SemiBold else FontWeight.Normal,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
