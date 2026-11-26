@@ -271,6 +271,7 @@ impl AndroidRuntime {
             token_refresher: Some(token_refresher),
             device_pubkey: Some(self.cert_mgr.device_pubkey_hex()),
             allow_remote_assist: self.host_allow_remote_assist.load(Ordering::Acquire),
+            allow_remote_control: None,
             dynamic_lan_discovery: true,
         };
 

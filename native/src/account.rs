@@ -280,6 +280,8 @@ fn request(args: &Value) -> Result<Value, AuthClientError> {
                 device_key,
                 hostname,
                 os: Some("Android".to_string()),
+                app_version: opt_field(args, "appVersion").map(str::to_string),
+                arch: Some(std::env::consts::ARCH.to_string()),
                 device_pubkey,
             })?;
             let mut val = json!(tokens);
@@ -310,6 +312,8 @@ fn request(args: &Value) -> Result<Value, AuthClientError> {
                 device_key,
                 hostname,
                 os: Some("Android".to_string()),
+                app_version: opt_field(args, "appVersion").map(str::to_string),
+                arch: Some(std::env::consts::ARCH.to_string()),
                 device_pubkey,
             })?;
             let mut val = json!(tokens);

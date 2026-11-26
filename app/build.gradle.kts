@@ -76,8 +76,8 @@ android {
         applicationId = "io.rabbitcontrol.android"
         minSdk = 29
         targetSdk = 36
-        versionCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 2
-        versionName = (project.findProperty("versionName") as String?)?.takeIf { it.isNotBlank() } ?: "0.2.0"
+        versionCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 3
+        versionName = (project.findProperty("versionName") as String?)?.takeIf { it.isNotBlank() } ?: "0.2.1"
         ndk.abiFilters += "arm64-v8a"
         buildConfigField("int", "CORE_ABI_VERSION", coreAbiVersion.toString())
         buildConfigField("String", "BUNDLED_CORE_VERSION", "\"${escapeBuildConfigString(bundledCoreVersion)}\"")
