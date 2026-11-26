@@ -93,11 +93,14 @@ jobs:
           cp app/build/outputs/apk/release/app-release.apk "release-assets/${APK_NAME}"
           (cd release-assets && sha256sum "${APK_NAME}" > SHA256SUMS.txt)
 
-      - name: Extract annotated tag release notes
+      - name: Resolve release notes
         id: tag_notes
         run: |
           NOTES_FILE="${{ runner.temp }}/release-notes.md"
-          git tag -l --format='%(contents)' "$GITHUB_REF_NAME" > "$NOTES_FILE"
+          python3 scripts/extract-changelog.py --tag "$GITHUB_REF_NAME" --out "$NOTES_FILE"
+          if [[ -z "$(tr -d '[:space:]' < "$NOTES_FILE")" ]]; then
+            git tag -l --format='%(contents)' "$GITHUB_REF_NAME" > "$NOTES_FILE"
+          fi
           if [[ -n "$(tr -d '[:space:]' < "$NOTES_FILE")" ]]; then
             echo "has_notes=true" >> "$GITHUB_OUTPUT"
             echo "notes_file=$NOTES_FILE" >> "$GITHUB_OUTPUT"
@@ -105,7 +108,7 @@ jobs:
             echo "has_notes=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Publish GitHub Release (from tag notes)
+      - name: Publish GitHub Release (with release notes)
         if: steps.tag_notes.outputs.has_notes == 'true'
         uses: softprops/action-gh-release@v2
         with:

@@ -37,6 +37,8 @@ chmod +x scripts/gen-core-signing-key.sh scripts/build-core-manifest.sh
 
 ## 3. 如何发布新版内核（无需发新版 APK）
 
+发版前建议先在 [CHANGELOG_zh.md](../CHANGELOG_zh.md) 与 [CHANGELOG.md](../CHANGELOG.md) 中补充对应版本章节（如 `## [core-v0.1.24] - YYYY-MM-DD`），CI 会自动提取并生成中英文 GitHub Release 说明以及 `core-manifest.json` 中的更新日志；若未填写，则自动降级为手动参数、附注 Tag 说明或 GitHub 自动生成。
+
 ### 方式 A：GitHub Actions 手动触发
 在 `rabbitcontrol-android` 仓库的 Actions → **Release Core Native Runtime** → Run workflow：
 - `core_ref`：填写 `rabbitcontrol-core` 的 tag / 分支 / SHA（如 `v0.1.19`）

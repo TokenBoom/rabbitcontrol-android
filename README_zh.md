@@ -1,6 +1,6 @@
 # RabbitControl Android
 
-[English](README.md) | 简体中文
+[English](README.md) | 简体中文 | [更新日志](CHANGELOG_zh.md)
 
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Android%2010%2B%20(arm64--v8a)-green.svg)](#环境要求)
@@ -60,6 +60,8 @@ RabbitControl Android 将界面交互与核心协议清晰分层：
 | [`native/src/lib.rs`](native/src/lib.rs) | 连接 Kotlin 与 `rabbitcontrol-core` 的 Rust JNI 入口 |
 | [`docs/architecture.md`](docs/architecture.md) | 架构设计与端到端集成说明 |
 | [`docs/ui-design.md`](docs/ui-design.md) | 界面视觉规范、主题 Token 与手势规则 |
+| [`docs/core-dynamic-update.md`](docs/core-dynamic-update.md) | `rabbitcontrol-core` 动态热更新、ECDSA 签名与发版指南 |
+| [`CHANGELOG_zh.md`](CHANGELOG_zh.md) | APK（`v*`）与内核（`core-v*`）版本更新日志（[English](CHANGELOG.md)） |
 
 ---
 

@@ -1,6 +1,6 @@
 # RabbitControl Android
 
-English | [简体中文](README_zh.md)
+English | [简体中文](README_zh.md) | [Changelog](CHANGELOG.md)
 
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Android%2010%2B%20(arm64--v8a)-green.svg)](#prerequisites)
@@ -60,6 +60,8 @@ RabbitControl Android splits responsibilities cleanly between Kotlin/Compose and
 | [`native/src/lib.rs`](native/src/lib.rs) | Rust JNI entrypoints bridging Kotlin and `rabbitcontrol-core` |
 | [`docs/architecture.md`](docs/architecture.md) | Detailed architecture notes and integration design |
 | [`docs/ui-design.md`](docs/ui-design.md) | UI design specification, theme tokens, and gesture rules |
+| [`docs/core-dynamic-update.md`](docs/core-dynamic-update.md) | Core hot-update architecture, signing, and `core-v*` release guide |
+| [`CHANGELOG.md`](CHANGELOG.md) | Release history for APK (`v*`) and core (`core-v*`) updates ([中文](CHANGELOG_zh.md)) |
 
 ---
 
