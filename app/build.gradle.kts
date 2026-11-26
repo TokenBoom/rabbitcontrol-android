@@ -1,3 +1,4 @@
+import java.time.Instant
 import java.util.Properties
 
 plugins {
@@ -16,6 +17,56 @@ fun signingProp(envKey: String, propKey: String): String? =
     System.getenv(envKey)?.takeIf { it.isNotBlank() }
         ?: keystoreProps.getProperty(propKey)?.takeIf { it.isNotBlank() }
 
+fun runGitInCore(vararg args: String): String? {
+    val coreDir = rootProject.file("rabbitcontrol-core")
+    if (!coreDir.isDirectory) return null
+    return try {
+        val proc = ProcessBuilder(listOf("git", "-C", coreDir.absolutePath) + args)
+            .redirectErrorStream(true)
+            .start()
+        val out = proc.inputStream.bufferedReader().readText().trim()
+        if (proc.waitFor() == 0 && out.isNotBlank()) out else null
+    } catch (_: Exception) {
+        null
+    }
+}
+
+fun readPublicKeyB64(): String {
+    val override = (project.findProperty("coreSigningPublicKey") as String?)?.takeIf { it.isNotBlank() }
+        ?: System.getenv("CORE_SIGNING_PUBLIC_KEY_B64")?.takeIf { it.isNotBlank() }
+    if (override != null) {
+        return override
+            .replace("-----BEGIN PUBLIC KEY-----", "")
+            .replace("-----END PUBLIC KEY-----", "")
+            .replace(Regex("\\s+"), "")
+    }
+    val pemFile = project.file("core-signing-public.pem")
+    if (!pemFile.isFile) return ""
+    return pemFile.readText()
+        .replace("-----BEGIN PUBLIC KEY-----", "")
+        .replace("-----END PUBLIC KEY-----", "")
+        .replace(Regex("\\s+"), "")
+}
+
+fun escapeBuildConfigString(value: String): String =
+    value.replace("\\", "\\\\").replace("\"", "\\\"")
+
+val coreAbiVersion = 1
+val bundledCoreVersion = ((project.findProperty("coreVersion") as String?)?.takeIf { it.isNotBlank() }
+    ?: System.getenv("RC_CORE_VERSION")?.takeIf { it.isNotBlank() }
+    ?: runGitInCore("describe", "--tags", "--abbrev=0")
+    ?: "0.1.0")
+    .trim()
+    .removePrefix("v")
+    .removePrefix("V")
+val bundledCoreGitSha = (project.findProperty("coreGitSha") as String?)?.takeIf { it.isNotBlank() }
+    ?: System.getenv("RC_CORE_GIT_SHA")?.takeIf { it.isNotBlank() }
+    ?: runGitInCore("rev-parse", "--short", "HEAD")
+    ?: "unknown"
+val coreBuiltAt = System.getenv("RC_CORE_BUILT_AT")?.takeIf { it.isNotBlank() }
+    ?: Instant.now().toString()
+val coreSigningPublicKeyB64 = readPublicKeyB64()
+
 android {
     namespace = "io.rabbitcontrol.android"
     compileSdk = 36
@@ -28,6 +79,10 @@ android {
         versionCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 2
         versionName = (project.findProperty("versionName") as String?)?.takeIf { it.isNotBlank() } ?: "0.2.0"
         ndk.abiFilters += "arm64-v8a"
+        buildConfigField("int", "CORE_ABI_VERSION", coreAbiVersion.toString())
+        buildConfigField("String", "BUNDLED_CORE_VERSION", "\"${escapeBuildConfigString(bundledCoreVersion)}\"")
+        buildConfigField("String", "BUNDLED_CORE_GIT_SHA", "\"${escapeBuildConfigString(bundledCoreGitSha)}\"")
+        buildConfigField("String", "CORE_SIGNING_PUBLIC_KEY_B64", "\"${escapeBuildConfigString(coreSigningPublicKeyB64)}\"")
     }
 
     signingConfigs {
@@ -83,6 +138,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     compileOptions {
@@ -127,13 +183,20 @@ val ndkDir = androidComponents.sdkComponents.ndkDirectory
 val buildRust by tasks.registering(Exec::class) {
     workingDir(rootProject.file("native"))
     inputs.files(fileTree(rootProject.file("native")) {
-        include("Cargo.toml", "Cargo.lock", "src/**")
+        include("Cargo.toml", "Cargo.lock", "build.rs", ".cargo/config.toml", "src/**")
     }, fileTree(rootProject.file("rabbitcontrol-core")) {
         include("Cargo.toml", "crates/**/Cargo.toml", "crates/**/src/**", "crates/**/certs/**")
     })
+    inputs.property("coreAbiVersion", coreAbiVersion)
+    inputs.property("bundledCoreVersion", bundledCoreVersion)
+    inputs.property("bundledCoreGitSha", bundledCoreGitSha)
     outputs.dir(nativeLibs)
     doFirst {
         environment("ANDROID_NDK_HOME", ndkDir.get().asFile.absolutePath)
+        environment("RC_CORE_ABI_VERSION", coreAbiVersion.toString())
+        environment("RC_CORE_VERSION", bundledCoreVersion)
+        environment("RC_CORE_GIT_SHA", bundledCoreGitSha)
+        environment("RC_CORE_BUILT_AT", coreBuiltAt)
     }
     commandLine("cargo", "ndk", "-t", "arm64-v8a", "--platform", "29",
         "-o", nativeLibs.get().asFile.absolutePath, "build", "--locked", "--release")

@@ -1,6 +1,7 @@
 package io.rabbitcontrol.android.session
 
 import android.view.Surface
+import io.rabbitcontrol.android.core.nativebridge.NativeLibraryLoader
 
 /**
  * Low-level JNI bridge into `librabbitcontrol_android.so`.
@@ -8,10 +9,17 @@ import android.view.Surface
  */
 internal object Core {
     init {
-        System.loadLibrary("rabbitcontrol_android")
+        NativeLibraryLoader.ensureLoaded()
     }
 
-    external fun initRuntime(filesDir: String, deviceName: String, codecsJson: String): String
+    external fun coreInfo(): String
+
+    external fun initRuntime(
+        filesDir: String,
+        deviceName: String,
+        deviceKey: String,
+        codecsJson: String,
+    ): String
     external fun account(requestJson: String): String
     external fun deviceId(raw: String): String?
 

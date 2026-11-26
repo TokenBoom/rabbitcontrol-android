@@ -45,14 +45,18 @@ import androidx.compose.material.icons.rounded.AccessibilityNew
 import androidx.compose.material.icons.rounded.CheckCircleOutline
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.ErrorOutline
+import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.ScreenShare
 import androidx.compose.material.icons.rounded.SystemUpdate
+import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
@@ -95,6 +99,12 @@ import io.rabbitcontrol.android.core.data.TouchInputMode
 import io.rabbitcontrol.android.core.host.HostManager
 import io.rabbitcontrol.android.core.update.AppUpdateManager
 import io.rabbitcontrol.android.core.update.AppUpdateUiState
+import io.rabbitcontrol.android.core.update.CoreCheckStatus
+import io.rabbitcontrol.android.core.update.CoreDownloadState
+import io.rabbitcontrol.android.core.update.CoreIncompatibleNotice
+import io.rabbitcontrol.android.core.update.CoreReleaseCandidate
+import io.rabbitcontrol.android.core.update.CoreUpdateManager
+import io.rabbitcontrol.android.core.update.CoreUpdateUiState
 import io.rabbitcontrol.android.core.update.ReleaseInfo
 import io.rabbitcontrol.android.core.update.UpdateCheckStatus
 import io.rabbitcontrol.android.core.update.UpdateDownloadState
@@ -469,6 +479,9 @@ fun AboutScreen(
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val versionName = remember { getAppVersionName(context) }
+    val coreUpdateManager: CoreUpdateManager = koinInject()
+    val coreState by coreUpdateManager.state.collectAsStateWithLifecycle()
+    var showCoreDialog by remember { mutableStateOf(false) }
 
     fun openUrl(url: String) {
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -543,6 +556,53 @@ fun AboutScreen(
                 ) {
                     AboutInfoRow(label = "当前版本", value = "v$versionName")
                     HorizontalDivider(color = palette.line, thickness = 1.dp)
+                    val loadedCore = coreState.loadedCore
+                    val coreSummary = buildString {
+                        append("v${loadedCore.version} · ")
+                        append(if (loadedCore.isDynamic) "已更新" else "内置")
+                        append(" · ABI v${loadedCore.abiVersion}")
+                        if (loadedCore.pendingRestartVersion != null) {
+                            append(" · 待重启")
+                        }
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .defaultMinSize(minHeight = 50.dp)
+                            .clip(RoundedCornerShape(RabbitRadius.Sm))
+                            .clickable {
+                                showCoreDialog = true
+                                if (!coreState.hasUpdate &&
+                                    coreState.downloadState !is CoreDownloadState.Downloading &&
+                                    coreState.downloadState !is CoreDownloadState.Verifying &&
+                                    coreState.downloadState !is CoreDownloadState.ReadyToRestart
+                                ) {
+                                    coreUpdateManager.checkForUpdate(force = true)
+                                }
+                            }
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("内核版本", fontSize = 14.sp, color = palette.text, modifier = Modifier.weight(1f))
+                        if (coreState.hasUpdate) {
+                            Box(
+                                modifier = Modifier
+                                    .padding(end = 6.dp)
+                                    .size(7.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFFE53935)),
+                            )
+                        }
+                        Text(coreSummary, fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = palette.muted)
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                            contentDescription = null,
+                            tint = palette.muted,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                    HorizontalDivider(color = palette.line, thickness = 1.dp)
                     AboutLinkRow(
                         label = "项目主页",
                         value = "TokenBoom/rabbitcontrol-android",
@@ -573,6 +633,20 @@ fun AboutScreen(
                 )
             }
         }
+    }
+
+    if (showCoreDialog) {
+        CoreUpdateDialog(
+            state = coreState,
+            onRetryCheck = { coreUpdateManager.checkForUpdate(force = true) },
+            onStartDownload = { candidate -> coreUpdateManager.startDownload(candidate) },
+            onCancelDownload = { coreUpdateManager.cancelDownload() },
+            onRevertToBuiltIn = { coreUpdateManager.revertToBuiltIn() },
+            onRestartApp = { coreUpdateManager.restartApp() },
+            onSaveMirrorPrefix = { prefix -> coreUpdateManager.setMirrorPrefix(prefix) },
+            onOpenReleasePage = { url -> openUrl(url) },
+            onDismiss = { showCoreDialog = false },
+        )
     }
 }
 
@@ -998,5 +1072,509 @@ private fun formatUpdateBytes(bytes: Long): String {
     if (kb < 1024.0) return String.format("%.0f KB", kb)
     val mb = kb / 1024.0
     return String.format("%.1f MB", mb)
+}
+
+@Composable
+fun CoreUpdateDialog(
+    state: CoreUpdateUiState,
+    onRetryCheck: () -> Unit,
+    onStartDownload: (CoreReleaseCandidate) -> Unit,
+    onCancelDownload: () -> Unit,
+    onRevertToBuiltIn: () -> Unit,
+    onRestartApp: () -> Unit,
+    onSaveMirrorPrefix: (String) -> Unit,
+    onOpenReleasePage: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val palette = LocalRabbitPalette.current
+    val loaded = state.loadedCore
+    val candidate = state.availableUpdate ?: (state.checkStatus as? CoreCheckStatus.UpdateAvailable)?.candidate
+    val incompat = state.incompatibleNotice
+        ?: (state.checkStatus as? CoreCheckStatus.UpdateAvailable)?.incompatibleNotice
+        ?: (state.checkStatus as? CoreCheckStatus.UpToDate)?.incompatibleNotice
+    var showMirrorEditor by remember { mutableStateOf(false) }
+    var mirrorDraft by remember(state.mirrorPrefix) { mutableStateOf(state.mirrorPrefix) }
+
+    Dialog(
+        onDismissRequest = {
+            if (state.downloadState !is CoreDownloadState.Downloading &&
+                state.downloadState !is CoreDownloadState.Verifying
+            ) {
+                onDismiss()
+            }
+        },
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .widthIn(max = 380.dp),
+            shape = RoundedCornerShape(RabbitRadius.Xl),
+            color = palette.surface,
+            tonalElevation = 0.dp,
+            shadowElevation = RabbitElevation.Floating,
+            border = BorderStroke(1.dp, palette.line),
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp),
+            ) {
+                // Header: current core status
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(palette.primarySoft),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(Icons.Rounded.Memory, null, tint = palette.primaryText, modifier = Modifier.size(18.dp))
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("rabbitcontrol-core 内核", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
+                        Text(
+                            text = "当前 v${loaded.version} (${loaded.coreGitSha}) · ABI v${loaded.abiVersion}",
+                            fontSize = 12.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = palette.muted,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    RabbitStatusPill(
+                        label = if (loaded.isDynamic) "已热更新" else "内置",
+                        tone = if (loaded.isDynamic) StatusTone.Primary else StatusTone.Muted,
+                    )
+                }
+
+                if (!loaded.lastFallbackReason.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(RabbitRadius.Sm))
+                            .background(palette.dangerSoft)
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Icon(Icons.Rounded.WarningAmber, null, tint = palette.danger, modifier = Modifier.size(16.dp))
+                        Text(
+                            text = loaded.lastFallbackReason,
+                            fontSize = 12.sp,
+                            lineHeight = 17.sp,
+                            color = palette.danger,
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                when (val dl = state.downloadState) {
+                    is CoreDownloadState.Downloading -> {
+                        Text(
+                            text = candidate?.let { "正在下载内核 v${it.manifest.coreVersion}" } ?: "正在下载内核",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = palette.text,
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        val progress = if (dl.totalBytes > 0L) {
+                            (dl.downloadedBytes.toFloat() / dl.totalBytes.toFloat()).coerceIn(0f, 1f)
+                        } else {
+                            null
+                        }
+                        if (progress != null) {
+                            LinearProgressIndicator(
+                                progress = { progress },
+                                color = palette.primary,
+                                trackColor = palette.line,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(6.dp)
+                                    .clip(RoundedCornerShape(3.dp)),
+                            )
+                        } else {
+                            LinearProgressIndicator(
+                                color = palette.primary,
+                                trackColor = palette.line,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(6.dp)
+                                    .clip(RoundedCornerShape(3.dp)),
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            val pctStr = progress?.let { "${(it * 100).toInt()}%" } ?: "下载中…"
+                            val sizeStr = if (dl.totalBytes > 0L) {
+                                "${formatUpdateBytes(dl.downloadedBytes)} / ${formatUpdateBytes(dl.totalBytes)}"
+                            } else {
+                                formatUpdateBytes(dl.downloadedBytes)
+                            }
+                            Text("$pctStr · $sizeStr", fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = palette.text)
+                            Text(
+                                if (dl.speedBytesPerSec > 0L) "${formatUpdateBytes(dl.speedBytesPerSec)}/s" else "",
+                                fontSize = 12.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = palette.muted,
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(18.dp))
+                        DialogActionButton(
+                            label = "取消下载",
+                            filled = false,
+                            onClick = onCancelDownload,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+
+                    CoreDownloadState.Verifying -> {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            CircularProgressIndicator(
+                                color = palette.primary,
+                                strokeWidth = 2.5.dp,
+                                modifier = Modifier.size(22.dp),
+                            )
+                            Text("正在校验 SHA-256 与文件完整性…", fontSize = 14.sp, color = palette.muted)
+                        }
+                    }
+
+                    is CoreDownloadState.ReadyToRestart -> {
+                        Text(
+                            text = if (dl.isRevert) "已切换回内置内核" else "新内核已就绪",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = palette.text,
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = if (dl.isRevert) {
+                                "已恢复为安装包内置内核 v${dl.targetVersion}，重启应用后生效。"
+                            } else {
+                                "内核 v${dl.targetVersion} 已通过 ECDSA P-256 签名与 SHA-256 校验，重启应用后立即生效。"
+                            },
+                            fontSize = 13.sp,
+                            lineHeight = 19.sp,
+                            color = palette.muted,
+                        )
+                        Spacer(modifier = Modifier.height(18.dp))
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            DialogActionButton(
+                                label = "下次启动生效",
+                                filled = false,
+                                onClick = onDismiss,
+                                modifier = Modifier.weight(1f),
+                            )
+                            DialogActionButton(
+                                label = "立即重启生效",
+                                filled = true,
+                                onClick = onRestartApp,
+                                modifier = Modifier.weight(1.2f),
+                            )
+                        }
+                    }
+
+                    is CoreDownloadState.Error -> {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Icon(Icons.Rounded.ErrorOutline, null, tint = palette.danger, modifier = Modifier.size(18.dp))
+                            Text("内核更新失败", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(dl.message, fontSize = 13.sp, lineHeight = 19.sp, color = palette.muted)
+                        Spacer(modifier = Modifier.height(18.dp))
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            DialogActionButton(
+                                label = "关闭",
+                                filled = false,
+                                onClick = onDismiss,
+                                modifier = Modifier.weight(1f),
+                            )
+                            DialogActionButton(
+                                label = "重试",
+                                filled = true,
+                                onClick = {
+                                    if (candidate != null) onStartDownload(candidate) else onRetryCheck()
+                                },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+
+                    CoreDownloadState.Idle -> {
+                        when (val check = state.checkStatus) {
+                            CoreCheckStatus.Checking -> {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                ) {
+                                    CircularProgressIndicator(
+                                        color = palette.primary,
+                                        strokeWidth = 2.5.dp,
+                                        modifier = Modifier.size(22.dp),
+                                    )
+                                    Text("正在查询 GitHub 最新内核版本…", fontSize = 14.sp, color = palette.muted)
+                                }
+                                Spacer(modifier = Modifier.height(18.dp))
+                                DialogActionButton(
+                                    label = "关闭",
+                                    filled = false,
+                                    onClick = onDismiss,
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
+
+                            is CoreCheckStatus.UpdateAvailable -> {
+                                val rel = check.candidate
+                                Text(
+                                    text = "发现新内核 v${rel.manifest.coreVersion}",
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = palette.text,
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                val meta = buildString {
+                                    append(rel.artifact.abi)
+                                    append(" · ${formatUpdateBytes(rel.artifact.sizeBytes)}")
+                                    append(" · ${rel.manifest.coreGitSha}")
+                                    if (rel.manifest.publishedAt.isNotBlank()) {
+                                        append(" · ${rel.manifest.publishedAt.take(10)}")
+                                    }
+                                }
+                                Text(meta, fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = palette.muted)
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(min = 64.dp, max = 180.dp)
+                                        .clip(RoundedCornerShape(RabbitRadius.Md))
+                                        .background(palette.field)
+                                        .border(1.dp, palette.line, RoundedCornerShape(RabbitRadius.Md))
+                                        .verticalScroll(rememberScrollState())
+                                        .padding(12.dp),
+                                ) {
+                                    Text(
+                                        text = rel.manifest.releaseNotes,
+                                        fontSize = 13.sp,
+                                        lineHeight = 19.sp,
+                                        color = palette.text,
+                                    )
+                                }
+                                if (incompat != null) {
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                    IncompatibleCoreBanner(notice = incompat, onOpenReleasePage = onOpenReleasePage)
+                                }
+                                Spacer(modifier = Modifier.height(14.dp))
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    DialogActionButton(
+                                        label = "稍后再说",
+                                        filled = false,
+                                        onClick = onDismiss,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    DialogActionButton(
+                                        label = "立即更新内核",
+                                        filled = true,
+                                        onClick = { onStartDownload(rel) },
+                                        modifier = Modifier.weight(1.3f),
+                                    )
+                                }
+                            }
+
+                            is CoreCheckStatus.Error -> {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Icon(Icons.Rounded.ErrorOutline, null, tint = palette.danger, modifier = Modifier.size(18.dp))
+                                    Text("检查内核更新失败", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
+                                }
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(check.message, fontSize = 13.sp, lineHeight = 19.sp, color = palette.muted)
+                                Spacer(modifier = Modifier.height(16.dp))
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    DialogActionButton(
+                                        label = "浏览器查看",
+                                        filled = false,
+                                        onClick = {
+                                            onOpenReleasePage(AppUpdateManager.GITHUB_RELEASES_URL)
+                                            onDismiss()
+                                        },
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    DialogActionButton(
+                                        label = "重试",
+                                        filled = true,
+                                        onClick = onRetryCheck,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                }
+                            }
+
+                            CoreCheckStatus.Idle, is CoreCheckStatus.UpToDate -> {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Icon(Icons.Rounded.CheckCircleOutline, null, tint = palette.success, modifier = Modifier.size(18.dp))
+                                    Text(
+                                        text = if (loaded.pendingRestartVersion != null) {
+                                            "新内核 v${loaded.pendingRestartVersion} 已就绪（待重启）"
+                                        } else {
+                                            "当前内核已是最新兼容版"
+                                        },
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = palette.text,
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = "内置基线 v${loaded.builtInVersion} · 当前已启用 ECDSA P-256 离线签名校验。",
+                                    fontSize = 13.sp,
+                                    lineHeight = 19.sp,
+                                    color = palette.muted,
+                                )
+                                if (incompat != null) {
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                    IncompatibleCoreBanner(notice = incompat, onOpenReleasePage = onOpenReleasePage)
+                                }
+                                Spacer(modifier = Modifier.height(16.dp))
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    if (loaded.pendingRestartVersion != null) {
+                                        DialogActionButton(
+                                            label = "关闭",
+                                            filled = false,
+                                            onClick = onDismiss,
+                                            modifier = Modifier.weight(1f),
+                                        )
+                                        DialogActionButton(
+                                            label = "立即重启生效",
+                                            filled = true,
+                                            onClick = onRestartApp,
+                                            modifier = Modifier.weight(1.2f),
+                                        )
+                                    } else {
+                                        DialogActionButton(
+                                            label = "重新检查",
+                                            filled = false,
+                                            onClick = onRetryCheck,
+                                            modifier = Modifier.weight(1f),
+                                        )
+                                        DialogActionButton(
+                                            label = "知道了",
+                                            filled = true,
+                                            onClick = onDismiss,
+                                            modifier = Modifier.weight(1f),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        if (loaded.isDynamic || loaded.pendingRestartVersion != null) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            DialogActionButton(
+                                label = "恢复内置内核 (v${loaded.builtInVersion})",
+                                filled = false,
+                                onClick = onRevertToBuiltIn,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(RabbitRadius.Sm))
+                                .clickable { showMirrorEditor = !showMirrorEditor }
+                                .padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = if (state.mirrorPrefix.isBlank()) "下载镜像加速（可选）" else "镜像已配置",
+                                fontSize = 12.sp,
+                                color = palette.primaryText,
+                            )
+                            Text(
+                                text = if (showMirrorEditor) "收起" else "设置",
+                                fontSize = 12.sp,
+                                color = palette.muted,
+                            )
+                        }
+
+                        if (showMirrorEditor) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            OutlinedTextField(
+                                value = mirrorDraft,
+                                onValueChange = { mirrorDraft = it },
+                                singleLine = true,
+                                placeholder = { Text("例如 https://ghfast.top/", fontSize = 12.sp) },
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = palette.primary,
+                                    unfocusedBorderColor = palette.line,
+                                    focusedTextColor = palette.text,
+                                    unfocusedTextColor = palette.text,
+                                ),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                DialogActionButton(
+                                    label = "清除直连",
+                                    filled = false,
+                                    onClick = {
+                                        mirrorDraft = ""
+                                        onSaveMirrorPrefix("")
+                                        showMirrorEditor = false
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                )
+                                DialogActionButton(
+                                    label = "保存前缀",
+                                    filled = true,
+                                    onClick = {
+                                        onSaveMirrorPrefix(mirrorDraft)
+                                        showMirrorEditor = false
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun IncompatibleCoreBanner(
+    notice: CoreIncompatibleNotice,
+    onOpenReleasePage: (String) -> Unit,
+) {
+    val palette = LocalRabbitPalette.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(RabbitRadius.Sm))
+            .background(palette.primarySoft)
+            .clickable { onOpenReleasePage(notice.htmlUrl) }
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(Icons.Rounded.SystemUpdate, null, tint = palette.primaryText, modifier = Modifier.size(16.dp))
+        Text(
+            text = "另有更新内核 v${notice.coreVersion}（ABI v${notice.requiredAbiVersion}），需升级 App 至 v${notice.minAppVersion}+ 后可用",
+            fontSize = 12.sp,
+            lineHeight = 17.sp,
+            color = palette.primaryText,
+            modifier = Modifier.weight(1f),
+        )
+    }
 }
 

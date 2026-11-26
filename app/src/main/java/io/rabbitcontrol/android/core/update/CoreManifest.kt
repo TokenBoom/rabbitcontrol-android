@@ -1,0 +1,94 @@
+package io.rabbitcontrol.android.core.update
+
+import org.json.JSONObject
+
+data class CoreAbiArtifact(
+    val abi: String,
+    val fileName: String,
+    val sha256: String,
+    val sizeBytes: Long,
+)
+
+data class CoreManifest(
+    val schemaVersion: Int,
+    val coreVersion: String,
+    val tagName: String,
+    val coreGitSha: String,
+    val abiVersion: Int,
+    val minAppVersion: String,
+    val publishedAt: String,
+    val releaseNotes: String,
+    val abis: Map<String, CoreAbiArtifact>,
+) {
+    companion object {
+        private val SHA256_REGEX = Regex("^[0-9a-f]{64}$")
+
+        fun parse(rawJson: String): CoreManifest {
+            val obj = JSONObject(rawJson)
+            val schemaVersion = obj.optInt("schemaVersion", 1)
+            require(schemaVersion == 1) { "不支持的清单格式版本: $schemaVersion" }
+
+            val coreVersion = obj.optString("coreVersion", "").trim()
+                .removePrefix("v")
+                .removePrefix("V")
+            require(coreVersion.isNotBlank() && isSafeSegment(coreVersion)) { "无效的内核版本号" }
+
+            val tagName = obj.optString("tagName", "core-v$coreVersion").trim()
+                .ifBlank { "core-v$coreVersion" }
+            val coreGitSha = obj.optString("coreGitSha", "unknown").trim().ifBlank { "unknown" }
+            val abiVersion = obj.optInt("abiVersion", 0)
+            require(abiVersion > 0) { "无效的 ABI 版本: $abiVersion" }
+
+            val minAppVersion = obj.optString("minAppVersion", "0.2.0").trim().ifBlank { "0.2.0" }
+            val publishedAt = obj.optString("publishedAt", "").trim()
+            val releaseNotes = cleanReleaseNotes(obj.optString("releaseNotes", ""))
+
+            val abisObj = obj.optJSONObject("abis")
+                ?: throw IllegalArgumentException("清单缺少 abis 字段")
+            val abis = LinkedHashMap<String, CoreAbiArtifact>()
+            val keys = abisObj.keys()
+            while (keys.hasNext()) {
+                val abi = keys.next().trim()
+                val item = abisObj.optJSONObject(abi) ?: continue
+                val fileName = item.optString("fileName", "").trim()
+                val sha256 = item.optString("sha256", "").trim().lowercase()
+                val sizeBytes = item.optLong("sizeBytes", 0L)
+                require(abi.isNotBlank()) { "ABI 名称为空" }
+                require(isSafeSingleFileName(fileName)) { "非法文件名: $fileName" }
+                require(SHA256_REGEX.matches(sha256)) { "非法 SHA-256 摘要: $sha256" }
+                require(sizeBytes > 0L) { "非法文件大小: $sizeBytes" }
+                abis[abi] = CoreAbiArtifact(
+                    abi = abi,
+                    fileName = fileName,
+                    sha256 = sha256,
+                    sizeBytes = sizeBytes,
+                )
+            }
+            require(abis.isNotEmpty()) { "清单未包含任何可用架构产物" }
+
+            return CoreManifest(
+                schemaVersion = schemaVersion,
+                coreVersion = coreVersion,
+                tagName = tagName,
+                coreGitSha = coreGitSha,
+                abiVersion = abiVersion,
+                minAppVersion = minAppVersion,
+                publishedAt = publishedAt,
+                releaseNotes = releaseNotes,
+                abis = abis,
+            )
+        }
+
+        internal fun isSafeSingleFileName(name: String): Boolean {
+            if (name.isBlank() || name == "." || name == "..") return false
+            if (name.contains('/') || name.contains('\\') || name.contains("..")) return false
+            return name.all { it.isLetterOrDigit() || it == '.' || it == '_' || it == '-' }
+        }
+
+        internal fun isSafeSegment(value: String): Boolean {
+            if (value.isBlank() || value == "." || value == "..") return false
+            if (value.contains('/') || value.contains('\\') || value.contains("..")) return false
+            return value.all { it.isLetterOrDigit() || it == '.' || it == '_' || it == '-' }
+        }
+    }
+}

@@ -42,10 +42,16 @@ internal object NativeRuntimeBootstrap {
 
     private fun doInit(appContext: Context) {
         try {
+            NativeLibraryLoader.bindApplication(appContext)
+            val rawInfo = runCatching { Core.coreInfo() }.getOrNull()
             val deviceName = Build.MODEL?.takeIf { it.isNotBlank() } ?: "Android"
+            val deviceKey = DeviceKeyProvider.resolveStableDeviceKey(appContext).orEmpty()
             val codecsJson = HardwareCodecProbe.probeAvcDecodersJson()
-            Core.initRuntime(appContext.filesDir.absolutePath, deviceName, codecsJson)
+            Core.initRuntime(appContext.filesDir.absolutePath, deviceName, deviceKey, codecsJson)
+            NativeLibraryLoader.onRuntimeVerified(rawInfo)
+            Log.i("RC_DIAG", "initRuntime ok: stableKey=${deviceKey.isNotEmpty()}")
         } catch (err: Throwable) {
+            NativeLibraryLoader.onRuntimeInitFailed(err)
             Log.e("RC_DIAG", "initRuntime FAILED", err)
         } finally {
             ready = true

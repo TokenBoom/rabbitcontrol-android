@@ -15,4 +15,8 @@ run-server.sh
 *.jks
 *.keystore
 keystore.properties
+core-signing-private.pem
+*.key.pem
+core-signing.properties
 run-server.sh
+rabbitcontrol-release.txt

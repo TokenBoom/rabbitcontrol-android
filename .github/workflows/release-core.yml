@@ -1,0 +1,214 @@
+name: Release Core Native Runtime
+
+on:
+  push:
+    tags:
+      - "core-v*"
+  workflow_dispatch:
+    inputs:
+      core_ref:
+        description: "rabbitcontrol-core branch, tag, or SHA (e.g. v0.1.19 or main)"
+        required: true
+        default: "main"
+      core_version:
+        description: "Semantic core version override (e.g. 0.1.19; auto-detected from core_ref if empty)"
+        required: false
+        default: ""
+      abi_version:
+        description: "Android JNI/JSON ABI version"
+        required: false
+        default: "1"
+      min_app_version:
+        description: "Minimum compatible Android app version"
+        required: false
+        default: "0.2.0"
+      release_notes:
+        description: "Release notes for this core update"
+        required: false
+        default: ""
+  repository_dispatch:
+    types: [rabbitcontrol-core-release]
+
+permissions:
+  contents: write
+
+jobs:
+  release-core:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout rabbitcontrol-android
+        uses: actions/checkout@v4
+
+      - name: Resolve release parameters
+        id: meta
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            CORE_REF="${{ inputs.core_ref }}"
+            CORE_VER="${{ inputs.core_version }}"
+            ABI_VER="${{ inputs.abi_version }}"
+            MIN_APP="${{ inputs.min_app_version }}"
+            NOTES="${{ inputs.release_notes }}"
+          elif [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
+            CORE_REF="${{ github.event.client_payload.core_ref }}"
+            CORE_VER="${{ github.event.client_payload.core_version }}"
+            ABI_VER="${{ github.event.client_payload.abi_version }}"
+            MIN_APP="${{ github.event.client_payload.min_app_version }}"
+            NOTES="${{ github.event.client_payload.release_notes }}"
+          else
+            TAG_VER="${GITHUB_REF_NAME#core-v}"
+            CORE_REF="v${TAG_VER%%-*}"
+            CORE_VER="$TAG_VER"
+            ABI_VER="1"
+            MIN_APP="0.2.0"
+            NOTES=""
+          fi
+
+          CORE_REF="${CORE_REF:-main}"
+          ABI_VER="${ABI_VER:-1}"
+          MIN_APP="${MIN_APP:-0.2.0}"
+
+          {
+            echo "core_ref=$CORE_REF"
+            echo "core_version=$CORE_VER"
+            echo "abi_version=$ABI_VER"
+            echo "min_app_version=$MIN_APP"
+          } >> "$GITHUB_OUTPUT"
+
+          printf '%s' "$NOTES" > "${{ runner.temp }}/release_notes.txt"
+
+      - name: Checkout rabbitcontrol-core
+        uses: actions/checkout@v4
+        with:
+          repository: TokenBoom/rabbitcontrol-core
+          fetch-depth: 0
+          path: rabbitcontrol-core
+
+      - name: Switch rabbitcontrol-core to resolved ref
+        id: core_git
+        shell: bash
+        run: |
+          cd rabbitcontrol-core
+          TARGET_REF="${{ steps.meta.outputs.core_ref }}"
+          if git rev-parse --verify --quiet "refs/tags/$TARGET_REF" >/dev/null || \
+             git rev-parse --verify --quiet "refs/remotes/origin/$TARGET_REF" >/dev/null || \
+             git rev-parse --verify --quiet "$TARGET_REF^{commit}" >/dev/null; then
+            git checkout "$TARGET_REF"
+          else
+            echo "Ref '$TARGET_REF' not found in rabbitcontrol-core, falling back to main"
+            git checkout main
+          fi
+
+          SHA="$(git rev-parse --short HEAD)"
+          VER="${{ steps.meta.outputs.core_version }}"
+          if [[ -z "$VER" ]]; then
+            RAW_TAG="$(git describe --tags --abbrev=0 2>/dev/null || echo '0.1.0')"
+            VER="${RAW_TAG#v}"
+            VER="${VER#V}"
+          fi
+          VER="${VER#v}"
+          VER="${VER#V}"
+
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            RELEASE_TAG="$GITHUB_REF_NAME"
+          else
+            RELEASE_TAG="core-v${VER}"
+          fi
+
+          echo "core_git_sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "core_version=$VER" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --version 4.1.2 --locked
+
+      - name: Install Android NDK
+        run: |
+          SDKMANAGER=$(ls -d "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager | head -n 1)
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" "ndk;28.2.13676358"
+
+      - name: Run Rust unit tests
+        env:
+          RC_CORE_VERSION: ${{ steps.core_git.outputs.core_version }}
+          RC_CORE_GIT_SHA: ${{ steps.core_git.outputs.core_git_sha }}
+          RC_CORE_ABI_VERSION: ${{ steps.meta.outputs.abi_version }}
+        run: cargo test --locked --manifest-path native/Cargo.toml
+
+      - name: Build arm64-v8a release .so
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
+          RC_CORE_VERSION: ${{ steps.core_git.outputs.core_version }}
+          RC_CORE_GIT_SHA: ${{ steps.core_git.outputs.core_git_sha }}
+          RC_CORE_ABI_VERSION: ${{ steps.meta.outputs.abi_version }}
+        run: |
+          export RC_CORE_BUILT_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          mkdir -p build-jni
+          cargo ndk --manifest-path native/Cargo.toml -t arm64-v8a --platform 29 -o build-jni build --locked --release
+
+      - name: Verify 16 KB ELF alignment
+        run: |
+          READELF="$ANDROID_HOME/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          SO_FILE="build-jni/arm64-v8a/librabbitcontrol_android.so"
+          "$READELF" -l "$SO_FILE"
+          "$READELF" -l "$SO_FILE" | awk '
+            /LOAD/ {
+              align = $NF
+              if (align != "0x4000" && align != "0x10000") {
+                print "Unexpected LOAD segment alignment:", align > "/dev/stderr"
+                exit 1
+              }
+            }'
+
+      - name: Build and sign core-manifest.json
+        env:
+          CORE_SIGNING_PRIVATE_KEY_PEM: ${{ secrets.CORE_SIGNING_PRIVATE_KEY_PEM }}
+        run: |
+          if [[ -z "$CORE_SIGNING_PRIVATE_KEY_PEM" ]]; then
+            echo "Secret CORE_SIGNING_PRIVATE_KEY_PEM is required" >&2
+            exit 1
+          fi
+          KEY_FILE="${{ runner.temp }}/core-signing-private.pem"
+          printf '%s\n' "$CORE_SIGNING_PRIVATE_KEY_PEM" > "$KEY_FILE"
+          chmod 600 "$KEY_FILE"
+
+          chmod +x scripts/build-core-manifest.sh
+          ./scripts/build-core-manifest.sh \
+            --core-version "${{ steps.core_git.outputs.core_version }}" \
+            --tag-name "${{ steps.core_git.outputs.release_tag }}" \
+            --core-git-sha "${{ steps.core_git.outputs.core_git_sha }}" \
+            --abi-version "${{ steps.meta.outputs.abi_version }}" \
+            --min-app-version "${{ steps.meta.outputs.min_app_version }}" \
+            --so-path "build-jni/arm64-v8a/librabbitcontrol_android.so" \
+            --abi "arm64-v8a" \
+            --release-notes-file "${{ runner.temp }}/release_notes.txt" \
+            --out-dir "core-release-assets" \
+            --private-key-file "$KEY_FILE"
+
+      - name: Clean up signing key
+        if: always()
+        run: rm -f "${{ runner.temp }}/core-signing-private.pem"
+
+      - name: Publish Core GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.core_git.outputs.release_tag }}
+          name: "Core v${{ steps.core_git.outputs.core_version }}"
+          make_latest: "false"
+          generate_release_notes: true
+          files: |
+            core-release-assets/librabbitcontrol_android-arm64-v8a.so
+            core-release-assets/core-manifest.json
+            core-release-assets/core-manifest.json.sig
+            core-release-assets/SHA256SUMS.txt

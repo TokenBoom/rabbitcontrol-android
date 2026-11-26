@@ -2,6 +2,7 @@ package io.rabbitcontrol.android.ui.screens.detail
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import io.rabbitcontrol.android.core.data.AccountRepository
 import io.rabbitcontrol.android.core.data.DeviceToolKind
 import io.rabbitcontrol.android.core.data.TargetHistoryStore
 import io.rabbitcontrol.android.core.data.ToolOrderStore
@@ -18,6 +19,7 @@ class DeviceDetailViewModel(
     private val toolOrderStore: ToolOrderStore,
     val wallpaperCache: WallpaperCache,
     private val sessionManager: SessionManager,
+    private val accountRepository: AccountRepository,
 ) : ViewModel() {
 
     val toolOrder: StateFlow<List<DeviceToolKind>> = toolOrderStore.order
@@ -27,6 +29,9 @@ class DeviceDetailViewModel(
 
     private val _connecting = MutableStateFlow(false)
     val connecting: StateFlow<Boolean> = _connecting.asStateFlow()
+
+    private val _removing = MutableStateFlow(false)
+    val removing: StateFlow<Boolean> = _removing.asStateFlow()
 
     private val _connectError = MutableStateFlow<String?>(null)
     val connectError: StateFlow<String?> = _connectError.asStateFlow()
@@ -71,6 +76,23 @@ class DeviceDetailViewModel(
             _connecting.value = false
             res.onSuccess { onReady() }
                 .onFailure { err -> _connectError.value = err.message ?: "连接失败" }
+        }
+    }
+
+    fun removeDevice(deviceId: String, onRemoved: () -> Unit) {
+        if (_removing.value) return
+        _removing.value = true
+        _connectError.value = null
+        viewModelScope.launch {
+            runCatching { accountRepository.removeDevice(deviceId) }
+                .onSuccess {
+                    _removing.value = false
+                    onRemoved()
+                }
+                .onFailure { err ->
+                    _removing.value = false
+                    _connectError.value = err.message ?: "解绑失败"
+                }
         }
     }
 }

@@ -17,6 +17,32 @@ mod ndk_media;
 mod platform_android;
 mod runtime;
 
+pub const CORE_ABI_VERSION: u32 = 1;
+
+pub fn core_info_json() -> Value {
+    let abi_version = option_env!("RC_CORE_ABI_VERSION")
+        .and_then(|raw| raw.trim().parse::<u32>().ok())
+        .filter(|&v| v > 0)
+        .unwrap_or(CORE_ABI_VERSION);
+    let core_version = option_env!("RC_CORE_VERSION")
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("0.1.0");
+    let core_git_sha = option_env!("RC_CORE_GIT_SHA")
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("unknown");
+    let built_at = option_env!("RC_CORE_BUILT_AT")
+        .map(str::trim)
+        .unwrap_or("");
+    json!({
+        "coreVersion": core_version,
+        "abiVersion": abi_version,
+        "coreGitSha": core_git_sha,
+        "builtAt": built_at,
+    })
+}
+
 fn throw_illegal_state(env: &mut JNIEnv, msg: &str) {
     let _ = env.throw_new("java/lang/IllegalStateException", msg);
 }
@@ -31,11 +57,20 @@ fn string_to_jstr(env: &mut JNIEnv, s: &str) -> jstring {
 }
 
 #[no_mangle]
+pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_coreInfo(
+    mut env: JNIEnv,
+    _: JObject,
+) -> jstring {
+    string_to_jstr(&mut env, &core_info_json().to_string())
+}
+
+#[no_mangle]
 pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_initRuntime(
     mut env: JNIEnv,
     _: JObject,
     files_dir: JString,
     device_name: JString,
+    device_key: JString,
     codecs_json: JString,
 ) -> jstring {
     let Some(dir) = jstr_to_string(&mut env, &files_dir) else {
@@ -43,11 +78,12 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_initRuntime(
         return ptr::null_mut();
     };
     let name = jstr_to_string(&mut env, &device_name).unwrap_or_else(|| "Android".to_string());
+    let stable_device_key = jstr_to_string(&mut env, &device_key);
     let codecs_raw = jstr_to_string(&mut env, &codecs_json).unwrap_or_else(|| "[]".to_string());
     let codecs: Vec<ndk_media::CodecCandidate> =
         serde_json::from_str(&codecs_raw).unwrap_or_default();
 
-    match runtime::init_runtime(PathBuf::from(dir), name, codecs) {
+    match runtime::init_runtime(PathBuf::from(dir), name, stable_device_key, codecs) {
         Ok(rt) => string_to_jstr(
             &mut env,
             &json!({
@@ -502,5 +538,13 @@ mod tests {
         assert!(input(0, -1, 0).is_none());
         assert!(input(1, 5, 1).is_none());
         assert!(input(1, 1, 2).is_none());
+    }
+
+    #[test]
+    fn core_info_json_exposes_abi_and_version() {
+        let info = core_info_json();
+        assert_eq!(info["abiVersion"].as_u64(), Some(u64::from(CORE_ABI_VERSION)));
+        assert!(!info["coreVersion"].as_str().unwrap_or_default().is_empty());
+        assert!(!info["coreGitSha"].as_str().unwrap_or_default().is_empty());
     }
 }

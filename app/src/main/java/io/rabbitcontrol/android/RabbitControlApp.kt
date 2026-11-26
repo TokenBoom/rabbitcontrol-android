@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.Application
 import android.os.Bundle
 import io.rabbitcontrol.android.core.data.AccountRepository
+import io.rabbitcontrol.android.core.nativebridge.NativeLibraryLoader
 import io.rabbitcontrol.android.core.nativebridge.NativeRuntimeBootstrap
 import io.rabbitcontrol.android.di.dataModule
 import io.rabbitcontrol.android.di.sessionModule
@@ -15,6 +16,7 @@ import org.koin.core.context.startKoin
 class RabbitControlApp : Application() {
     override fun onCreate() {
         super.onCreate()
+        NativeLibraryLoader.bindApplication(this)
         // Kick off hardware decoder probing & Rust runtime initialization off the UI thread
         NativeRuntimeBootstrap.startAsync(this)
 

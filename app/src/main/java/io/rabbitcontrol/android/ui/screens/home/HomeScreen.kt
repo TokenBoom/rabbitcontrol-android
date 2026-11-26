@@ -47,6 +47,7 @@ import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.LaptopMac
+import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PhoneAndroid
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -110,6 +111,9 @@ import io.rabbitcontrol.android.core.nativebridge.RemoteDevice
 import io.rabbitcontrol.android.core.session.SessionStatus
 import io.rabbitcontrol.android.core.update.AppUpdateManager
 import io.rabbitcontrol.android.core.update.AppUpdateUiState
+import io.rabbitcontrol.android.core.update.CoreDownloadState
+import io.rabbitcontrol.android.core.update.CoreUpdateManager
+import io.rabbitcontrol.android.core.update.CoreUpdateUiState
 import io.rabbitcontrol.android.core.update.UpdateDownloadState
 import io.rabbitcontrol.android.ui.components.RabbitCard
 import io.rabbitcontrol.android.ui.components.RabbitDialog
@@ -124,6 +128,7 @@ import io.rabbitcontrol.android.ui.components.RabbitToast
 import io.rabbitcontrol.android.ui.components.StatusTone
 import io.rabbitcontrol.android.ui.screens.auth.AuthStep
 import io.rabbitcontrol.android.ui.screens.settings.AppUpdateDialog
+import io.rabbitcontrol.android.ui.screens.settings.CoreUpdateDialog
 import io.rabbitcontrol.android.ui.screens.settings.getAppVersionName
 import io.rabbitcontrol.android.ui.theme.LocalRabbitPalette
 import io.rabbitcontrol.android.ui.theme.RabbitElevation
@@ -158,9 +163,12 @@ fun HomeScreen(
 
     val updateManager: AppUpdateManager = koinInject()
     val updateState by updateManager.state.collectAsStateWithLifecycle()
+    val coreUpdateManager: CoreUpdateManager = koinInject()
+    val coreUpdateState by coreUpdateManager.state.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) {
         updateManager.checkForUpdate(force = false)
+        coreUpdateManager.checkForUpdate(force = false)
     }
 
     LaunchedEffect(profile?.id, profile?.needsPassword) {
@@ -222,7 +230,7 @@ fun HomeScreen(
                             icon = {
                                 Box {
                                     Icon(icon, contentDescription = tab.label)
-                                    if (tab == HomeTab.Me && updateState.hasUpdate) {
+                                    if (tab == HomeTab.Me && (updateState.hasUpdate || coreUpdateState.hasUpdate)) {
                                         Box(
                                             modifier = Modifier
                                                 .align(Alignment.TopEnd)
@@ -268,6 +276,8 @@ fun HomeScreen(
                     viewModel = viewModel,
                     updateManager = updateManager,
                     updateState = updateState,
+                    coreUpdateManager = coreUpdateManager,
+                    coreUpdateState = coreUpdateState,
                     onOpenAuth = onOpenAuth,
                     onOpenPreviewCheck = onOpenPreviewCheck,
                     onOpenProfileRoute = onOpenProfileRoute,
@@ -1145,6 +1155,8 @@ private fun ProfileTab(
     viewModel: HomeViewModel,
     updateManager: AppUpdateManager,
     updateState: AppUpdateUiState,
+    coreUpdateManager: CoreUpdateManager,
+    coreUpdateState: CoreUpdateUiState,
     onOpenAuth: (AuthStep, Boolean) -> Unit,
     onOpenPreviewCheck: () -> Unit,
     onOpenProfileRoute: (String) -> Unit,
@@ -1162,6 +1174,7 @@ private fun ProfileTab(
 
     var showThemeSheet by remember { mutableStateOf(false) }
     var showVersionDialog by remember { mutableStateOf(false) }
+    var showCoreDialog by remember { mutableStateOf(false) }
     var showLogoutConfirm by remember { mutableStateOf(false) }
 
     Column(
@@ -1339,6 +1352,57 @@ private fun ProfileTab(
                 },
             )
             HorizontalDivider(color = palette.line, thickness = 1.dp)
+            val newCoreVer = coreUpdateState.availableUpdate?.manifest?.coreVersion
+            val loadedCore = coreUpdateState.loadedCore
+            ProfileMenuRow(
+                icon = Icons.Rounded.Memory,
+                title = "内核更新",
+                trailingText = if (newCoreVer == null && loadedCore.pendingRestartVersion == null) {
+                    "v${loadedCore.version} · ${if (loadedCore.isDynamic) "已更新" else "内置"}"
+                } else {
+                    null
+                },
+                trailingContent = if (newCoreVer != null || loadedCore.pendingRestartVersion != null) {
+                    {
+                        val isPending = loadedCore.pendingRestartVersion != null
+                        Row(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(RabbitRadius.Pill))
+                                .background(if (isPending) palette.primarySoft else palette.dangerSoft)
+                                .padding(horizontal = 8.dp, vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp),
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(6.dp)
+                                    .clip(CircleShape)
+                                    .background(if (isPending) palette.primary else Color(0xFFE53935)),
+                            )
+                            Text(
+                                text = if (isPending) "待重启生效" else "新内核 v$newCoreVer",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (isPending) palette.primaryText else palette.danger,
+                                maxLines = 1,
+                            )
+                        }
+                    }
+                } else {
+                    null
+                },
+                onClick = {
+                    showCoreDialog = true
+                    if (!coreUpdateState.hasUpdate &&
+                        coreUpdateState.downloadState !is CoreDownloadState.Downloading &&
+                        coreUpdateState.downloadState !is CoreDownloadState.Verifying &&
+                        coreUpdateState.downloadState !is CoreDownloadState.ReadyToRestart
+                    ) {
+                        coreUpdateManager.checkForUpdate(force = true)
+                    }
+                },
+            )
+            HorizontalDivider(color = palette.line, thickness = 1.dp)
             ProfileMenuRow(
                 icon = Icons.Rounded.Info,
                 title = "关于我们",
@@ -1437,6 +1501,23 @@ private fun ProfileTab(
                 runCatching { context.startActivity(intent) }
             },
             onDismiss = { showVersionDialog = false },
+        )
+    }
+
+    if (showCoreDialog) {
+        CoreUpdateDialog(
+            state = coreUpdateState,
+            onRetryCheck = { coreUpdateManager.checkForUpdate(force = true) },
+            onStartDownload = { candidate -> coreUpdateManager.startDownload(candidate) },
+            onCancelDownload = { coreUpdateManager.cancelDownload() },
+            onRevertToBuiltIn = { coreUpdateManager.revertToBuiltIn() },
+            onRestartApp = { coreUpdateManager.restartApp() },
+            onSaveMirrorPrefix = { prefix -> coreUpdateManager.setMirrorPrefix(prefix) },
+            onOpenReleasePage = { url ->
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                runCatching { context.startActivity(intent) }
+            },
+            onDismiss = { showCoreDialog = false },
         )
     }
 

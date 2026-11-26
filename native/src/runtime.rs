@@ -94,6 +94,7 @@ enum SignalUiEvent {
 
 pub struct AndroidRuntime {
     device_name: Mutex<String>,
+    device_key: String,
     auth_path: PathBuf,
     pub auth: AuthSessionManager,
     cert_mgr: Arc<CertManager>,
@@ -117,9 +118,25 @@ pub fn global_runtime() -> Option<Arc<AndroidRuntime>> {
     RUNTIME.get().cloned()
 }
 
+fn resolve_device_key(provided: Option<&str>, fallback_pubkey: &str) -> String {
+    if let Some(raw) = provided {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty()
+            && trimmed.len() <= 128
+            && trimmed
+                .chars()
+                .all(|c| !c.is_control() && !c.is_whitespace())
+        {
+            return trimmed.to_string();
+        }
+    }
+    fallback_pubkey.to_string()
+}
+
 pub fn init_runtime(
     files_dir: PathBuf,
     device_name: String,
+    stable_device_key: Option<String>,
     codecs: Vec<CodecCandidate>,
 ) -> Result<Arc<AndroidRuntime>, String> {
     register_android_hooks();
@@ -132,6 +149,10 @@ pub fn init_runtime(
 
     let certs_dir = files_dir.join("certs");
     let cert_mgr = Arc::new(CertManager::load_or_init(certs_dir)?);
+    let device_key = resolve_device_key(
+        stable_device_key.as_deref(),
+        &cert_mgr.device_pubkey_hex(),
+    );
     let auth_path = files_dir.join("auth.json");
     let auth = AuthSessionManager::new(ServerConfig::default(), auth_path.clone(), Arc::clone(&cert_mgr));
     let instance_id = SystemTime::now()
@@ -142,6 +163,7 @@ pub fn init_runtime(
 
     let rt = Arc::new(AndroidRuntime {
         device_name: Mutex::new(device_name),
+        device_key,
         auth_path,
         auth,
         cert_mgr,
@@ -175,9 +197,9 @@ impl AndroidRuntime {
             .clone()
     }
 
-    /// Stable 64-char hex device key derived deterministically from this device's Ed25519 pubkey.
+    /// Stable device key (anchored to Android SSAID when provided, falling back to device Ed25519 pubkey).
     pub fn device_key(&self) -> String {
-        self.cert_mgr.device_pubkey_hex()
+        self.device_key.clone()
     }
 
     /// Persists an externally obtained/restored session to `auth.json` and updates in-memory state
@@ -1108,6 +1130,23 @@ mod tests {
     use rc_client_core::auth_client::load_auth_session;
 
     #[test]
+    fn resolve_device_key_prefers_valid_override_and_falls_back_on_invalid() {
+        let fallback = "fallback_pubkey_hex";
+        assert_eq!(resolve_device_key(None, fallback), fallback);
+        assert_eq!(resolve_device_key(Some(""), fallback), fallback);
+        assert_eq!(resolve_device_key(Some("   \t\n"), fallback), fallback);
+        assert_eq!(resolve_device_key(Some("bad key"), fallback), fallback);
+        assert_eq!(resolve_device_key(Some("bad\nkey"), fallback), fallback);
+        assert_eq!(resolve_device_key(Some(&"a".repeat(129)), fallback), fallback);
+        let valid = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        assert_eq!(resolve_device_key(Some(valid), fallback), valid);
+        assert_eq!(
+            resolve_device_key(Some(&format!("  {valid}  ")), fallback),
+            valid
+        );
+    }
+
+    #[test]
     fn close_active_session_only_preserves_epoch() {
         let temp_dir = std::env::temp_dir().join(format!(
             "rc-runtime-epoch-test-{}",
@@ -1117,8 +1156,13 @@ mod tests {
                 .unwrap_or(0)
         ));
         let _ = std::fs::create_dir_all(&temp_dir);
-        let rt = init_runtime(temp_dir.clone(), "test-android".to_string(), Vec::new())
-            .expect("init_runtime");
+        let rt = init_runtime(
+            temp_dir.clone(),
+            "test-android".to_string(),
+            None,
+            Vec::new(),
+        )
+        .expect("init_runtime");
         let my_epoch = rt.session_epoch.fetch_add(1, Ordering::AcqRel) + 1;
         rt.close_active_session_only(false);
         assert_eq!(rt.session_epoch.load(Ordering::Acquire), my_epoch);
@@ -1140,6 +1184,7 @@ mod tests {
         let certs_dir = temp_dir.join("certs");
         let auth_path = temp_dir.join("auth.json");
         let cert_mgr = Arc::new(CertManager::load_or_init(certs_dir).expect("cert_mgr"));
+        let device_key = cert_mgr.device_pubkey_hex();
         let auth = AuthSessionManager::new(
             ServerConfig::default(),
             auth_path.clone(),
@@ -1147,6 +1192,7 @@ mod tests {
         );
         let rt = AndroidRuntime {
             device_name: Mutex::new("test-android".to_string()),
+            device_key,
             auth_path: auth_path.clone(),
             auth,
             cert_mgr,

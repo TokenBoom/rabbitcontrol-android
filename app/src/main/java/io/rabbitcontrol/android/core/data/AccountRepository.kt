@@ -75,6 +75,7 @@ class AccountRepository(context: Context) {
     init {
         migrateLegacyIfNeeded()
         val loaded = loadServers()
+        migrateDeviceKeySchemaIfNeeded(loaded)
         _servers.value = loaded
         _server.value = loadActiveServer(loaded)
         _savedAccountEmails.value = loadSavedEmails(loaded)
@@ -117,8 +118,20 @@ class AccountRepository(context: Context) {
                                 _signalStatus.value = snap
                             }
                             val active = _server.value
-                            if (!snap.deviceId.isNullOrBlank() && snap.deviceId != prev.deviceId && active != null) {
-                                prefs.edit().putString(deviceIdKey(active), snap.deviceId).apply()
+                            if (!snap.deviceId.isNullOrBlank() && active != null) {
+                                if (snap.deviceId != prev.deviceId) {
+                                    prefs.edit().putString(deviceIdKey(active), snap.deviceId).apply()
+                                    _devices.value = _devices.value.filterNot { it.id == snap.deviceId }
+                                }
+                                val legacyId = prefs.getString(legacyDeviceIdKey(active), null)
+                                if (!legacyId.isNullOrBlank()) {
+                                    prefs.edit().remove(legacyDeviceIdKey(active)).apply()
+                                    if (legacyId != snap.deviceId) {
+                                        scope.launch {
+                                            runCatching { removeDevice(legacyId) }
+                                        }
+                                    }
+                                }
                             }
                         }
                         val rotatedTokens = raw.optJSONObject("sessionTokens")
@@ -182,7 +195,22 @@ class AccountRepository(context: Context) {
 
     private fun tokenKey(s: ServerConfigModel) = "tokens_${storageSuffix(s.id)}"
     private fun deviceIdKey(s: ServerConfigModel) = "self_device_id_${storageSuffix(s.id)}"
+    private fun legacyDeviceIdKey(s: ServerConfigModel) = "legacy_self_device_id_${storageSuffix(s.id)}"
     private fun emailKey(s: ServerConfigModel) = "email_${storageSuffix(s.id)}"
+
+    private fun migrateDeviceKeySchemaIfNeeded(servers: List<ServerConfigModel>) {
+        if (prefs.getInt(KEY_DEVICE_KEY_SCHEMA, 0) >= DEVICE_KEY_SCHEMA_STABLE_ANDROID_ID) return
+        val editor = prefs.edit()
+        for (srv in servers) {
+            val prevId = prefs.getString(deviceIdKey(srv), null)
+            if (!prevId.isNullOrBlank()) {
+                editor.putString(legacyDeviceIdKey(srv), prevId)
+                editor.remove(deviceIdKey(srv))
+            }
+        }
+        editor.putInt(KEY_DEVICE_KEY_SCHEMA, DEVICE_KEY_SCHEMA_STABLE_ANDROID_ID)
+        editor.commit()
+    }
 
     private fun ServerConfigModel.toJson(): JSONObject = JSONObject()
         .put("address", address)
@@ -407,6 +435,7 @@ class AccountRepository(context: Context) {
                     prefs.edit()
                         .remove(tokenKey(prev))
                         .remove(deviceIdKey(prev))
+                        .remove(legacyDeviceIdKey(prev))
                         .remove(emailKey(prev))
                         .apply()
                 }
@@ -470,6 +499,7 @@ class AccountRepository(context: Context) {
         prefs.edit()
             .remove(tokenKey(target))
             .remove(deviceIdKey(target))
+            .remove(legacyDeviceIdKey(target))
             .remove(emailKey(target))
             .commit()
         val remaining = _servers.value.filterNot { it.id == target.id }
@@ -539,7 +569,8 @@ class AccountRepository(context: Context) {
             request("devices", selected, "access" to it.getString("access_token"))
         }.getJSONArray("devices")
         android.util.Log.i("RC_DIAG", "refreshDevices got ${raw.length()} items")
-        val selfId = prefs.getString(deviceIdKey(selected), null)
+        val selfId = _signalStatus.value.deviceId?.takeIf { it.isNotBlank() }
+            ?: prefs.getString(deviceIdKey(selected), null)
         val list = List(raw.length()) { index ->
             val item = raw.getJSONObject(index)
             val id = item.getString("device_id")
@@ -555,6 +586,19 @@ class AccountRepository(context: Context) {
         }.filter { it.id != selfId }
         _devices.value = list
         list
+    }
+
+    suspend fun removeDevice(deviceId: String): Unit = withContext(Dispatchers.IO) {
+        val selected = checkNotNull(_server.value) { "请先配置服务器" }
+        authenticated {
+            request(
+                "remove_device",
+                selected,
+                "access" to it.getString("access_token"),
+                "targetDeviceId" to deviceId,
+            )
+        }
+        _devices.value = _devices.value.filterNot { it.id == deviceId }
     }
 
     suspend fun changePassword(current: String, replacement: String): UserProfile = withContext(Dispatchers.IO) {
@@ -597,6 +641,7 @@ class AccountRepository(context: Context) {
         prefs.edit()
             .remove(tokenKey(target))
             .remove(deviceIdKey(target))
+            .remove(legacyDeviceIdKey(target))
             .remove(emailKey(target))
             .commit()
         _savedAccountEmails.value = loadSavedEmails(_servers.value)
@@ -694,5 +739,7 @@ class AccountRepository(context: Context) {
         const val KEY_ALIAS = "rabbitcontrol.account.v1"
         const val KEY_SERVERS_V2 = "servers_v2"
         const val KEY_ACTIVE_SERVER_ID = "active_server_id"
+        const val KEY_DEVICE_KEY_SCHEMA = "device_key_schema_v"
+        const val DEVICE_KEY_SCHEMA_STABLE_ANDROID_ID = 2
     }
 }

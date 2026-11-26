@@ -36,6 +36,7 @@ import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.LaptopMac
+import androidx.compose.material.icons.rounded.LinkOff
 import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Star
@@ -117,6 +118,7 @@ fun DeviceDetailScreen(
     val wallpaperVersion by viewModel.wallpaperVersion.collectAsStateWithLifecycle()
     val activeSession by viewModel.activeSession.collectAsStateWithLifecycle()
     val connecting by viewModel.connecting.collectAsStateWithLifecycle()
+    val removing by viewModel.removing.collectAsStateWithLifecycle()
     val connectError by viewModel.connectError.collectAsStateWithLifecycle()
     val favorites by viewModel.favoriteTargets.collectAsStateWithLifecycle()
 
@@ -126,6 +128,7 @@ fun DeviceDetailScreen(
 
     var sheetMode by remember { mutableStateOf<DetailSheetMode?>(null) }
     var powerConfirmKind by remember { mutableStateOf<String?>(null) }
+    var showRemoveConfirm by remember { mutableStateOf(false) }
     val osLabel = remember(device.os) { formatDetailOs(device.os) }
 
     fun triggerTool(kind: DeviceToolKind) {
@@ -393,6 +396,33 @@ fun DeviceDetailScreen(
                         Text("更多工具与电源管理", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = palette.text, modifier = Modifier.weight(1f))
                         Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, tint = palette.muted)
                     }
+
+                    if (device.id.isNotBlank() && !device.id.contains(':')) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        HorizontalDivider(color = palette.line, thickness = 1.dp)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .defaultMinSize(minHeight = 44.dp)
+                                .clip(RoundedCornerShape(RabbitRadius.Sm))
+                                .alpha(if (removing) 0.5f else 1f)
+                                .clickable(enabled = !removing) { showRemoveConfirm = true }
+                                .padding(vertical = 4.dp),
+                        ) {
+                            Icon(Icons.Rounded.LinkOff, null, tint = palette.danger, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = if (removing) "正在解绑…" else "从账号解绑设备",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = palette.danger,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, tint = palette.muted)
+                        }
+                    }
                 }
                 Spacer(modifier = Modifier.height(12.dp))
             }
@@ -637,6 +667,24 @@ fun DeviceDetailScreen(
             onConfirm = {
                 powerConfirmKind = null
                 RabbitToast.info("等待被控端支持远程电源协议（可使用「终端」执行 $verb）")
+            },
+        )
+    }
+
+    if (showRemoveConfirm) {
+        RabbitDialog(
+            title = "解绑设备",
+            message = "确定要从当前账号解绑「${device.name}」吗？解绑后将从我的设备列表中移除。",
+            onDismissRequest = { showRemoveConfirm = false },
+            dismissLabel = "取消",
+            confirmLabel = "确认解绑",
+            destructive = true,
+            onConfirm = {
+                showRemoveConfirm = false
+                viewModel.removeDevice(device.id) {
+                    RabbitToast.success("已解绑设备")
+                    onBack()
+                }
             },
         )
     }

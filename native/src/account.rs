@@ -400,6 +400,20 @@ fn request(args: &Value) -> Result<Value, AuthClientError> {
             };
             Ok(json!({ "devices": client.list_my_devices(&access)? }))
         }
+        "remove_device" => {
+            let access = if let Some(rt) = runtime::global_runtime() {
+                if rt.auth.current_session().is_some() {
+                    rt.auth.ensure_valid_access_token()?
+                } else {
+                    field(args, "access")?.to_string()
+                }
+            } else {
+                field(args, "access")?.to_string()
+            };
+            let target_id = field(args, "targetDeviceId")?;
+            client.remove_device(&access, target_id)?;
+            Ok(json!({ "ok": true }))
+        }
         "logout" => {
             if let Some(rt) = runtime::global_runtime() {
                 rt.stop_signal_and_session();

@@ -10,6 +10,7 @@ import io.rabbitcontrol.android.core.host.HostManager
 import io.rabbitcontrol.android.core.session.ClipboardSyncBridge
 import io.rabbitcontrol.android.core.session.SessionManager
 import io.rabbitcontrol.android.core.update.AppUpdateManager
+import io.rabbitcontrol.android.core.update.CoreUpdateManager
 import io.rabbitcontrol.android.ui.screens.auth.AuthViewModel
 import io.rabbitcontrol.android.ui.screens.detail.DeviceDetailViewModel
 import io.rabbitcontrol.android.ui.screens.home.HomeViewModel
@@ -29,6 +30,7 @@ val dataModule = module {
     single { InteractionPrefsStore(androidContext()) }
     single { SessionLayoutStore(androidContext()) }
     single { AppUpdateManager(androidContext()) }
+    single { CoreUpdateManager(androidContext()) }
 }
 
 val sessionModule = module {
@@ -40,7 +42,7 @@ val sessionModule = module {
 val viewModelModule = module {
     viewModel { AuthViewModel(get()) }
     viewModel { HomeViewModel(get(), get(), get(), get(), get(), get()) }
-    viewModel { DeviceDetailViewModel(get(), get(), get(), get()) }
+    viewModel { DeviceDetailViewModel(get(), get(), get(), get(), get()) }
     viewModel { SessionViewModel(get(), get(), get(), get()) }
     viewModel { FileTransferViewModel(androidContext(), get()) }
     viewModel { TerminalViewModel(get()) }
