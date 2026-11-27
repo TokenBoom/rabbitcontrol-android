@@ -702,10 +702,12 @@ mod tests {
 
     #[test]
     fn core_info_json_exposes_real_core_build_info_and_abi_v2() {
+        let expected = core_build_info();
         let info = core_info_json();
         assert_eq!(CORE_ABI_VERSION, 2);
         assert_eq!(info["abiVersion"].as_u64(), Some(2));
-        assert_eq!(info["coreVersion"].as_str(), Some("0.2.2"));
+        assert_eq!(info["coreVersion"].as_str(), Some(expected.core_version));
+        assert!(expected.core_version.split('.').count() >= 3);
         assert!(!info["gitCommit"].as_str().unwrap_or_default().is_empty());
         assert!(!info["buildTimestamp"].as_str().unwrap_or_default().is_empty());
         assert!(info["sessionProtocolVersion"].as_u64().is_some());

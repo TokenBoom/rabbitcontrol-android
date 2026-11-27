@@ -329,6 +329,9 @@ jobs:
         with:
           targets: aarch64-linux-android
 
+      - name: Sync native/Cargo.lock with resolved rabbitcontrol-core
+        run: cargo metadata --format-version 1 --manifest-path native/Cargo.toml >/dev/null
+
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
