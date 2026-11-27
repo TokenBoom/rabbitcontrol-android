@@ -352,11 +352,12 @@ jobs:
 
       - name: Build arm64-v8a release .so
         env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
           RC_CORE_VERSION: ${{ steps.core_git.outputs.core_version }}
           RC_CORE_GIT_SHA: ${{ steps.core_git.outputs.core_git_sha }}
           RC_CORE_ABI_VERSION: ${{ steps.meta.outputs.abi_version }}
         run: |
+          export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/28.2.13676358"
+          export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
           export SOURCE_DATE_EPOCH="$(date -u +%s)"
           export RC_CORE_BUILT_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
           mkdir -p build-jni
