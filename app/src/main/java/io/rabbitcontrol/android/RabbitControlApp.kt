@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.res.Configuration
 import android.os.Bundle
 import io.rabbitcontrol.android.core.data.AccountRepository
+import io.rabbitcontrol.android.core.data.AppLockStore
 import io.rabbitcontrol.android.core.i18n.AppLocaleManager
 import io.rabbitcontrol.android.core.nativebridge.NativeLibraryLoader
 import io.rabbitcontrol.android.core.nativebridge.NativeRuntimeBootstrap
@@ -54,6 +55,7 @@ class RabbitControlApp : Application() {
                     if (wasBackground) {
                         runCatching {
                             getKoin().getOrNull<AccountRepository>()?.onAppForegroundChanged(true)
+                            getKoin().getOrNull<AppLockStore>()?.onAppForegrounded()
                         }
                     }
                 }
@@ -63,6 +65,7 @@ class RabbitControlApp : Application() {
                     if (startedCount == 0 && !activity.isChangingConfigurations) {
                         runCatching {
                             getKoin().getOrNull<AccountRepository>()?.onAppForegroundChanged(false)
+                            getKoin().getOrNull<AppLockStore>()?.onAppBackgrounded()
                         }
                     }
                 }

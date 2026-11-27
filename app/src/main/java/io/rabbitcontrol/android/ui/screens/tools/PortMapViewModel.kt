@@ -3,6 +3,8 @@ package io.rabbitcontrol.android.ui.screens.tools
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.rabbitcontrol.android.error.RcErrorCodes
+import io.rabbitcontrol.android.core.data.PortMapRuleStore
+import io.rabbitcontrol.android.core.data.SavedPortMapRule
 import io.rabbitcontrol.android.core.error.RcUiErrorCodec
 import io.rabbitcontrol.android.core.nativebridge.PortMapRule
 import io.rabbitcontrol.android.core.nativebridge.toPortMapRule
@@ -18,6 +20,7 @@ import org.json.JSONObject
 
 class PortMapViewModel(
     private val sessionManager: SessionManager,
+    private val portMapRuleStore: PortMapRuleStore,
 ) : ViewModel() {
 
     val sessionState: StateFlow<ActiveSessionState> = sessionManager.state
@@ -73,8 +76,9 @@ class PortMapViewModel(
                     .put("localPort", localPort)
                     .put("targetAddr", targetAddr.ifBlank { "127.0.0.1" })
                     .put("targetPort", targetPort),
-            ).onSuccess { applyRulesFromResponse(it) }
-                .onFailure(::handleToolFailure)
+            ).onSuccess {
+                applyRulesFromResponse(it, persist = true)
+            }.onFailure(::handleToolFailure)
         }
     }
 
@@ -82,22 +86,41 @@ class PortMapViewModel(
         viewModelScope.launch {
             sessionManager.callTool(
                 JSONObject().put("action", "portmap_toggle").put("id", id).put("enabled", enabled),
-            ).onSuccess { applyRulesFromResponse(it) }
-                .onFailure(::handleToolFailure)
+            ).onSuccess {
+                applyRulesFromResponse(it, persist = true)
+            }.onFailure(::handleToolFailure)
         }
     }
 
     fun deleteRule(id: Long) {
         viewModelScope.launch {
             sessionManager.callTool(JSONObject().put("action", "portmap_delete").put("id", id))
-                .onSuccess { applyRulesFromResponse(it) }
+                .onSuccess { applyRulesFromResponse(it, persist = true) }
                 .onFailure(::handleToolFailure)
         }
     }
 
-    private fun applyRulesFromResponse(obj: JSONObject) {
+    private fun applyRulesFromResponse(obj: JSONObject, persist: Boolean = false) {
         val arr = obj.optJSONArray("rules") ?: return
-        sessionManager.updatePortMapRules(List(arr.length()) { arr.getJSONObject(it).toPortMapRule() })
+        val rules = List(arr.length()) { arr.getJSONObject(it).toPortMapRule() }
+        sessionManager.updatePortMapRules(rules)
+        if (persist) {
+            val targetId = sessionManager.state.value.targetId
+            if (targetId.isNotBlank()) {
+                portMapRuleStore.saveRules(
+                    targetId,
+                    rules.map {
+                        SavedPortMapRule(
+                            name = it.name,
+                            localPort = it.localPort,
+                            targetAddr = it.targetAddr,
+                            targetPort = it.targetPort,
+                            enabled = it.enabled,
+                        )
+                    },
+                )
+            }
+        }
     }
 
     fun clearError() {

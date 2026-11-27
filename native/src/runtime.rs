@@ -93,6 +93,10 @@ pub struct StartHostRequest {
     pub password: Option<String>,
     #[serde(default = "default_true")]
     pub allow_assist_file_transfer: bool,
+    #[serde(default)]
+    pub auto_rotate_password: Option<bool>,
+    #[serde(default)]
+    pub auth_mode: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -243,6 +247,15 @@ impl AndroidRuntime {
     /// Stable device key (anchored to Android SSAID when provided, falling back to device Ed25519 pubkey).
     pub fn device_key(&self) -> String {
         self.device_key.clone()
+    }
+
+    pub fn current_device_id(&self) -> Option<String> {
+        self.signal_snapshot
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .device_id
+            .clone()
+            .or_else(|| self.auth.server_config().cached_device_id)
     }
 
     /// Persists an externally obtained/restored session to `auth.json` and updates in-memory state
@@ -799,10 +812,15 @@ impl AndroidRuntime {
                     .as_str()
                     .unwrap_or(if mode == "privacy" { "preset-1" } else { "" })
                     .to_string();
+                let custom_image_base64 = cmd_json["customImageBase64"]
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string);
                 handle.send_display_ctrl(DisplayControlMsg::SetPrivacyMode {
                     mode,
                     preset,
-                    custom_image_base64: None,
+                    custom_image_base64,
                 });
             }
             "set_host_mute" => {
@@ -833,6 +851,47 @@ impl AndroidRuntime {
             "remove_virtual_display" => {
                 let display_id = cmd_json["displayId"].as_u64().unwrap_or(0) as u32;
                 handle.send_display_ctrl(DisplayControlMsg::RemoveVirtualDisplay { display_id });
+            }
+            "upgrade_to_desktop" => {
+                handle.upgrade_to_desktop(None);
+            }
+            "terminal_unlock" => {
+                let password = cmd_json["password"].as_str().unwrap_or("").to_string();
+                let username = cmd_json["username"]
+                    .as_str()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty());
+                handle.submit_terminal_unlock(password, username)?;
+            }
+            "set_mouse_mode" => {
+                let mode = match cmd_json["mode"].as_str().unwrap_or("smart").trim() {
+                    "remote" => "remote",
+                    "local" => "local",
+                    _ => "smart",
+                }
+                .to_string();
+                handle.send_display_ctrl(DisplayControlMsg::SetMouseMode { mode });
+            }
+            "trigger_remote_update" => {
+                let req_val = if cmd_json["request"].is_object() {
+                    &cmd_json["request"]
+                } else {
+                    cmd_json
+                };
+                let req: rc_client_core::updater::RemoteUpdateRequest =
+                    serde_json::from_value(req_val.clone())
+                        .map_err(|e| format!("无效远程更新参数: {e}"))?;
+                if req.target_version.trim().is_empty()
+                    || req.download_url.trim().is_empty()
+                    || req.expected_sha256.trim().is_empty()
+                    || req.asset_name.trim().is_empty()
+                {
+                    return Err("远程更新参数缺少必填字段".to_string());
+                }
+                handle.trigger_remote_update(req);
+            }
+            "cancel_remote_update" => {
+                handle.cancel_remote_update();
             }
             other => return Err(format!("未知会话指令: {other}")),
         }
@@ -1232,21 +1291,45 @@ impl AndroidRuntime {
         self.host_allow_assist_file_transfer
             .store(req.allow_assist_file_transfer, Ordering::Release);
 
-        let password = if let Some(custom) = req.password.filter(|p| !p.trim().is_empty()) {
-            Some(custom)
-        } else if req.allow_remote_assist {
-            Some(generate_temp_code())
-        } else {
-            None
-        };
+        let custom_pw = req.password.filter(|p| !p.trim().is_empty());
+        let (password, auto_rotate_password, require_approval) =
+            match req.auth_mode.as_deref().unwrap_or("") {
+                "approval_only" => (None, false, true),
+                "fixed_password" => (custom_pw, false, req.require_approval),
+                "temp_code" => (
+                    custom_pw.or_else(|| {
+                        if req.allow_remote_assist {
+                            Some(generate_temp_code())
+                        } else {
+                            None
+                        }
+                    }),
+                    req.auto_rotate_password.unwrap_or(req.allow_remote_assist),
+                    req.require_approval,
+                ),
+                _ => {
+                    let pw = custom_pw.or_else(|| {
+                        if req.allow_remote_assist {
+                            Some(generate_temp_code())
+                        } else {
+                            None
+                        }
+                    });
+                    (
+                        pw,
+                        req.auto_rotate_password.unwrap_or(req.allow_remote_assist),
+                        req.require_approval,
+                    )
+                }
+            };
 
         let ui_cfg = UiHostConfig {
             listen_addr: SocketAddr::from(([0, 0, 0, 0], DEFAULT_HOST_PORT)),
             password: password.clone(),
             prefer_hardware: true,
-            require_approval: req.require_approval,
+            require_approval,
             auto_accept_with_password: true,
-            auto_rotate_password: req.allow_remote_assist,
+            auto_rotate_password,
             clipboard_enabled: true,
             audio_enabled: false,
             allow_remote_assist: req.allow_remote_assist,
@@ -1354,6 +1437,56 @@ impl AndroidRuntime {
                     host.set_password_mode(Some(new_pw.clone()), true);
                 }
                 Ok(json!({ "password": new_pw }))
+            }
+            "set_password_mode" => {
+                let mode = cmd["mode"].as_str().unwrap_or("temp_code").trim();
+                let custom = cmd["password"]
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string);
+                match mode {
+                    "fixed_password" => {
+                        let pw = custom.ok_or_else(|| {
+                            resolve_ui_error(
+                                codes::VALIDATION_INVALID_INPUT,
+                                ErrorPlatform::Android,
+                                &[],
+                                None,
+                                Some("固定密码不能为空".to_string()),
+                            )
+                        })?;
+                        if let Some(host) = self.host.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+                            host.set_password_mode(Some(pw.clone()), false);
+                        }
+                        Ok(json!({
+                            "ok": true,
+                            "mode": "fixed_password",
+                            "password": pw,
+                        }))
+                    }
+                    "approval_only" => {
+                        if let Some(host) = self.host.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+                            host.set_password_mode(None, false);
+                        }
+                        Ok(json!({
+                            "ok": true,
+                            "mode": "approval_only",
+                            "password": Value::Null,
+                        }))
+                    }
+                    _ => {
+                        let pw = custom.unwrap_or_else(generate_temp_code);
+                        if let Some(host) = self.host.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+                            host.set_password_mode(Some(pw.clone()), true);
+                        }
+                        Ok(json!({
+                            "ok": true,
+                            "mode": "temp_code",
+                            "password": pw,
+                        }))
+                    }
+                }
             }
             other => Err(resolve_ui_error(
                 codes::VALIDATION_INVALID_INPUT,

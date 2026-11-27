@@ -55,7 +55,7 @@ val coreAbiVersion = 2
 val bundledCoreVersion = ((project.findProperty("coreVersion") as String?)?.takeIf { it.isNotBlank() }
     ?: System.getenv("RC_CORE_VERSION")?.takeIf { it.isNotBlank() }
     ?: runGitInCore("describe", "--tags", "--abbrev=0")
-    ?: "0.2.2")
+    ?: "0.2.3")
     .trim()
     .removePrefix("v")
     .removePrefix("V")
@@ -79,8 +79,8 @@ android {
         applicationId = "io.rabbitcontrol.android"
         minSdk = 29
         targetSdk = 36
-        versionCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 4
-        versionName = (project.findProperty("versionName") as String?)?.takeIf { it.isNotBlank() } ?: "0.2.2"
+        versionCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 5
+        versionName = (project.findProperty("versionName") as String?)?.takeIf { it.isNotBlank() } ?: "0.2.3"
         ndk.abiFilters += "arm64-v8a"
         buildConfigField("int", "CORE_ABI_VERSION", coreAbiVersion.toString())
         buildConfigField("String", "BUNDLED_CORE_VERSION", "\"${escapeBuildConfigString(bundledCoreVersion)}\"")
@@ -167,6 +167,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.0")
     implementation("androidx.navigation:navigation-compose:2.9.0")
+    implementation("androidx.biometric:biometric:1.1.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.1")
     implementation("io.insert-koin:koin-android:4.0.4")
     implementation("io.insert-koin:koin-androidx-compose:4.0.4")

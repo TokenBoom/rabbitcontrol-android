@@ -43,10 +43,15 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.AccessibilityNew
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.CheckCircleOutline
 import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.ErrorOutline
+import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Memory
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Router
 import androidx.compose.material.icons.rounded.ScreenShare
@@ -105,7 +110,9 @@ import com.rabbitcontrol.android.error.RcErrorPresentation
 import com.rabbitcontrol.android.error.RcUiError
 import io.rabbitcontrol.android.R
 import io.rabbitcontrol.android.core.data.AccountRepository
+import io.rabbitcontrol.android.core.data.AppThemeMode
 import io.rabbitcontrol.android.core.data.ConnectionModePref
+import io.rabbitcontrol.android.core.data.HostAuthMode
 import io.rabbitcontrol.android.core.data.InteractionPrefsStore
 import io.rabbitcontrol.android.core.data.OrientationPreference
 import io.rabbitcontrol.android.core.data.PortraitLayoutMode
@@ -116,6 +123,8 @@ import io.rabbitcontrol.android.core.data.ProxyProtocolOption
 import io.rabbitcontrol.android.core.data.TouchInputMode
 import io.rabbitcontrol.android.core.error.RcUiErrorCodec
 import io.rabbitcontrol.android.core.host.HostManager
+import io.rabbitcontrol.android.core.i18n.AppLanguageMode
+import io.rabbitcontrol.android.core.i18n.AppLocaleManager
 import io.rabbitcontrol.android.core.i18n.AppStrings
 import io.rabbitcontrol.android.core.i18n.NativeErrorLocalizer
 import io.rabbitcontrol.android.core.nativebridge.UpnpState
@@ -133,6 +142,7 @@ import io.rabbitcontrol.android.core.update.UpdateCheckStatus
 import io.rabbitcontrol.android.core.update.UpdateDownloadState
 import io.rabbitcontrol.android.ui.components.RabbitCard
 import io.rabbitcontrol.android.ui.components.RabbitPrimaryButton
+import io.rabbitcontrol.android.ui.components.RabbitSecondaryButton
 import io.rabbitcontrol.android.ui.components.RabbitSegmentedControl
 import io.rabbitcontrol.android.ui.components.RabbitStatusPill
 import io.rabbitcontrol.android.ui.components.RabbitSwitchRow
@@ -172,10 +182,13 @@ fun HostSettingsScreen(
 
     val accountRepo: AccountRepository = koinInject()
     val hostManager: HostManager = koinInject()
+    val prefsStore: InteractionPrefsStore = koinInject()
 
     val profile by accountRepo.profile.collectAsStateWithLifecycle()
     val signal by accountRepo.signalStatus.collectAsStateWithLifecycle()
     val hostState by hostManager.state.collectAsStateWithLifecycle()
+    val prefs by prefsStore.state.collectAsStateWithLifecycle()
+    var fixedPwDraft by remember(prefs.hostFixedPassword) { mutableStateOf(prefs.hostFixedPassword) }
 
     LaunchedEffect(hostState.lastUiError, hostState.lastError) {
         val uiErr = hostState.lastUiError
@@ -342,41 +355,96 @@ fun HostSettingsScreen(
                     onCheckedChange = hostManager::setAllowAssistFileTransfer,
                 )
 
-                if (hostState.enabled && hostState.allowRemoteAssist && !hostState.tempCode.isNullOrBlank()) {
-                    val code = hostState.tempCode!!
-                    val copiedCodeMsg = stringResource(R.string.host_temp_code_copied)
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(RabbitRadius.Sm))
-                            .background(palette.field)
-                            .border(1.dp, palette.line, RoundedCornerShape(RabbitRadius.Sm))
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(stringResource(R.string.host_temp_code), fontSize = 11.sp, color = palette.muted)
-                            Text(
-                                text = code,
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 17.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = palette.primaryText,
-                            )
+                HorizontalDivider(color = palette.line, thickness = 1.dp)
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    stringResource(R.string.host_auth_mode_title),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = palette.text,
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                RabbitSegmentedControl(
+                    options = HostAuthMode.entries,
+                    selected = prefs.hostAuthMode,
+                    labelProvider = { it.label },
+                    onSelect = { mode ->
+                        if (mode == HostAuthMode.FixedPassword) {
+                            hostManager.setHostAuthMode(mode, fixedPwDraft.ifBlank { null })
+                        } else {
+                            hostManager.setHostAuthMode(mode)
                         }
-                        IconButton(onClick = {
-                            clipboard.setText(AnnotatedString(code))
-                            RabbitToast.success(copiedCodeMsg)
-                        }) {
-                            Icon(Icons.Rounded.ContentCopy, stringResource(R.string.host_cd_copy_code), tint = palette.muted, modifier = Modifier.size(18.dp))
-                        }
-                        IconButton(onClick = {
-                            hostManager.rotateTempCode()
-                        }) {
-                            Icon(Icons.Rounded.Refresh, stringResource(R.string.host_cd_rotate_code), tint = palette.muted, modifier = Modifier.size(18.dp))
+                    },
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                when (prefs.hostAuthMode) {
+                    HostAuthMode.FixedPassword -> {
+                        RabbitTextField(
+                            value = fixedPwDraft,
+                            onValueChange = { fixedPwDraft = it },
+                            label = stringResource(R.string.host_fixed_pw_label),
+                            placeholder = stringResource(R.string.host_fixed_pw_hint),
+                            isPassword = true,
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        RabbitPrimaryButton(
+                            label = stringResource(R.string.common_save),
+                            enabled = fixedPwDraft.trim().isNotEmpty(),
+                            onClick = {
+                                hostManager.setHostAuthMode(HostAuthMode.FixedPassword, fixedPwDraft)
+                                RabbitToast.success(AppStrings.get(R.string.host_fixed_pw_saved, "固定访问密码已更新"))
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+                    HostAuthMode.ApprovalOnly -> {
+                        Text(
+                            text = stringResource(R.string.host_auth_mode_approval_note),
+                            fontSize = 12.sp,
+                            color = palette.muted,
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+                    HostAuthMode.TempCode -> {
+                        if (hostState.enabled && hostState.allowRemoteAssist && !hostState.tempCode.isNullOrBlank()) {
+                            val code = hostState.tempCode!!
+                            val copiedCodeMsg = stringResource(R.string.host_temp_code_copied)
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(RabbitRadius.Sm))
+                                    .background(palette.field)
+                                    .border(1.dp, palette.line, RoundedCornerShape(RabbitRadius.Sm))
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(stringResource(R.string.host_temp_code), fontSize = 11.sp, color = palette.muted)
+                                    Text(
+                                        text = code,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 17.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = palette.primaryText,
+                                    )
+                                }
+                                IconButton(onClick = {
+                                    clipboard.setText(AnnotatedString(code))
+                                    RabbitToast.success(copiedCodeMsg)
+                                }) {
+                                    Icon(Icons.Rounded.ContentCopy, stringResource(R.string.host_cd_copy_code), tint = palette.muted, modifier = Modifier.size(18.dp))
+                                }
+                                IconButton(onClick = {
+                                    hostManager.rotateTempCode()
+                                }) {
+                                    Icon(Icons.Rounded.Refresh, stringResource(R.string.host_cd_rotate_code), tint = palette.muted, modifier = Modifier.size(18.dp))
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
                         }
                     }
-                    Spacer(modifier = Modifier.height(6.dp))
                 }
 
                 HorizontalDivider(color = palette.line, thickness = 1.dp)
@@ -438,6 +506,7 @@ fun HostSettingsScreen(
 @Composable
 fun InteractionSettingsScreen(
     onBack: () -> Unit,
+    onOpenPreviewCheck: () -> Unit,
 ) {
     val palette = LocalRabbitPalette.current
     val prefsStore: InteractionPrefsStore = koinInject()
@@ -540,6 +609,55 @@ fun InteractionSettingsScreen(
                 HorizontalDivider(color = palette.line, thickness = 1.dp)
                 RabbitSwitchRow(stringResource(R.string.settings_direct_offset), prefs.directTouchOffset) { on ->
                     prefsStore.update { it.copy(directTouchOffset = on) }
+                }
+            }
+
+            RabbitCard(modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.settings_diagnostics_title), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = stringResource(R.string.settings_diagnostics_desc),
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp,
+                    color = palette.muted,
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                HorizontalDivider(color = palette.line, thickness = 1.dp)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .defaultMinSize(minHeight = 50.dp)
+                        .clip(RoundedCornerShape(RabbitRadius.Sm))
+                        .clickable(onClick = onOpenPreviewCheck)
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.PlayArrow,
+                        contentDescription = null,
+                        tint = palette.primaryText,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text(
+                        text = stringResource(R.string.home_menu_preview_check),
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = palette.text,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        text = stringResource(R.string.home_menu_preview_trailing),
+                        fontSize = 12.sp,
+                        color = palette.muted,
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = palette.muted,
+                        modifier = Modifier.size(18.dp),
+                    )
                 }
             }
         }
@@ -1672,14 +1790,16 @@ private fun IncompatibleCoreBanner(
 }
 
 @Composable
-fun ProxySettingsScreen(
+fun NetworkSettingsScreen(
     onBack: () -> Unit,
 ) {
     val palette = LocalRabbitPalette.current
     val proxyStore: ProxyConfigStore = koinInject()
     val prefsStore: InteractionPrefsStore = koinInject()
+    val accountRepo: AccountRepository = koinInject()
     val saved by proxyStore.state.collectAsStateWithLifecycle()
     val prefs by prefsStore.state.collectAsStateWithLifecycle()
+    val upnpStatus by accountRepo.upnpStatus.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
 
     var mode by remember(saved) { mutableStateOf(saved.mode) }
@@ -1691,11 +1811,45 @@ fun ProxySettingsScreen(
     var showPassword by remember { mutableStateOf(false) }
     var inlineError by remember { mutableStateOf<RcUiError?>(null) }
     var saving by remember { mutableStateOf(false) }
+    var togglingUpnp by remember { mutableStateOf(false) }
 
     val savedToast = stringResource(R.string.proxy_saved)
     val connModeSavedToast = stringResource(R.string.conn_mode_saved)
     val invalidHostMsg = stringResource(R.string.proxy_err_host_required)
     val invalidPortMsg = stringResource(R.string.proxy_err_port_range)
+    val toastUpnpEnabled = stringResource(R.string.upnp_toast_enabled)
+    val toastUpnpDisabled = stringResource(R.string.upnp_toast_disabled)
+    val toggleUpnpFailedPrefix = stringResource(R.string.upnp_toast_failed)
+
+    LaunchedEffect(Unit) {
+        accountRepo.refreshUpnpStatus()
+    }
+
+    LaunchedEffect(upnpStatus.enabled, upnpStatus.state) {
+        while (upnpStatus.enabled && upnpStatus.state == UpnpState.Discovering) {
+            delay(1_000L)
+            accountRepo.refreshUpnpStatus()
+        }
+    }
+
+    val (upnpBadgeText, upnpBadgeTone) = when {
+        !upnpStatus.enabled || upnpStatus.state == UpnpState.Disabled ->
+            stringResource(R.string.upnp_badge_disabled) to StatusTone.Muted
+        upnpStatus.state == UpnpState.Mapped -> {
+            val proto = formatUpnpProtocol(upnpStatus.protocol)
+            val ext = upnpStatus.externalAddr.trim()
+            val label = if (ext.isNotEmpty()) {
+                stringResource(R.string.upnp_badge_mapped_addr, ext, proto)
+            } else {
+                stringResource(R.string.upnp_badge_mapped_proto, proto)
+            }
+            label to StatusTone.Success
+        }
+        upnpStatus.state == UpnpState.Discovering ->
+            stringResource(R.string.upnp_badge_discovering) to StatusTone.Primary
+        else ->
+            stringResource(R.string.upnp_badge_unavailable) to StatusTone.Danger
+    }
 
     Column(
         modifier = Modifier
@@ -1704,7 +1858,7 @@ fun ProxySettingsScreen(
             .systemBarsPadding(),
     ) {
         RabbitTopBar(
-            title = stringResource(R.string.proxy_settings_title),
+            title = stringResource(R.string.home_menu_network),
             onBack = onBack,
         )
 
@@ -1715,10 +1869,11 @@ fun ProxySettingsScreen(
                 .padding(horizontal = RabbitSpacing.Lg, vertical = RabbitSpacing.Md),
             verticalArrangement = Arrangement.spacedBy(RabbitSpacing.Md),
         ) {
+            // Card 1: Connection Mode
             RabbitCard(modifier = Modifier.fillMaxWidth()) {
                 Text(
                     text = stringResource(R.string.conn_mode_settings_title),
-                    fontSize = 14.sp,
+                    fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = palette.text,
                 )
@@ -1726,6 +1881,7 @@ fun ProxySettingsScreen(
                 Text(
                     text = stringResource(R.string.conn_mode_settings_desc),
                     fontSize = 12.sp,
+                    lineHeight = 17.sp,
                     color = palette.muted,
                 )
                 Spacer(modifier = Modifier.height(10.dp))
@@ -1746,17 +1902,146 @@ fun ProxySettingsScreen(
                 )
             }
 
+            // Card 2: UPnP / NAT-PMP Port Mapping
             RabbitCard(modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    text = stringResource(R.string.proxy_mode_label),
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = palette.text,
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Router,
+                                contentDescription = null,
+                                tint = palette.primaryText,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Text(
+                                text = stringResource(R.string.upnp_title),
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = palette.text,
+                            )
+                        }
+                        Text(
+                            text = stringResource(R.string.upnp_desc),
+                            fontSize = 12.sp,
+                            lineHeight = 17.sp,
+                            color = palette.muted,
+                        )
+                        RabbitStatusPill(
+                            label = upnpBadgeText,
+                            tone = upnpBadgeTone,
+                        )
+                    }
+
+                    Switch(
+                        checked = upnpStatus.enabled,
+                        enabled = !togglingUpnp,
+                        onCheckedChange = { want ->
+                            togglingUpnp = true
+                            scope.launch {
+                                val res = accountRepo.setUpnpEnabled(want)
+                                togglingUpnp = false
+                                res.onSuccess {
+                                    RabbitToast.success(if (want) toastUpnpEnabled else toastUpnpDisabled)
+                                }.onFailure { err ->
+                                    RabbitToast.error("$toggleUpnpFailedPrefix: ${err.message.orEmpty()}")
+                                }
+                            }
+                        },
+                    )
+                }
+
+                if (upnpStatus.enabled && upnpStatus.state == UpnpState.Unavailable && upnpStatus.reason.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = upnpStatus.reason,
+                        fontSize = 12.sp,
+                        lineHeight = 18.sp,
+                        color = palette.danger,
+                    )
+                }
+
+                if (upnpStatus.enabled) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    HorizontalDivider(color = palette.line, thickness = 1.dp)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(
+                            text = if (upnpStatus.state == UpnpState.Mapped && upnpStatus.externalAddr.isNotBlank()) {
+                                "${formatUpnpProtocol(upnpStatus.protocol)} · ${upnpStatus.externalAddr}"
+                            } else {
+                                stringResource(R.string.upnp_reprobe_hint)
+                            },
+                            fontSize = 12.sp,
+                            color = palette.muted,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(
+                            enabled = !togglingUpnp && upnpStatus.state != UpnpState.Discovering,
+                            onClick = {
+                                togglingUpnp = true
+                                scope.launch {
+                                    accountRepo.setUpnpEnabled(true)
+                                    togglingUpnp = false
+                                }
+                            },
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Refresh,
+                                contentDescription = null,
+                                tint = palette.primaryText,
+                                modifier = Modifier.size(16.dp),
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = stringResource(R.string.upnp_reprobe_btn),
+                                fontSize = 12.sp,
+                                color = palette.primaryText,
+                                fontWeight = FontWeight.Medium,
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Card 3: Outbound Proxy
+            RabbitCard(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Public,
+                        contentDescription = null,
+                        tint = palette.primaryText,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Text(
+                        text = stringResource(R.string.proxy_settings_title),
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = palette.text,
+                    )
+                }
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
                     text = stringResource(R.string.proxy_mode_desc),
                     fontSize = 12.sp,
+                    lineHeight = 17.sp,
                     color = palette.muted,
                 )
                 Spacer(modifier = Modifier.height(10.dp))
@@ -1775,17 +2060,19 @@ fun ProxySettingsScreen(
                         inlineError = null
                     },
                 )
-            }
 
-            if (mode == ProxyModeOption.Manual) {
-                RabbitCard(modifier = Modifier.fillMaxWidth()) {
+                if (mode == ProxyModeOption.Manual) {
+                    Spacer(modifier = Modifier.height(14.dp))
+                    HorizontalDivider(color = palette.line, thickness = 1.dp)
+                    Spacer(modifier = Modifier.height(12.dp))
+
                     Text(
                         text = stringResource(R.string.proxy_protocol_label),
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
                         color = palette.text,
                     )
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
                     val protocols = ProxyProtocolOption.entries
                     RabbitSegmentedControl(
                         options = protocols,
@@ -1849,107 +2136,74 @@ fun ProxySettingsScreen(
                         },
                     )
                 }
-            }
 
-            inlineError?.let { uiErr ->
-                RcInlineError(
-                    error = uiErr,
-                    onDismiss = { inlineError = null },
+                inlineError?.let { uiErr ->
+                    Spacer(modifier = Modifier.height(12.dp))
+                    RcInlineError(
+                        error = uiErr,
+                        onDismiss = { inlineError = null },
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+                RabbitPrimaryButton(
+                    label = stringResource(R.string.proxy_save_btn),
+                    busy = saving,
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = {
+                        if (mode == ProxyModeOption.Manual) {
+                            val trimmedHost = host.trim()
+                            if (trimmedHost.isEmpty()) {
+                                inlineError = RcUiErrorCodec.inlineValidation(invalidHostMsg)
+                                return@RabbitPrimaryButton
+                            }
+                            val parsedPort = portText.trim().toIntOrNull()
+                            if (parsedPort == null || parsedPort !in 1..65535) {
+                                inlineError = RcUiErrorCodec.inlineValidation(invalidPortMsg)
+                                return@RabbitPrimaryButton
+                            }
+                        }
+                        val targetPort = portText.trim().toIntOrNull()?.coerceIn(1, 65535) ?: saved.port
+                        val model = ProxyConfigModel(
+                            mode = mode,
+                            protocol = protocol,
+                            host = host.trim(),
+                            port = targetPort,
+                            username = username.trim(),
+                            password = password,
+                        )
+                        saving = true
+                        inlineError = null
+                        scope.launch {
+                            val res = withContext(Dispatchers.IO) {
+                                proxyStore.saveAndApply(model)
+                            }
+                            saving = false
+                            res.onSuccess {
+                                RabbitToast.success(savedToast)
+                            }.onFailure { err ->
+                                inlineError = RcUiErrorCodec.fromThrowable(
+                                    err,
+                                    fallbackCode = RcErrorCodes.PROXY_CONFIG_CONFLICT,
+                                )
+                            }
+                        }
+                    },
                 )
             }
-
-            RabbitPrimaryButton(
-                label = stringResource(R.string.common_save),
-                busy = saving,
-                modifier = Modifier.fillMaxWidth(),
-                onClick = {
-                    if (mode == ProxyModeOption.Manual) {
-                        val trimmedHost = host.trim()
-                        if (trimmedHost.isEmpty()) {
-                            inlineError = RcUiErrorCodec.inlineValidation(invalidHostMsg)
-                            return@RabbitPrimaryButton
-                        }
-                        val parsedPort = portText.trim().toIntOrNull()
-                        if (parsedPort == null || parsedPort !in 1..65535) {
-                            inlineError = RcUiErrorCodec.inlineValidation(invalidPortMsg)
-                            return@RabbitPrimaryButton
-                        }
-                    }
-                    val targetPort = portText.trim().toIntOrNull()?.coerceIn(1, 65535) ?: saved.port
-                    val model = ProxyConfigModel(
-                        mode = mode,
-                        protocol = protocol,
-                        host = host.trim(),
-                        port = targetPort,
-                        username = username.trim(),
-                        password = password,
-                    )
-                    saving = true
-                    inlineError = null
-                    scope.launch {
-                        val res = withContext(Dispatchers.IO) {
-                            proxyStore.saveAndApply(model)
-                        }
-                        saving = false
-                        res.onSuccess {
-                            RabbitToast.success(savedToast)
-                            onBack()
-                        }.onFailure { err ->
-                            inlineError = RcUiErrorCodec.fromThrowable(
-                                err,
-                                fallbackCode = RcErrorCodes.PROXY_CONFIG_CONFLICT,
-                            )
-                        }
-                    }
-                },
-            )
         }
     }
 }
 
 @Composable
-fun UpnpSettingsScreen(
+fun GeneralSettingsScreen(
     onBack: () -> Unit,
 ) {
     val palette = LocalRabbitPalette.current
-    val accountRepo: AccountRepository = koinInject()
-    val upnpStatus by accountRepo.upnpStatus.collectAsStateWithLifecycle()
-    val scope = rememberCoroutineScope()
-    var toggling by remember { mutableStateOf(false) }
-
-    val toastEnabled = stringResource(R.string.upnp_toast_enabled)
-    val toastDisabled = stringResource(R.string.upnp_toast_disabled)
-    val toggleFailedPrefix = stringResource(R.string.upnp_toast_failed)
-
-    LaunchedEffect(Unit) {
-        accountRepo.refreshUpnpStatus()
-    }
-
-    LaunchedEffect(upnpStatus.enabled, upnpStatus.state) {
-        if (upnpStatus.enabled && upnpStatus.state == UpnpState.Discovering) {
-            delay(2_000L)
-            accountRepo.refreshUpnpStatus()
-        }
-    }
-
-    val (badgeText, badgeTone) = when {
-        !upnpStatus.enabled || upnpStatus.state == UpnpState.Disabled ->
-            stringResource(R.string.upnp_badge_disabled) to StatusTone.Muted
-        upnpStatus.state == UpnpState.Mapped -> {
-            val proto = formatUpnpProtocol(upnpStatus.protocol)
-            val ext = upnpStatus.externalAddr.trim()
-            val label = if (ext.isNotEmpty()) {
-                stringResource(R.string.upnp_badge_mapped_addr, ext, proto)
-            } else {
-                stringResource(R.string.upnp_badge_mapped_proto, proto)
-            }
-            label to StatusTone.Success
-        }
-        upnpStatus.state == UpnpState.Discovering ->
-            stringResource(R.string.upnp_badge_discovering) to StatusTone.Primary
-        else ->
-            stringResource(R.string.upnp_badge_unavailable) to StatusTone.Danger
-    }
+    val context = LocalContext.current
+    val prefsStore: InteractionPrefsStore = koinInject()
+    val prefs by prefsStore.state.collectAsStateWithLifecycle()
+    val languageMode by AppLocaleManager.mode.collectAsStateWithLifecycle()
 
     Column(
         modifier = Modifier
@@ -1958,7 +2212,7 @@ fun UpnpSettingsScreen(
             .systemBarsPadding(),
     ) {
         RabbitTopBar(
-            title = stringResource(R.string.upnp_title),
+            title = stringResource(R.string.home_menu_general),
             onBack = onBack,
         )
 
@@ -1971,119 +2225,350 @@ fun UpnpSettingsScreen(
         ) {
             RabbitCard(modifier = Modifier.fillMaxWidth()) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Column(
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Router,
-                                contentDescription = null,
-                                tint = palette.primaryText,
-                                modifier = Modifier.size(18.dp),
-                            )
-                            Text(
-                                text = stringResource(R.string.upnp_title),
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = palette.text,
-                            )
-                        }
-                        Text(
-                            text = stringResource(R.string.upnp_desc),
-                            fontSize = 12.sp,
-                            lineHeight = 17.sp,
-                            color = palette.muted,
-                        )
-                        RabbitStatusPill(
-                            label = badgeText,
-                            tone = badgeTone,
-                        )
-                    }
-
-                    Switch(
-                        checked = upnpStatus.enabled,
-                        enabled = !toggling,
-                        onCheckedChange = { want ->
-                            toggling = true
-                            scope.launch {
-                                val res = accountRepo.setUpnpEnabled(want)
-                                toggling = false
-                                res.onSuccess {
-                                    RabbitToast.success(if (want) toastEnabled else toastDisabled)
-                                }.onFailure { err ->
-                                    RabbitToast.error("$toggleFailedPrefix: ${err.message.orEmpty()}")
-                                }
-                            }
-                        },
+                    Icon(
+                        imageVector = Icons.Rounded.DarkMode,
+                        contentDescription = null,
+                        tint = palette.primaryText,
+                        modifier = Modifier.size(18.dp),
                     )
-                }
-
-                if (upnpStatus.enabled && upnpStatus.state == UpnpState.Unavailable && upnpStatus.reason.isNotBlank()) {
-                    Spacer(modifier = Modifier.height(10.dp))
                     Text(
-                        text = upnpStatus.reason,
-                        fontSize = 12.sp,
-                        lineHeight = 18.sp,
-                        color = palette.danger,
+                        text = stringResource(R.string.home_menu_theme),
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = palette.text,
                     )
                 }
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = stringResource(R.string.home_theme_sheet_sub),
+                    fontSize = 12.sp,
+                    color = palette.muted,
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                RabbitSegmentedControl(
+                    options = AppThemeMode.entries,
+                    selected = prefs.themeMode,
+                    labelProvider = { it.label },
+                    onSelect = { mode ->
+                        prefsStore.update { it.copy(themeMode = mode) }
+                    },
+                )
+            }
 
-                if (upnpStatus.enabled) {
-                    Spacer(modifier = Modifier.height(12.dp))
-                    HorizontalDivider(color = palette.line, thickness = 1.dp)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        Text(
-                            text = if (upnpStatus.state == UpnpState.Mapped && upnpStatus.externalAddr.isNotBlank()) {
-                                "${formatUpnpProtocol(upnpStatus.protocol)} · ${upnpStatus.externalAddr}"
-                            } else {
-                                stringResource(R.string.upnp_reprobe_hint)
-                            },
-                            fontSize = 12.sp,
-                            color = palette.muted,
-                            modifier = Modifier.weight(1f),
-                        )
-                        TextButton(
-                            enabled = !toggling && upnpStatus.state != UpnpState.Discovering,
-                            onClick = {
-                                toggling = true
-                                scope.launch {
-                                    accountRepo.setUpnpEnabled(true)
-                                    toggling = false
+            RabbitCard(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Language,
+                        contentDescription = null,
+                        tint = palette.primaryText,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Text(
+                        text = stringResource(R.string.home_menu_language),
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = palette.text,
+                    )
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = stringResource(R.string.home_language_sheet_sub),
+                    fontSize = 12.sp,
+                    color = palette.muted,
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    AppLanguageMode.entries.forEach { lang ->
+                        val selected = languageMode == lang
+                        val label = when (lang) {
+                            AppLanguageMode.System -> stringResource(R.string.lang_follow_system)
+                            AppLanguageMode.SimplifiedChinese -> stringResource(R.string.lang_simplified_chinese)
+                            AppLanguageMode.TraditionalChinese -> stringResource(R.string.lang_traditional_chinese)
+                            AppLanguageMode.English -> stringResource(R.string.lang_english)
+                        }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .defaultMinSize(minHeight = 52.dp)
+                                .clip(RoundedCornerShape(RabbitRadius.Md))
+                                .background(if (selected) palette.primarySoft else palette.field)
+                                .border(
+                                    1.dp,
+                                    if (selected) palette.primary else palette.line,
+                                    RoundedCornerShape(RabbitRadius.Md),
+                                )
+                                .clickable {
+                                    AppLocaleManager.setLanguageMode(context, lang)
                                 }
-                            },
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Refresh,
-                                contentDescription = null,
-                                tint = palette.primaryText,
-                                modifier = Modifier.size(16.dp),
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                text = stringResource(R.string.upnp_reprobe_btn),
-                                fontSize = 12.sp,
-                                color = palette.primaryText,
-                                fontWeight = FontWeight.Medium,
+                                text = label,
+                                fontSize = 14.sp,
+                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                                color = palette.text,
+                                modifier = Modifier.weight(1f),
                             )
+                            if (selected) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Check,
+                                    contentDescription = null,
+                                    tint = palette.primaryText,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
                         }
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+fun UpdateCenterScreen(
+    onBack: () -> Unit,
+) {
+    val palette = LocalRabbitPalette.current
+    val context = LocalContext.current
+    val versionName = remember { getAppVersionName(context) }
+    val updateManager: AppUpdateManager = koinInject()
+    val updateState by updateManager.state.collectAsStateWithLifecycle()
+    val coreUpdateManager: CoreUpdateManager = koinInject()
+    val coreState by coreUpdateManager.state.collectAsStateWithLifecycle()
+
+    var showAppDialog by remember { mutableStateOf(false) }
+    var showCoreDialog by remember { mutableStateOf(false) }
+
+    fun openUrl(url: String) {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { context.startActivity(intent) }
+            .onFailure { RabbitToast.error(AppStrings.get(R.string.about_no_browser, "未找到可用的浏览器")) }
+    }
+
+    val openAppUpdateModal = {
+        showAppDialog = true
+        if (!updateState.hasUpdate &&
+            updateState.downloadState !is UpdateDownloadState.Downloading &&
+            updateState.downloadState !is UpdateDownloadState.ReadyToInstall
+        ) {
+            updateManager.checkForUpdate(force = true)
+        }
+    }
+
+    val openCoreUpdateModal = {
+        showCoreDialog = true
+        if (!coreState.hasUpdate &&
+            coreState.downloadState !is CoreDownloadState.Downloading &&
+            coreState.downloadState !is CoreDownloadState.Verifying &&
+            coreState.downloadState !is CoreDownloadState.ReadyToRestart
+        ) {
+            coreUpdateManager.checkForUpdate(force = true)
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(palette.canvas)
+            .systemBarsPadding(),
+    ) {
+        RabbitTopBar(
+            title = stringResource(R.string.home_menu_updates),
+            onBack = onBack,
+        )
+
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = RabbitSpacing.Lg, vertical = RabbitSpacing.Md),
+            verticalArrangement = Arrangement.spacedBy(RabbitSpacing.Md),
+        ) {
+            // Card 1: App Version
+            val newAppVer = updateState.availableRelease?.versionName
+            val (appBadgeText, appBadgeTone) = when {
+                newAppVer != null -> stringResource(R.string.home_badge_new_app, newAppVer) to StatusTone.Danger
+                updateState.checkStatus is UpdateCheckStatus.Checking -> stringResource(R.string.updates_checking) to StatusTone.Primary
+                else -> stringResource(R.string.updates_up_to_date) to StatusTone.Muted
+            }
+            RabbitCard(
+                modifier = Modifier.fillMaxWidth(),
+                onClick = openAppUpdateModal,
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.SystemUpdate,
+                        contentDescription = null,
+                        tint = palette.primaryText,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = stringResource(R.string.updates_app_section_title),
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = palette.text,
+                        )
+                        Text(
+                            text = "v$versionName",
+                            fontSize = 12.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = palette.muted,
+                        )
+                    }
+                    RabbitStatusPill(label = appBadgeText, tone = appBadgeTone)
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                HorizontalDivider(color = palette.line, thickness = 1.dp)
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        text = stringResource(R.string.home_menu_app_update),
+                        fontSize = 13.sp,
+                        color = palette.muted,
+                    )
+                    RabbitSecondaryButton(
+                        label = stringResource(
+                            if (newAppVer != null) R.string.updates_view_update else R.string.updates_check_now,
+                        ),
+                        onClick = openAppUpdateModal,
+                    )
+                }
+            }
+
+            // Card 2: Core Engine
+            val loadedCore = coreState.loadedCore
+            val newCoreVer = coreState.availableUpdate?.manifest?.coreVersion
+            val coreStatusTag = stringResource(
+                if (loadedCore.isDynamic) R.string.home_core_dynamic else R.string.home_core_builtin,
+            )
+            val coreSummary = buildString {
+                append("v${loadedCore.version} · $coreStatusTag · ABI v${loadedCore.abiVersion}")
+                val shortCommit = loadedCore.coreGitSha.trim()
+                if (shortCommit.isNotEmpty() && !shortCommit.equals("unknown", ignoreCase = true)) {
+                    append(" (${shortCommit.take(7)})")
+                }
+            }
+            val (coreBadgeText, coreBadgeTone) = when {
+                loadedCore.pendingRestartVersion != null ->
+                    stringResource(R.string.home_badge_pending_restart) to StatusTone.Primary
+                newCoreVer != null ->
+                    stringResource(R.string.home_badge_new_core, newCoreVer) to StatusTone.Danger
+                coreState.checkStatus is CoreCheckStatus.Checking ->
+                    stringResource(R.string.updates_checking) to StatusTone.Primary
+                else ->
+                    stringResource(R.string.updates_up_to_date) to StatusTone.Muted
+            }
+            RabbitCard(
+                modifier = Modifier.fillMaxWidth(),
+                onClick = openCoreUpdateModal,
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Memory,
+                        contentDescription = null,
+                        tint = palette.primaryText,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = stringResource(R.string.updates_core_section_title),
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = palette.text,
+                        )
+                        Text(
+                            text = coreSummary,
+                            fontSize = 12.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = palette.muted,
+                        )
+                    }
+                    RabbitStatusPill(label = coreBadgeText, tone = coreBadgeTone)
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                HorizontalDivider(color = palette.line, thickness = 1.dp)
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        text = stringResource(R.string.home_menu_core_update),
+                        fontSize = 13.sp,
+                        color = palette.muted,
+                    )
+                    RabbitSecondaryButton(
+                        label = stringResource(
+                            when {
+                                loadedCore.pendingRestartVersion != null -> R.string.updates_restart_now
+                                newCoreVer != null -> R.string.updates_view_update
+                                else -> R.string.updates_check_now
+                            },
+                        ),
+                        onClick = openCoreUpdateModal,
+                    )
+                }
+            }
+
+            RabbitPrimaryButton(
+                label = stringResource(R.string.updates_check_all),
+                busy = updateState.checkStatus is UpdateCheckStatus.Checking ||
+                    coreState.checkStatus is CoreCheckStatus.Checking,
+                modifier = Modifier.fillMaxWidth(),
+                onClick = {
+                    updateManager.checkForUpdate(force = true)
+                    coreUpdateManager.checkForUpdate(force = true)
+                },
+            )
+        }
+    }
+
+    if (showAppDialog) {
+        AppUpdateDialog(
+            state = updateState,
+            onRetryCheck = { updateManager.checkForUpdate(force = true) },
+            onStartDownload = { rel -> updateManager.startDownload(rel) },
+            onCancelDownload = { updateManager.cancelDownload() },
+            onInstall = { path -> updateManager.triggerInstall(path) },
+            onOpenReleasePage = { url -> openUrl(url) },
+            onDismiss = { showAppDialog = false },
+        )
+    }
+
+    if (showCoreDialog) {
+        CoreUpdateDialog(
+            state = coreState,
+            onRetryCheck = { coreUpdateManager.checkForUpdate(force = true) },
+            onStartDownload = { candidate -> coreUpdateManager.startDownload(candidate) },
+            onCancelDownload = { coreUpdateManager.cancelDownload() },
+            onRevertToBuiltIn = { coreUpdateManager.revertToBuiltIn() },
+            onRestartApp = { coreUpdateManager.restartApp() },
+            onSaveMirrorPrefix = { prefix -> coreUpdateManager.setMirrorPrefix(prefix) },
+            onOpenReleasePage = { url -> openUrl(url) },
+            onDismiss = { showCoreDialog = false },
+        )
     }
 }
 

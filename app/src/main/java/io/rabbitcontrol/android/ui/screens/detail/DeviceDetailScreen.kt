@@ -33,6 +33,8 @@ import androidx.compose.material.icons.rounded.Cable
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Computer
 import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.LaptopMac
@@ -85,12 +87,14 @@ import io.rabbitcontrol.android.R
 import io.rabbitcontrol.android.core.data.DeviceToolKind
 import io.rabbitcontrol.android.core.data.rememberWallpaperImage
 import io.rabbitcontrol.android.core.nativebridge.RemoteDevice
+import io.rabbitcontrol.android.core.session.SessionStatus
 import io.rabbitcontrol.android.ui.components.RabbitCard
 import io.rabbitcontrol.android.ui.components.RabbitDialog
 import io.rabbitcontrol.android.ui.components.RabbitPrimaryButton
 import io.rabbitcontrol.android.ui.components.RabbitSecondaryButton
 import io.rabbitcontrol.android.ui.components.RabbitSectionHeader
 import io.rabbitcontrol.android.ui.components.RabbitStatusPill
+import io.rabbitcontrol.android.ui.components.RabbitTextField
 import io.rabbitcontrol.android.ui.components.RabbitToast
 import io.rabbitcontrol.android.ui.components.RabbitTopBar
 import io.rabbitcontrol.android.ui.components.RcErrorHub
@@ -127,28 +131,32 @@ fun DeviceDetailScreen(
     val connectError by viewModel.connectError.collectAsStateWithLifecycle()
     val favorites by viewModel.favoriteTargets.collectAsStateWithLifecycle()
     val liveDevices by viewModel.devices.collectAsStateWithLifecycle()
+    val savedTerminalPasswordIds by viewModel.savedTerminalPasswordIds.collectAsStateWithLifecycle()
     val liveDevice = remember(device, liveDevices) {
         liveDevices.firstOrNull { it.id == device.id } ?: device
     }
 
     val wallpaperBitmap = rememberWallpaperImage(viewModel.wallpaperCache, liveDevice.id, wallpaperVersion, 960)
-    val isCurrentConnected = activeSession.targetId == liveDevice.id && activeSession.negotiated != null
+    val isCurrentStreaming = activeSession.targetId == liveDevice.id && activeSession.status is SessionStatus.Streaming
+    val isCurrentToolsOnly = isCurrentStreaming && (activeSession.toolsOnly || activeSession.mediaPaused)
+    val isCurrentConnected = activeSession.targetId == liveDevice.id && activeSession.negotiated != null && !isCurrentToolsOnly
     val isFav = liveDevice.id in favorites
 
     var sheetMode by remember { mutableStateOf<DetailSheetMode?>(null) }
     var powerConfirmKind by remember { mutableStateOf<String?>(null) }
     var showRemoveConfirm by remember { mutableStateOf(false) }
+    var showRenameDialog by remember { mutableStateOf(false) }
     val osLabel = remember(liveDevice.os) { formatDetailOs(liveDevice.os) }
 
     fun triggerTool(kind: DeviceToolKind) {
         when (kind) {
             DeviceToolKind.WatchMode -> {
-                viewModel.startSessionAndNavigate(liveDevice.id, liveDevice.name, liveDevice.os, watchOnly = true) {
+                viewModel.startSessionAndNavigate(liveDevice.id, liveDevice.name, liveDevice.os, watchOnly = true, toolsOnly = false) {
                     onEnterDesktop(true)
                 }
             }
             DeviceToolKind.FileTransfer, DeviceToolKind.Terminal, DeviceToolKind.PortMap -> {
-                viewModel.startSessionAndNavigate(liveDevice.id, liveDevice.name, liveDevice.os, watchOnly = false) {
+                viewModel.startSessionAndNavigate(liveDevice.id, liveDevice.name, liveDevice.os, watchOnly = false, toolsOnly = true) {
                     onOpenTool(kind)
                 }
             }
@@ -163,13 +171,25 @@ fun DeviceDetailScreen(
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
             RabbitTopBar(
-                title = device.name,
+                title = liveDevice.name,
                 subtitle = osLabel,
                 onBack = onBack,
                 actions = {
+                    if (liveDevice.id.isNotBlank() && !liveDevice.id.contains(':')) {
+                        IconButton(
+                            onClick = { showRenameDialog = true },
+                            modifier = Modifier.size(44.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Edit,
+                                contentDescription = stringResource(R.string.device_rename_title),
+                                tint = palette.muted,
+                            )
+                        }
+                    }
                     IconButton(
-                        onClick = { viewModel.toggleFavorite(device.id) },
-                        modifier = Modifier.size(48.dp),
+                        onClick = { viewModel.toggleFavorite(liveDevice.id) },
+                        modifier = Modifier.size(44.dp),
                     ) {
                         Icon(
                             imageVector = if (isFav) Icons.Rounded.Star else Icons.Rounded.StarOutline,
@@ -318,6 +338,48 @@ fun DeviceDetailScreen(
                     }
                 }
 
+                if (isCurrentToolsOnly) {
+                    RabbitCard(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Icon(Icons.Rounded.Terminal, null, tint = palette.primaryText, modifier = Modifier.size(20.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    stringResource(R.string.detail_tools_session_active),
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = palette.text,
+                                )
+                                Text(
+                                    stringResource(R.string.detail_tools_session_sub),
+                                    fontSize = 11.sp,
+                                    color = palette.muted,
+                                )
+                            }
+                            TextButton(
+                                onClick = {
+                                    viewModel.upgradeActiveSessionToDesktop {
+                                        onEnterDesktop(false)
+                                    }
+                                },
+                            ) {
+                                Text(
+                                    stringResource(R.string.detail_enter_desktop),
+                                    color = palette.primaryText,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 13.sp,
+                                )
+                            }
+                        }
+                    }
+                }
+
                 // 2x2 Quick Tools Grid
                 RabbitSectionHeader(
                     title = stringResource(R.string.detail_quick_tools),
@@ -451,6 +513,36 @@ fun DeviceDetailScreen(
                         Spacer(modifier = Modifier.width(10.dp))
                         Text(stringResource(R.string.detail_more_and_power), fontSize = 14.sp, fontWeight = FontWeight.Medium, color = palette.text, modifier = Modifier.weight(1f))
                         Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, tint = palette.muted)
+                    }
+
+                    if (liveDevice.id in savedTerminalPasswordIds) {
+                        val clearedMsg = stringResource(R.string.detail_cleared_term_pw)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        HorizontalDivider(color = palette.line, thickness = 1.dp)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .defaultMinSize(minHeight = 44.dp)
+                                .clip(RoundedCornerShape(RabbitRadius.Sm))
+                                .clickable {
+                                    viewModel.clearSavedTerminalPassword(liveDevice.id)
+                                    RabbitToast.info(clearedMsg)
+                                }
+                                .padding(vertical = 4.dp),
+                        ) {
+                            Icon(Icons.Rounded.DeleteOutline, null, tint = palette.muted, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = stringResource(R.string.detail_clear_term_pw),
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = palette.text,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, tint = palette.muted)
+                        }
                     }
 
                     if (device.id.isNotBlank() && !device.id.contains(':')) {
@@ -732,19 +824,47 @@ fun DeviceDetailScreen(
         val removedMsg = stringResource(R.string.detail_unbind_success)
         RabbitDialog(
             title = stringResource(R.string.detail_unbind_title),
-            message = stringResource(R.string.detail_unbind_msg, device.name),
+            message = stringResource(R.string.detail_unbind_msg, liveDevice.name),
             onDismissRequest = { showRemoveConfirm = false },
             dismissLabel = stringResource(R.string.common_cancel),
             confirmLabel = stringResource(R.string.detail_unbind_confirm),
             destructive = true,
             onConfirm = {
                 showRemoveConfirm = false
-                viewModel.removeDevice(device.id) {
+                viewModel.removeDevice(liveDevice.id) {
                     RabbitToast.success(removedMsg)
                     onBack()
                 }
             },
         )
+    }
+
+    if (showRenameDialog) {
+        var aliasDraft by remember(liveDevice.name) { mutableStateOf(liveDevice.name) }
+        val renamedMsg = stringResource(R.string.device_rename_success)
+        RabbitDialog(
+            title = stringResource(R.string.device_rename_title),
+            onDismissRequest = { showRenameDialog = false },
+            dismissLabel = stringResource(R.string.common_cancel),
+            confirmLabel = stringResource(R.string.common_save),
+            confirmEnabled = aliasDraft.trim().isNotEmpty(),
+            onConfirm = {
+                showRenameDialog = false
+                viewModel.renameDevice(liveDevice.id, aliasDraft.trim()) { ok, err ->
+                    if (ok) {
+                        RabbitToast.success(renamedMsg)
+                    } else if (!err.isNullOrBlank()) {
+                        RabbitToast.error(err)
+                    }
+                }
+            },
+        ) {
+            RabbitTextField(
+                value = aliasDraft,
+                onValueChange = { aliasDraft = it },
+                placeholder = stringResource(R.string.device_rename_hint),
+            )
+        }
     }
 }
 

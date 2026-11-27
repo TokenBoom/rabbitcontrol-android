@@ -138,7 +138,18 @@ class SessionViewModel(
     fun setCodec(codec: String) = sessionManager.setCodec(codec)
     fun setPreferHardwareDecode(preferHardware: Boolean) = sessionManager.setPreferHardwareDecode(preferHardware)
     fun setConnectionMode(mode: ConnectionModePref) = sessionManager.setConnectionMode(mode)
-    fun setPrivacyMode(mode: String) = sessionManager.setPrivacyMode(mode)
+    fun setPrivacyMode(
+        mode: String,
+        preset: String = if (mode == "privacy") "preset-1" else "",
+        customImageBase64: String? = null,
+    ) = sessionManager.setPrivacyMode(mode, preset, customImageBase64)
+    fun setMouseMode(mode: String) = sessionManager.setMouseMode(mode)
+    fun setAutoLockRemoteOnDisconnect(enabled: Boolean) =
+        prefsStore.update { it.copy(autoLockRemoteOnDisconnect = enabled) }
+    fun checkRemoteHostUpdate() = sessionManager.checkRemoteHostUpdate()
+    fun triggerRemoteHostUpdate(mirrorUrl: String = "") = sessionManager.triggerRemoteHostUpdate(mirrorUrl)
+    fun cancelRemoteHostUpdate() = sessionManager.cancelRemoteHostUpdate()
+    fun upgradeToDesktop() = sessionManager.upgradeToDesktop()
     fun setHostMute(muted: Boolean) = sessionManager.setHostMute(muted, restoreOnExit = true)
     fun listDisplays() = sessionManager.listDisplays()
     fun switchDisplay(displayId: Int) = sessionManager.switchDisplay(displayId)

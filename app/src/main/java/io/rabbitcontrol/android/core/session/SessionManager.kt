@@ -8,8 +8,11 @@ import androidx.compose.runtime.Immutable
 import com.rabbitcontrol.android.error.RcErrorCodes
 import com.rabbitcontrol.android.error.RcUiError
 import io.rabbitcontrol.android.R
+import io.rabbitcontrol.android.core.data.AppLockStore
 import io.rabbitcontrol.android.core.data.ConnectionModePref
 import io.rabbitcontrol.android.core.data.InteractionPrefsStore
+import io.rabbitcontrol.android.core.data.PortMapRuleStore
+import io.rabbitcontrol.android.core.data.SavedPortMapRule
 import io.rabbitcontrol.android.core.data.TargetHistoryStore
 import io.rabbitcontrol.android.core.data.WallpaperCache
 import io.rabbitcontrol.android.core.error.RcUiErrorCodec
@@ -28,9 +31,18 @@ import io.rabbitcontrol.android.core.nativebridge.PortMapRule
 import io.rabbitcontrol.android.core.nativebridge.PrivacyStateModel
 import io.rabbitcontrol.android.core.nativebridge.RemoteDisplayModel
 import io.rabbitcontrol.android.core.nativebridge.RemoteFileEntry
+import io.rabbitcontrol.android.core.nativebridge.RemoteHostVersionModel
+import io.rabbitcontrol.android.core.nativebridge.RemoteUpdateCheckInfo
+import io.rabbitcontrol.android.core.nativebridge.RemoteUpdateProgressModel
+import io.rabbitcontrol.android.core.nativebridge.TerminalLockStateModel
 import io.rabbitcontrol.android.core.nativebridge.TerminalSessionSummary
+import io.rabbitcontrol.android.core.nativebridge.TerminalUnlockResultModel
 import io.rabbitcontrol.android.core.nativebridge.ToolPermissionsModel
 import io.rabbitcontrol.android.core.nativebridge.parseHighRefreshAdvisory
+import io.rabbitcontrol.android.core.nativebridge.parseRemoteHostVersion
+import io.rabbitcontrol.android.core.nativebridge.parseRemoteUpdateProgress
+import io.rabbitcontrol.android.core.nativebridge.parseTerminalLockState
+import io.rabbitcontrol.android.core.nativebridge.parseTerminalUnlockResult
 import io.rabbitcontrol.android.core.nativebridge.toFileEntries
 import io.rabbitcontrol.android.core.nativebridge.toFileTransferItem
 import io.rabbitcontrol.android.core.nativebridge.toPortMapRule
@@ -82,10 +94,17 @@ data class ActiveSessionState(
     val firstFrameSeen: Boolean = false,
     val toolPermissions: ToolPermissionsModel = ToolPermissionsModel(),
     val mediaPaused: Boolean = false,
+    val toolsOnly: Boolean = false,
     val displays: List<RemoteDisplayModel> = emptyList(),
     val activeDisplayId: Int = 0,
     val privacy: PrivacyStateModel = PrivacyStateModel(),
     val hostMute: HostMuteStateModel = HostMuteStateModel(),
+    val mouseMode: String = "smart",
+    val terminalLockState: TerminalLockStateModel = TerminalLockStateModel(),
+    val lastTerminalUnlockResult: TerminalUnlockResultModel? = null,
+    val remoteHostVersion: RemoteHostVersionModel? = null,
+    val remoteUpdateProgress: RemoteUpdateProgressModel? = null,
+    val remoteUpdateCheckInfo: RemoteUpdateCheckInfo? = null,
 )
 
 sealed interface FileToolEvent {
@@ -130,6 +149,8 @@ class SessionManager(
     private val wallpaperCache: WallpaperCache,
     private val prefsStore: InteractionPrefsStore,
     private val clipboardBridge: ClipboardSyncBridge,
+    private val appLockStore: AppLockStore,
+    private val portMapRuleStore: PortMapRuleStore,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var pollJob: Job? = null
@@ -141,6 +162,9 @@ class SessionManager(
     private var lastRequestOs: String = ""
     private var lastPassword: String? = null
     private var lastForceRelay: Boolean = false
+    private var lastToolsOnly: Boolean = false
+    @Volatile
+    private var portMapRestoredForSession: Boolean = false
 
     private val _state = MutableStateFlow(ActiveSessionState())
     val state: StateFlow<ActiveSessionState> = _state.asStateFlow()
@@ -179,15 +203,27 @@ class SessionManager(
         watchOnly: Boolean,
         password: String? = null,
         forceRelay: Boolean = false,
+        toolsOnly: Boolean = false,
+        encryptConnection: Boolean? = null,
     ): Result<Unit> = withContext(Dispatchers.IO) {
+        if (appLockStore.state.value.locked) {
+            return@withContext Result.failure(
+                IllegalStateException(
+                    AppStrings.get(R.string.app_lock_blocked_connect, "应用已锁定，请先解锁后再发起连接"),
+                ),
+            )
+        }
         val prefs = prefsStore.state.value
         val effectiveMode = if (forceRelay) ConnectionModePref.TcpRelay else prefs.connectionMode
         val effectiveForceRelay = forceRelay || effectiveMode == ConnectionModePref.TcpRelay
+        val effEncrypt = encryptConnection ?: prefs.encryptByDefault
         lastRequestTarget = targetId
         lastRequestName = deviceName
         lastRequestOs = deviceOs
         lastPassword = password
         lastForceRelay = effectiveForceRelay
+        lastToolsOnly = toolsOnly
+        portMapRestoredForSession = false
 
         NativeRuntimeBootstrap.ensureReady(context)
         Core.setPreferHardwareDecode(prefs.preferHardwareDecode)
@@ -206,8 +242,12 @@ class SessionManager(
             watchOnly = watchOnly,
             audioMuted = !prefs.audioEnabledDefault,
             clipboardEnabled = prefs.clipboardEnabledDefault,
+            mediaPaused = toolsOnly,
+            toolsOnly = toolsOnly,
             privacy = PrivacyStateModel(supported = isDesktopHost),
             hostMute = HostMuteStateModel(supported = isDesktopHost),
+            mouseMode = "smart",
+            terminalLockState = TerminalLockStateModel(),
         )
 
         val req = JSONObject()
@@ -215,7 +255,8 @@ class SessionManager(
             .put("watchOnly", watchOnly)
             .put("forceRelay", effectiveForceRelay)
             .put("connectionMode", effectiveMode.wireValue)
-            .put("encryptConnection", true)
+            .put("encryptConnection", effEncrypt)
+            .put("toolsOnly", toolsOnly)
             .put("audioEnabled", prefs.audioEnabledDefault)
             .put("clipboardEnabled", prefs.clipboardEnabledDefault)
         if (!password.isNullOrEmpty()) req.put("password", password)
@@ -382,7 +423,9 @@ class SessionManager(
         val active = cur.status is SessionStatus.Streaming ||
             cur.status is SessionStatus.Connecting ||
             cur.status is SessionStatus.Reconnecting ||
-            cur.status is SessionStatus.Switching
+            cur.status is SessionStatus.Switching ||
+            cur.status is SessionStatus.Error ||
+            cur.status is SessionStatus.Ended
         if (active && lastRequestTarget.isNotBlank()) {
             Log.i("RC_DIAG", "setConnectionMode=${mode.wireValue}; reconnecting immediately")
             scope.launch {
@@ -393,26 +436,201 @@ class SessionManager(
                     watchOnly = cur.watchOnly,
                     password = lastPassword,
                     forceRelay = mode == ConnectionModePref.TcpRelay,
+                    toolsOnly = cur.toolsOnly,
                 )
             }
         }
     }
 
+    fun upgradeToDesktop() {
+        Core.sendSessionCommand(JSONObject().put("type", "upgrade_to_desktop").toString())
+        lastToolsOnly = false
+        _state.value = _state.value.copy(toolsOnly = false, mediaPaused = false)
+    }
+
+    fun unlockTerminal(password: String, username: String? = null) {
+        scope.launch {
+            runCatching {
+                val cmd = JSONObject()
+                    .put("type", "terminal_unlock")
+                    .put("password", password)
+                val cleanUser = username?.trim().orEmpty()
+                if (cleanUser.isNotEmpty()) cmd.put("username", cleanUser)
+                Core.sendSessionCommand(cmd.toString())
+            }.onFailure { err ->
+                val uiErr = RcUiErrorCodec.fromThrowable(err, fallbackCode = RcErrorCodes.TOOL_TERMINAL_FAILED)
+                _state.value = _state.value.copy(
+                    lastTerminalUnlockResult = TerminalUnlockResultModel(
+                        ok = false,
+                        error = uiErr.message.ifBlank { err.message },
+                    ),
+                )
+            }
+        }
+    }
+
+    fun setMouseMode(mode: String) {
+        val norm = when (mode.trim().lowercase()) {
+            "remote" -> "remote"
+            "local" -> "local"
+            else -> "smart"
+        }
+        Core.sendSessionCommand(JSONObject().put("type", "set_mouse_mode").put("mode", norm).toString())
+        _state.value = _state.value.copy(mouseMode = norm)
+    }
+
     fun setPrivacyMode(
         mode: String,
         preset: String = if (mode == "privacy") "preset-1" else "",
+        customImageBase64: String? = null,
     ) {
-        Core.sendSessionCommand(
-            JSONObject()
-                .put("type", "set_privacy_mode")
-                .put("mode", mode)
-                .put("preset", preset)
-                .toString(),
-        )
+        val cmd = JSONObject()
+            .put("type", "set_privacy_mode")
+            .put("mode", mode)
+            .put("preset", preset)
+        if (!customImageBase64.isNullOrBlank()) {
+            cmd.put("customImageBase64", customImageBase64)
+        }
+        Core.sendSessionCommand(cmd.toString())
         val cur = _state.value
         if (cur.privacy.supported) {
             _state.value = cur.copy(privacy = cur.privacy.copy(mode = mode, preset = preset))
         }
+    }
+
+    fun checkRemoteHostUpdate() {
+        val hostVer = _state.value.remoteHostVersion ?: return
+        if (!hostVer.isOwnerSession || !hostVer.updateCapable) return
+        if (_state.value.remoteUpdateCheckInfo?.checking == true) return
+        _state.value = _state.value.copy(
+            remoteUpdateCheckInfo = RemoteUpdateCheckInfo(checking = true),
+        )
+        scope.launch {
+            runCatching {
+                val apiUrl = "https://api.github.com/repos/TokenBoom/rabbitcontrol-macos/releases/latest"
+                val conn = (java.net.URL(apiUrl).openConnection() as java.net.HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = 10_000
+                    readTimeout = 12_000
+                    setRequestProperty("Accept", "application/vnd.github+json")
+                    setRequestProperty("User-Agent", "RabbitControl-Android")
+                }
+                val code = conn.responseCode
+                if (code !in 200..299) {
+                    error("HTTP $code")
+                }
+                val body = conn.inputStream.bufferedReader().use { it.readText() }
+                val json = JSONObject(body)
+                val tag = json.optString("tag_name").trim().removePrefix("v").removePrefix("V")
+                val assets = json.optJSONArray("assets") ?: org.json.JSONArray()
+                val hostArch = when (hostVer.arch.trim().lowercase()) {
+                    "aarch64", "arm64" -> "arm64"
+                    "x86_64", "amd64", "x64" -> "x86_64"
+                    else -> hostVer.arch.trim().lowercase()
+                }
+                var selectedName: String? = null
+                var selectedUrl: String? = null
+                var sumsUrl: String? = null
+                for (i in 0 until assets.length()) {
+                    val a = assets.getJSONObject(i)
+                    val name = a.optString("name")
+                    val url = a.optString("browser_download_url")
+                    val lower = name.lowercase()
+                    if (lower == "sha256sums.txt" || lower.endsWith("sha256sums.txt")) {
+                        sumsUrl = url
+                    } else if (lower.endsWith(".dmg")) {
+                        if (lower.contains(hostArch) || (selectedName == null && lower.contains("universal"))) {
+                            selectedName = name
+                            selectedUrl = url
+                        }
+                    }
+                }
+                var sha256: String? = null
+                if (!sumsUrl.isNullOrBlank() && !selectedName.isNullOrBlank()) {
+                    runCatching {
+                        val sConn = (java.net.URL(sumsUrl).openConnection() as java.net.HttpURLConnection).apply {
+                            requestMethod = "GET"
+                            connectTimeout = 8_000
+                            readTimeout = 10_000
+                            setRequestProperty("User-Agent", "RabbitControl-Android")
+                        }
+                        if (sConn.responseCode in 200..299) {
+                            val txt = sConn.inputStream.bufferedReader().use { it.readText() }
+                            sha256 = txt.lineSequence()
+                                .map { it.trim() }
+                                .firstOrNull { it.endsWith(selectedName!!) }
+                                ?.split(Regex("\\s+"))
+                                ?.firstOrNull()
+                                ?.lowercase()
+                                ?.takeIf { it.length == 64 }
+                        }
+                    }
+                }
+                val hasUpdate = compareSemVer(tag, hostVer.version) > 0 &&
+                    !selectedUrl.isNullOrBlank() &&
+                    !sha256.isNullOrBlank()
+                RemoteUpdateCheckInfo(
+                    checking = false,
+                    latestVersion = tag.ifBlank { null },
+                    hasUpdate = hasUpdate,
+                    downloadUrl = selectedUrl,
+                    expectedSha256 = sha256,
+                    assetName = selectedName,
+                    error = null,
+                )
+            }.onSuccess { info ->
+                _state.value = _state.value.copy(remoteUpdateCheckInfo = info)
+            }.onFailure { err ->
+                _state.value = _state.value.copy(
+                    remoteUpdateCheckInfo = RemoteUpdateCheckInfo(
+                        checking = false,
+                        error = err.message ?: "Check failed",
+                    ),
+                )
+            }
+        }
+    }
+
+    fun triggerRemoteHostUpdate(mirrorUrl: String = "") {
+        val check = _state.value.remoteUpdateCheckInfo ?: return
+        val ver = check.latestVersion ?: return
+        val url = check.downloadUrl ?: return
+        val sha = check.expectedSha256 ?: return
+        val asset = check.assetName ?: return
+        val req = JSONObject()
+            .put("targetVersion", ver)
+            .put("downloadUrl", url)
+            .put("expectedSha256", sha)
+            .put("assetName", asset)
+            .put("mirrorUrl", mirrorUrl.trim())
+            .put("relayFallbackAllowed", true)
+        Core.sendSessionCommand(
+            JSONObject()
+                .put("type", "trigger_remote_update")
+                .put("request", req)
+                .toString(),
+        )
+    }
+
+    fun cancelRemoteHostUpdate() {
+        Core.sendSessionCommand(JSONObject().put("type", "cancel_remote_update").toString())
+    }
+
+    private fun compareSemVer(a: String, b: String): Int {
+        fun parse(raw: String): List<Int> =
+            raw.trim().removePrefix("v").removePrefix("V")
+                .substringBefore('-').substringBefore('+')
+                .split('.')
+                .map { it.toIntOrNull() ?: 0 }
+        val pa = parse(a)
+        val pb = parse(b)
+        val len = maxOf(pa.size, pb.size, 3)
+        for (i in 0 until len) {
+            val va = pa.getOrElse(i) { 0 }
+            val vb = pb.getOrElse(i) { 0 }
+            if (va != vb) return va.compareTo(vb)
+        }
+        return 0
     }
 
     fun setHostMute(muted: Boolean, restoreOnExit: Boolean = true) {
@@ -499,10 +717,17 @@ class SessionManager(
             firstFrameSeen = false,
             toolPermissions = ToolPermissionsModel(),
             mediaPaused = false,
+            toolsOnly = false,
             displays = emptyList(),
             activeDisplayId = 0,
             privacy = PrivacyStateModel(supported = false),
             hostMute = HostMuteStateModel(supported = false),
+            mouseMode = "smart",
+            terminalLockState = TerminalLockStateModel(),
+            lastTerminalUnlockResult = null,
+            remoteHostVersion = null,
+            remoteUpdateProgress = null,
+            remoteUpdateCheckInfo = null,
         )
     }
 
@@ -615,6 +840,10 @@ class SessionManager(
                 )
                 if (!_state.value.deviceOs.equals("android", ignoreCase = true)) {
                     listDisplays()
+                }
+                if (!portMapRestoredForSession && _state.value.targetId.isNotBlank()) {
+                    portMapRestoredForSession = true
+                    restoreSavedPortMapRules(_state.value.targetId)
                 }
                 SessionForegroundService.startOrUpdate(
                     context,
@@ -798,8 +1027,46 @@ class SessionManager(
                 )
                 _state.value = cur.copy(
                     mediaPaused = false,
+                    toolsOnly = false,
                     negotiated = nextNeg,
                 )
+            }
+            "mouse_mode_state" -> if (data != null) {
+                val m = data.optString("mode", "smart").trim().lowercase().ifBlank { "smart" }
+                _state.value = _state.value.copy(mouseMode = m)
+            }
+            "terminal_lock_state" -> if (data != null) {
+                val lockState = parseTerminalLockState(data)
+                _state.value = _state.value.copy(
+                    terminalLockState = lockState,
+                    lastTerminalUnlockResult = if (!lockState.required || lockState.unlocked) null else _state.value.lastTerminalUnlockResult,
+                )
+            }
+            "terminal_unlock_result" -> if (data != null) {
+                val res = parseTerminalUnlockResult(data)
+                val cur = _state.value
+                _state.value = cur.copy(
+                    lastTerminalUnlockResult = res,
+                    terminalLockState = if (res.ok) {
+                        cur.terminalLockState.copy(unlocked = true, retryAfterSecs = 0)
+                    } else if (res.retryAfterSecs > 0) {
+                        cur.terminalLockState.copy(retryAfterSecs = res.retryAfterSecs)
+                    } else {
+                        cur.terminalLockState
+                    },
+                )
+            }
+            "host_version" -> if (data != null) {
+                val hv = parseRemoteHostVersion(data)
+                if (hv != null) {
+                    _state.value = _state.value.copy(remoteHostVersion = hv)
+                }
+            }
+            "remote_update_status" -> if (data != null) {
+                val prog = parseRemoteUpdateProgress(data)
+                if (prog != null) {
+                    _state.value = _state.value.copy(remoteUpdateProgress = prog)
+                }
             }
             "tool_permissions_updated" -> if (data != null) {
                 _state.value = _state.value.copy(
@@ -845,6 +1112,51 @@ class SessionManager(
 
     fun updatePortMapRules(rules: List<PortMapRule>) {
         _portMapRules.value = rules
+    }
+
+    private fun restoreSavedPortMapRules(targetId: String) {
+        val saved = portMapRuleStore.loadRules(targetId)
+        if (saved.isEmpty()) return
+        scope.launch {
+            val existing = callTool(JSONObject().put("action", "portmap_list")).getOrNull()
+                ?.optJSONArray("rules")
+                ?.let { arr -> List(arr.length()) { arr.getJSONObject(it).toPortMapRule() } }
+                ?: emptyList()
+            for (rule in saved) {
+                val alreadyExists = existing.any {
+                    it.localPort == rule.localPort &&
+                        it.targetAddr == rule.targetAddr &&
+                        it.targetPort == rule.targetPort
+                }
+                if (alreadyExists) continue
+                val addResp = callTool(
+                    JSONObject()
+                        .put("action", "portmap_add")
+                        .put("name", rule.name)
+                        .put("localPort", rule.localPort)
+                        .put("targetAddr", rule.targetAddr)
+                        .put("targetPort", rule.targetPort),
+                ).getOrNull()
+                if (addResp != null) {
+                    val createdId = addResp.optJSONObject("rule")?.optLong("id", 0L) ?: 0L
+                    if (!rule.enabled && createdId > 0L) {
+                        val toggled = callTool(
+                            JSONObject()
+                                .put("action", "portmap_toggle")
+                                .put("id", createdId)
+                                .put("enabled", false),
+                        ).getOrNull()
+                        toggled?.optJSONArray("rules")?.let { arr ->
+                            _portMapRules.value = List(arr.length()) { arr.getJSONObject(it).toPortMapRule() }
+                        }
+                    } else {
+                        addResp.optJSONArray("rules")?.let { arr ->
+                            _portMapRules.value = List(arr.length()) { arr.getJSONObject(it).toPortMapRule() }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private fun acquireMulticastLock() {

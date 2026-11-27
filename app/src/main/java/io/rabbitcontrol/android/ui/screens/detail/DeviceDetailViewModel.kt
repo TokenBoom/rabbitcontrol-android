@@ -8,6 +8,7 @@ import io.rabbitcontrol.android.R
 import io.rabbitcontrol.android.core.data.AccountRepository
 import io.rabbitcontrol.android.core.data.DeviceToolKind
 import io.rabbitcontrol.android.core.data.TargetHistoryStore
+import io.rabbitcontrol.android.core.data.TerminalPasswordStore
 import io.rabbitcontrol.android.core.data.ToolOrderStore
 import io.rabbitcontrol.android.core.data.WallpaperCache
 import io.rabbitcontrol.android.core.error.RcUiErrorCodec
@@ -27,6 +28,7 @@ class DeviceDetailViewModel(
     val wallpaperCache: WallpaperCache,
     private val sessionManager: SessionManager,
     private val accountRepository: AccountRepository,
+    private val terminalPasswordStore: TerminalPasswordStore,
 ) : ViewModel() {
 
     val toolOrder: StateFlow<List<DeviceToolKind>> = toolOrderStore.order
@@ -34,6 +36,7 @@ class DeviceDetailViewModel(
     val activeSession: StateFlow<ActiveSessionState> = sessionManager.state
     val favoriteTargets: StateFlow<List<String>> = historyStore.favorites
     val devices: StateFlow<List<RemoteDevice>> = accountRepository.devices
+    val savedTerminalPasswordIds: StateFlow<Set<String>> = terminalPasswordStore.savedDeviceIds
 
     private val _connecting = MutableStateFlow(false)
     val connecting: StateFlow<Boolean> = _connecting.asStateFlow()
@@ -65,10 +68,15 @@ class DeviceDetailViewModel(
         deviceOs: String,
         watchOnly: Boolean,
         password: String? = null,
+        toolsOnly: Boolean = false,
         onReady: () -> Unit,
     ) {
         if (sessionManager.isConnectedTo(deviceId)) {
-            if (sessionManager.state.value.watchOnly != watchOnly) {
+            val active = sessionManager.state.value
+            if (!toolsOnly && (active.toolsOnly || active.mediaPaused)) {
+                sessionManager.upgradeToDesktop()
+            }
+            if (active.watchOnly != watchOnly) {
                 sessionManager.setWatchOnly(watchOnly)
             }
             onReady()
@@ -83,6 +91,7 @@ class DeviceDetailViewModel(
                 deviceOs = deviceOs,
                 watchOnly = watchOnly,
                 password = password,
+                toolsOnly = toolsOnly,
             )
             _connecting.value = false
             res.onSuccess { onReady() }
@@ -94,6 +103,26 @@ class DeviceDetailViewModel(
                     )
                 }
         }
+    }
+
+    fun upgradeActiveSessionToDesktop(onReady: () -> Unit) {
+        sessionManager.upgradeToDesktop()
+        onReady()
+    }
+
+    fun renameDevice(deviceId: String, alias: String, onDone: (Boolean, String?) -> Unit) {
+        viewModelScope.launch {
+            runCatching { accountRepository.renameDevice(deviceId, alias) }
+                .onSuccess { onDone(true, null) }
+                .onFailure { err ->
+                    val uiErr = RcUiErrorCodec.fromThrowable(err)
+                    onDone(false, uiErr.message.ifBlank { err.message })
+                }
+        }
+    }
+
+    fun clearSavedTerminalPassword(deviceId: String) {
+        terminalPasswordStore.clear(deviceId)
     }
 
     fun sendWakeOnLan(deviceId: String, onSuccess: (String) -> Unit) {

@@ -925,4 +925,136 @@
     <string name="ft_notice_renamed">已重命名</string>
     <string name="ft_err_delete_failed">删除失败</string>
     <string name="ft_err_rename_failed">重命名失败</string>
+
+    <!-- v0.2.3 功能对齐 -->
+    <string name="home_filter_controllable">可控设备 (%1$d)</string>
+    <string name="home_section_non_controllable">未开启被控的设备 (%1$d)</string>
+    <string name="home_remote_control_off">未开启被控</string>
+    <string name="home_remote_control_off_hint">该设备未开启被控端，不支持远控连接</string>
+    <string name="home_device_more_cd">设备操作</string>
+    <string name="home_menu_security">安全设置</string>
+
+    <string name="device_rename_title">修改设备备注</string>
+    <string name="device_rename_hint">输入新的设备名称</string>
+    <string name="device_rename_success">设备备注已更新</string>
+    <string name="device_rename_empty_err">设备备注名不能为空</string>
+
+    <string name="detail_tools_session_active">纯工具会话运行中</string>
+    <string name="detail_tools_session_sub">当前仅启用工具通道，未拉取桌面画面流</string>
+    <string name="detail_clear_term_pw">清除已记住的终端系统密码</string>
+    <string name="detail_cleared_term_pw">已清除记住的终端系统密码</string>
+
+    <string name="pm_auto_persist_hint">映射规则按目标设备本地保存，重连后自动恢复</string>
+
+    <string name="cp_bitrate_auto">自动</string>
+    <string name="cp_host_mute_title">被控端静音</string>
+    <string name="cp_privacy_custom">自定义壁纸</string>
+    <string name="cp_privacy_custom_applied">已应用自定义防窥壁纸</string>
+    <string name="cp_privacy_custom_failed">图片读取失败或体积过大</string>
+    <string name="cp_mouse_mode_label">鼠标光标模式</string>
+    <string name="cp_mouse_mode_smart">智能</string>
+    <string name="cp_mouse_mode_remote">远端</string>
+    <string name="cp_mouse_mode_local">本地</string>
+    <string name="cp_lock_on_disconnect">断开远控时锁定被控端屏幕</string>
+    <string name="cp_host_update_title">被控端远程升级</string>
+    <string name="cp_host_update_check_btn">检查被控端新版本</string>
+    <string name="cp_host_update_checking">正在检查…</string>
+    <string name="cp_host_update_latest">被控端已是最新 (v%1$s)</string>
+    <string name="cp_host_update_check_err">检查失败：%1$s</string>
+    <string name="cp_host_update_apply">升级被控端至 v%1$s</string>
+    <string name="cp_host_update_confirm_title">确认升级被控端</string>
+    <string name="cp_host_update_confirm_msg">确定要授权远端主机升级至 v%1$s 吗？安装期间被控端会短暂重启。</string>
+    <string name="cp_host_update_apply_btn">开始升级</string>
+    <string name="cp_host_update_done">被控端升级完成</string>
+
+    <string name="term_unlock_title">需要校验系统密码</string>
+    <string name="term_unlock_sub">被控端当前处于锁屏状态，请验证远端系统登录密码以启用远程终端（不会解锁物理屏幕）。</string>
+    <string name="term_unlock_user_label">系统用户名（可选）</string>
+    <string name="term_unlock_user_hint">留空则使用当前登录用户</string>
+    <string name="term_unlock_pw_label">系统登录密码</string>
+    <string name="term_unlock_pw_hint">输入远端主机系统密码</string>
+    <string name="term_unlock_remember">为该设备记住密码</string>
+    <string name="term_unlock_btn">验证并开启</string>
+    <string name="term_unlock_cooldown">尝试次数过多，请 %1$d 秒后重试</string>
+
+    <string name="host_auth_mode_title">连接验证策略</string>
+    <string name="host_auth_mode_temp">临时验证码</string>
+    <string name="host_auth_mode_fixed">固定密码</string>
+    <string name="host_auth_mode_approval">仅手动审批</string>
+    <string name="host_auth_mode_approval_note">开启后，每次远端请求协助都需要在本机手动点击同意。</string>
+    <string name="host_fixed_pw_label">固定访问密码</string>
+    <string name="host_fixed_pw_hint">请输入固定访问密码</string>
+    <string name="host_fixed_pw_saved">固定访问密码已更新</string>
+
+    <string name="sec_title">安全设置</string>
+    <string name="sec_app_lock_section">客户端应用锁</string>
+    <string name="sec_lock_on">已开启</string>
+    <string name="sec_lock_off">未开启</string>
+    <string name="sec_session_section">远控会话安全</string>
+    <string name="sec_mtls_default_title">默认开启 mTLS 端到端加密</string>
+    <string name="sec_mtls_default_sub">建立会话时双向验证设备证书并加密传输流</string>
+    <string name="sec_lock_on_disconnect_title">断开时默认勾选锁定远端屏幕</string>
+    <string name="sec_lock_on_disconnect_sub">退出远控确认弹窗时自动预选锁屏保护</string>
+    <string name="sec_cert_section">本机设备证书 (mTLS)</string>
+    <string name="sec_cert_loading">检测中…</string>
+    <string name="sec_cert_valid">有效</string>
+    <string name="sec_cert_needs_renewal">建议续签</string>
+    <string name="sec_cert_missing">未签发</string>
+    <string name="sec_cert_fingerprint">SHA-256 指纹</string>
+    <string name="sec_cert_serial">证书序列号</string>
+    <string name="sec_cert_expires">到期时间</string>
+    <string name="sec_cert_none_desc">当前尚未在本机签发设备证书，请保持登录后点击立即续签。</string>
+    <string name="sec_cert_renew_btn">立即续签证书</string>
+    <string name="sec_cert_renewing">正在续签…</string>
+    <string name="sec_cert_renew_ok">本机设备证书已续签</string>
+
+    <string name="app_lock_enable_title">启用应用锁</string>
+    <string name="app_lock_enable_sub">进入应用或连接设备前需先验证 PIN 码或生物识别</string>
+    <string name="app_lock_change_pin">修改 PIN 码</string>
+    <string name="app_lock_pin_len_tag">%1$d 位数字</string>
+    <string name="app_lock_bio_title">指纹 / 面容快捷解锁</string>
+    <string name="app_lock_bio_sub">使用系统生物识别快速验证身份</string>
+    <string name="app_lock_timeout_label">后台自动锁定时间</string>
+    <string name="app_lock_timeout_immediate">立即</string>
+    <string name="app_lock_timeout_1m">1 分钟</string>
+    <string name="app_lock_timeout_5m">5 分钟</string>
+    <string name="app_lock_timeout_never">永不</string>
+    <string name="app_lock_now_btn">立即锁定应用</string>
+    <string name="app_lock_set_pin_title">设置应用锁 PIN 码</string>
+    <string name="app_lock_disable_title">验证 PIN 码以关闭</string>
+    <string name="app_lock_verify_old_title">验证当前 PIN 码</string>
+    <string name="app_lock_new_pin_label">新 PIN 码（4-6 位数字）</string>
+    <string name="app_lock_current_pin_label">当前 PIN 码</string>
+    <string name="app_lock_confirm_pin_label">确认 PIN 码</string>
+    <string name="app_lock_pin_hint">请输入 4 至 6 位数字</string>
+    <string name="app_lock_pin_format_err">请输入 4 至 6 位数字密码</string>
+    <string name="app_lock_pin_mismatch_err">两次输入的 PIN 码不一致</string>
+    <string name="app_lock_pin_saved">应用锁已启用</string>
+    <string name="app_lock_disabled_toast">已关闭应用锁</string>
+    <string name="app_lock_wrong_pin">PIN 码错误，请重试</string>
+    <string name="app_lock_overlay_title">应用已锁定</string>
+    <string name="app_lock_overlay_sub">请输入 %1$d 位 PIN 码解锁</string>
+    <string name="app_lock_bio_btn">生物识别解锁</string>
+    <string name="app_lock_bio_prompt_title">验证身份以解锁</string>
+    <string name="app_lock_bio_prompt_sub">使用指纹或面容解锁 RabbitControl</string>
+    <string name="app_lock_use_pin">改用 PIN 码</string>
+    <string name="app_lock_blocked_connect">应用处于锁定状态，请先解锁</string>
+
+    <!-- 我的页面二级菜单整合 -->
+    <string name="home_menu_network">网络与连接</string>
+    <string name="home_menu_general">通用设置</string>
+    <string name="home_menu_updates">版本与更新</string>
+    <string name="home_badge_updates_available">发现新版本</string>
+    <string name="settings_diagnostics_title">诊断与自检</string>
+    <string name="settings_diagnostics_desc">无需连接远端设备，离线验证本机视频解码渲染与触控输入是否正常。</string>
+    <string name="updates_check_all">一键检查全部更新</string>
+    <string name="updates_app_section_title">应用版本</string>
+    <string name="updates_core_section_title">连接与渲染内核</string>
+    <string name="updates_check_now">检查更新</string>
+    <string name="updates_view_update">查看并更新</string>
+    <string name="updates_restart_now">重启生效</string>
+    <string name="updates_checking">检查中…</string>
+    <string name="updates_up_to_date">已是最新版本</string>
+    <string name="proxy_save_btn">保存代理设置</string>
+    <string name="network_summary_proxy_tag">代理</string>
 </resources>

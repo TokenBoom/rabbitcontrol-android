@@ -103,6 +103,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.rabbitcontrol.android.error.RcErrorCodes
 import io.rabbitcontrol.android.R
+import io.rabbitcontrol.android.core.data.ConnectionModePref
 import io.rabbitcontrol.android.core.data.DeviceToolKind
 import io.rabbitcontrol.android.core.data.OrientationPreference
 import io.rabbitcontrol.android.core.data.PortraitLayoutMode
@@ -839,7 +840,14 @@ fun DesktopSessionScreen(
                             )
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(msg, color = SessionPalette.muted, fontSize = 13.sp)
-                            Spacer(modifier = Modifier.height(14.dp))
+                            if (st !is SessionStatus.Switching) {
+                                Spacer(modifier = Modifier.height(14.dp))
+                                SessionOverlayConnectionModeBar(
+                                    selected = prefs.connectionMode,
+                                    onSelect = viewModel::setConnectionMode,
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(10.dp))
                             TextButton(onClick = {
                                 viewModel.disconnect(false)
                                 onExitSession()
@@ -899,6 +907,11 @@ fun DesktopSessionScreen(
                                 Spacer(modifier = Modifier.height(6.dp))
                                 Text(suggestion, color = SessionPalette.muted.copy(alpha = 0.85f), fontSize = 12.sp)
                             }
+                            Spacer(modifier = Modifier.height(12.dp))
+                            SessionOverlayConnectionModeBar(
+                                selected = prefs.connectionMode,
+                                onSelect = viewModel::setConnectionMode,
+                            )
                             if (needsPassword) {
                                 var passwordVisible by remember { mutableStateOf(false) }
                                 Spacer(modifier = Modifier.height(14.dp))
@@ -1059,7 +1072,7 @@ fun DesktopSessionScreen(
     }
 
     if (disconnectConfirm) {
-        var lockOnExit by remember { mutableStateOf(false) }
+        var lockOnExit by remember { mutableStateOf(prefs.autoLockRemoteOnDisconnect) }
         RabbitDialog(
             title = stringResource(R.string.session_disconnect_title),
             message = stringResource(R.string.session_disconnect_msg, state.deviceName),
@@ -1225,6 +1238,57 @@ private fun EdgeSnappedMicroPill(
                         contentDescription = stringResource(R.string.session_cd_control_center),
                         tint = SessionPalette.accentText,
                         modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SessionOverlayConnectionModeBar(
+    selected: ConnectionModePref,
+    onSelect: (ConnectionModePref) -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(
+            text = stringResource(R.string.cp_connection_mode),
+            color = SessionPalette.muted,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Medium,
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(SessionPalette.surface)
+                .border(1.dp, SessionPalette.border, RoundedCornerShape(10.dp))
+                .padding(3.dp),
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+            ConnectionModePref.entries.forEach { modeOption ->
+                val isSelected = selected == modeOption
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(32.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (isSelected) SessionPalette.accent else Color.Transparent)
+                        .clickable {
+                            if (!isSelected) onSelect(modeOption)
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = modeOption.label,
+                        color = if (isSelected) Color.White else SessionPalette.muted,
+                        fontSize = 11.sp,
+                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
             }

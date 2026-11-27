@@ -12,10 +12,10 @@ import android.os.Bundle
 import android.provider.Settings
 import android.view.View
 import android.view.animation.DecelerateInterpolator
-import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.fragment.app.FragmentActivity
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -46,6 +46,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.rabbitcontrol.android.error.RcErrorAction
 import io.rabbitcontrol.android.core.data.AccountRepository
+import io.rabbitcontrol.android.core.data.AppLockStore
 import io.rabbitcontrol.android.core.data.AppThemeMode
 import io.rabbitcontrol.android.core.data.DeviceToolKind
 import io.rabbitcontrol.android.core.data.InteractionPrefsStore
@@ -53,6 +54,7 @@ import io.rabbitcontrol.android.core.i18n.AppLocaleManager
 import io.rabbitcontrol.android.core.i18n.AppStrings
 import io.rabbitcontrol.android.core.nativebridge.RemoteDevice
 import io.rabbitcontrol.android.core.session.SessionManager
+import io.rabbitcontrol.android.ui.components.AppLockOverlay
 import io.rabbitcontrol.android.ui.components.RabbitToast
 import io.rabbitcontrol.android.ui.components.RabbitToastHost
 import io.rabbitcontrol.android.ui.components.RcErrorHost
@@ -61,10 +63,12 @@ import io.rabbitcontrol.android.ui.screens.auth.AuthStep
 import io.rabbitcontrol.android.ui.screens.detail.DeviceDetailScreen
 import io.rabbitcontrol.android.ui.screens.home.HomeScreen
 import io.rabbitcontrol.android.ui.screens.settings.AboutScreen
+import io.rabbitcontrol.android.ui.screens.settings.GeneralSettingsScreen
 import io.rabbitcontrol.android.ui.screens.settings.HostSettingsScreen
 import io.rabbitcontrol.android.ui.screens.settings.InteractionSettingsScreen
-import io.rabbitcontrol.android.ui.screens.settings.ProxySettingsScreen
-import io.rabbitcontrol.android.ui.screens.settings.UpnpSettingsScreen
+import io.rabbitcontrol.android.ui.screens.settings.NetworkSettingsScreen
+import io.rabbitcontrol.android.ui.screens.settings.SecuritySettingsScreen
+import io.rabbitcontrol.android.ui.screens.settings.UpdateCenterScreen
 import io.rabbitcontrol.android.ui.screens.tools.FileTransferScreen
 import io.rabbitcontrol.android.ui.screens.tools.PortMapScreen
 import io.rabbitcontrol.android.ui.screens.tools.TerminalScreen
@@ -77,10 +81,11 @@ import kotlin.math.roundToInt
 
 private val NavSlideEasing = CubicBezierEasing(0.22f, 1f, 0.36f, 1f)
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
     private val accountRepo: AccountRepository by inject()
     private val sessionManager: SessionManager by inject()
     private val prefsStore: InteractionPrefsStore by inject()
+    private val appLockStore: AppLockStore by inject()
     private var pendingToolRoute by mutableStateOf<String?>(null)
 
     override fun attachBaseContext(newBase: Context) {
@@ -159,6 +164,7 @@ class MainActivity : ComponentActivity() {
                             startActivity(Intent(this@MainActivity, PreviewActivity::class.java))
                         },
                     )
+                    AppLockOverlay(appLockStore = appLockStore)
                     RabbitToastHost(modifier = Modifier.align(Alignment.TopCenter))
                 }
             }
@@ -309,7 +315,6 @@ private fun RabbitControlNavRoot(
                     navController.navigate("detail")
                 },
                 onReturnToDesktop = onOpenSessionActivity,
-                onOpenPreviewCheck = onOpenPreviewActivity,
                 onOpenProfileRoute = { route -> navController.navigate(route) },
             )
         }
@@ -382,17 +387,30 @@ private fun RabbitControlNavRoot(
         composable("settings/interaction") {
             InteractionSettingsScreen(
                 onBack = { navController.popBackStack() },
+                onOpenPreviewCheck = onOpenPreviewActivity,
             )
         }
 
-        composable("settings/proxy") {
-            ProxySettingsScreen(
+        composable("settings/network") {
+            NetworkSettingsScreen(
                 onBack = { navController.popBackStack() },
             )
         }
 
-        composable("settings/upnp") {
-            UpnpSettingsScreen(
+        composable("settings/general") {
+            GeneralSettingsScreen(
+                onBack = { navController.popBackStack() },
+            )
+        }
+
+        composable("settings/updates") {
+            UpdateCenterScreen(
+                onBack = { navController.popBackStack() },
+            )
+        }
+
+        composable("settings/security") {
+            SecuritySettingsScreen(
                 onBack = { navController.popBackStack() },
             )
         }
@@ -415,7 +433,7 @@ private fun RabbitControlNavRoot(
                 RcErrorAction.CHANGE_PASSWORD -> navController.navigate("auth/${AuthStep.Password.name}/false") {
                     launchSingleTop = true
                 }
-                RcErrorAction.OPEN_SETTINGS -> navController.navigate("settings/proxy") {
+                RcErrorAction.OPEN_SETTINGS -> navController.navigate("settings/network") {
                     launchSingleTop = true
                 }
                 RcErrorAction.OPEN_PERMISSIONS -> {

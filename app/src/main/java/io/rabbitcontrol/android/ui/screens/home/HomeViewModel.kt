@@ -8,6 +8,8 @@ import com.rabbitcontrol.android.error.RcErrorCodes
 import com.rabbitcontrol.android.error.RcUiError
 import io.rabbitcontrol.android.R
 import io.rabbitcontrol.android.core.data.AccountRepository
+import io.rabbitcontrol.android.core.data.AppLockStore
+import io.rabbitcontrol.android.core.data.AppLockUiState
 import io.rabbitcontrol.android.core.data.InteractionPrefs
 import io.rabbitcontrol.android.core.data.InteractionPrefsStore
 import io.rabbitcontrol.android.core.data.ProxyConfigModel
@@ -48,6 +50,12 @@ enum class HomeTab(
         get() = AppStrings.get(labelRes, defaultLabel)
 }
 
+enum class DeviceListFilter {
+    Controllable,
+    Online,
+    AllDevices,
+}
+
 class HomeViewModel(
     private val accountRepo: AccountRepository,
     private val historyStore: TargetHistoryStore,
@@ -56,6 +64,7 @@ class HomeViewModel(
     private val proxyStore: ProxyConfigStore,
     private val sessionManager: SessionManager,
     private val hostManager: HostManager,
+    private val appLockStore: AppLockStore,
 ) : ViewModel() {
 
     val servers: StateFlow<List<ServerConfigModel>> = accountRepo.servers
@@ -73,6 +82,7 @@ class HomeViewModel(
     val upnpStatus = accountRepo.upnpStatus
     val wallpaperVersion: StateFlow<Long> = wallpaperCache.version
     val kickedNotice: StateFlow<String?> = accountRepo.kickedNotice
+    val appLockState: StateFlow<AppLockUiState> = appLockStore.state
 
     private val _restoring = MutableStateFlow(true)
     val restoring: StateFlow<Boolean> = _restoring.asStateFlow()
@@ -86,8 +96,8 @@ class HomeViewModel(
     private val _selectedTab = MutableStateFlow(HomeTab.Devices)
     val selectedTab: StateFlow<HomeTab> = _selectedTab.asStateFlow()
 
-    private val _onlineOnly = MutableStateFlow(false)
-    val onlineOnly: StateFlow<Boolean> = _onlineOnly.asStateFlow()
+    private val _deviceFilter = MutableStateFlow(DeviceListFilter.Controllable)
+    val deviceFilter: StateFlow<DeviceListFilter> = _deviceFilter.asStateFlow()
 
     private val _assistTargetInput = MutableStateFlow("")
     val assistTargetInput: StateFlow<String> = _assistTargetInput.asStateFlow()
@@ -149,8 +159,30 @@ class HomeViewModel(
         _selectedTab.value = tab
     }
 
-    fun toggleOnlineOnly() {
-        _onlineOnly.value = !_onlineOnly.value
+    fun setDeviceFilter(filter: DeviceListFilter) {
+        _deviceFilter.value = filter
+    }
+
+    fun renameDevice(deviceId: String, alias: String, onDone: (Boolean, String?) -> Unit) {
+        viewModelScope.launch {
+            runCatching { accountRepo.renameDevice(deviceId, alias) }
+                .onSuccess { onDone(true, null) }
+                .onFailure { err ->
+                    val uiErr = RcUiErrorCodec.fromThrowable(err)
+                    onDone(false, uiErr.message.ifBlank { err.message })
+                }
+        }
+    }
+
+    fun removeDevice(deviceId: String, onDone: (Boolean, String?) -> Unit) {
+        viewModelScope.launch {
+            runCatching { accountRepo.removeDevice(deviceId) }
+                .onSuccess { onDone(true, null) }
+                .onFailure { err ->
+                    val uiErr = RcUiErrorCodec.fromThrowable(err)
+                    onDone(false, uiErr.message.ifBlank { err.message })
+                }
+        }
     }
 
     fun refreshDevices() {

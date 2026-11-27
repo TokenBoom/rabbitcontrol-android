@@ -4,10 +4,13 @@ use jni::objects::{JObject, JString};
 use jni::sys::jstring;
 use jni::JNIEnv;
 use rc_client_core::auth_client::{
-    AuthClientError, AuthHttpClient, AuthUserInfo, LoginRequest, RegisterRequest, StoredAuthSession,
+    parse_rfc3339_unix_sec, AuthClientError, AuthHttpClient, AuthUserInfo, LoginRequest,
+    RegisterRequest, StoredAuthSession,
 };
+use rc_client_core::cert_manager::DeviceCertMetadata;
 use rc_client_core::server_config::{
-    parse_server_input, ServerConfig, DEFAULT_API_PORT, DEFAULT_RELAY_PORT, DEFAULT_SIGNAL_PORT,
+    parse_device_id_input, parse_server_input, ServerConfig, DEFAULT_API_PORT, DEFAULT_RELAY_PORT,
+    DEFAULT_SIGNAL_PORT,
 };
 use rc_client_core::ui_error::{ErrorPlatform, IntoUiError};
 use serde_json::{json, Value};
@@ -45,6 +48,42 @@ fn now_unix_sec() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+fn cert_status_json(rt: &runtime::AndroidRuntime) -> Value {
+    let now = now_unix_sec();
+    let needs_renewal = rt.cert_manager().needs_renewal(now);
+    match rt.cert_manager().load_device_cert_metadata() {
+        Some(meta) => json!({
+            "valid": !needs_renewal && now < meta.expires_at_unix_sec,
+            "serialHex": meta.serial_hex,
+            "userId": meta.user_id,
+            "deviceId": meta.device_id,
+            "fingerprintSha256": meta.fingerprint_sha256,
+            "issuedAtUnixSec": meta.issued_at_unix_sec,
+            "expiresAtUnixSec": meta.expires_at_unix_sec,
+            "needsRenewal": needs_renewal,
+        }),
+        None => json!({
+            "valid": false,
+            "serialHex": Value::Null,
+            "userId": Value::Null,
+            "deviceId": Value::Null,
+            "fingerprintSha256": Value::Null,
+            "issuedAtUnixSec": 0,
+            "expiresAtUnixSec": 0,
+            "needsRenewal": true,
+        }),
+    }
+}
+
+fn resolve_valid_access_token(args: &Value) -> Result<String, AuthClientError> {
+    if let Some(rt) = runtime::global_runtime() {
+        if rt.auth.current_session().is_some() {
+            return rt.auth.ensure_valid_access_token();
+        }
+    }
+    Ok(field(args, "access")?.to_string())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -234,6 +273,11 @@ fn request(args: &Value) -> Result<Value, AuthClientError> {
         }
         return Ok(json!({ "ok": true }));
     }
+    if action == "cert_status" {
+        let rt = runtime::global_runtime()
+            .ok_or_else(|| AuthClientError::Config("运行时尚未初始化".into()))?;
+        return Ok(cert_status_json(&rt));
+    }
     let address = field(args, "address")?;
     let api_port_override = opt_port(args, "apiPort")?;
     let signal_port_override = opt_port(args, "signalPort")?;
@@ -394,30 +438,65 @@ fn request(args: &Value) -> Result<Value, AuthClientError> {
             Ok(val)
         }
         "devices" => {
-            let access = if let Some(rt) = runtime::global_runtime() {
-                if rt.auth.current_session().is_some() {
-                    rt.auth.ensure_valid_access_token()?
-                } else {
-                    field(args, "access")?.to_string()
-                }
-            } else {
-                field(args, "access")?.to_string()
-            };
+            let access = resolve_valid_access_token(args)?;
             Ok(json!({ "devices": client.list_my_devices(&access)? }))
         }
+        "rename_device" => {
+            let access = resolve_valid_access_token(args)?;
+            let target_id = field(args, "targetDeviceId")?;
+            let alias = field(args, "alias")?.trim();
+            if alias.is_empty() {
+                return Err(AuthClientError::Config("设备备注名不能为空".into()));
+            }
+            let renamed = client.rename_device(&access, target_id, alias)?;
+            Ok(json!({ "device": renamed }))
+        }
         "remove_device" => {
-            let access = if let Some(rt) = runtime::global_runtime() {
-                if rt.auth.current_session().is_some() {
-                    rt.auth.ensure_valid_access_token()?
-                } else {
-                    field(args, "access")?.to_string()
-                }
-            } else {
-                field(args, "access")?.to_string()
-            };
+            let access = resolve_valid_access_token(args)?;
             let target_id = field(args, "targetDeviceId")?;
             client.remove_device(&access, target_id)?;
             Ok(json!({ "ok": true }))
+        }
+        "renew_cert" => {
+            let rt = runtime::global_runtime()
+                .ok_or_else(|| AuthClientError::Config("运行时尚未初始化".into()))?;
+            let raw_did = opt_field(args, "deviceId")
+                .map(str::to_string)
+                .or_else(|| rt.current_device_id())
+                .ok_or_else(|| AuthClientError::Config("当前设备尚未分配设备码，请等待信令就绪".into()))?;
+            let norm_did = parse_device_id_input(&raw_did)
+                .ok_or_else(|| AuthClientError::Config(format!("无效设备码：{raw_did:?}")))?;
+            let csr_pem = rt
+                .cert_manager()
+                .generate_csr_pem(Some(&format!("rc-device-{norm_did}")))
+                .map_err(AuthClientError::Protocol)?;
+            let mut access = resolve_valid_access_token(args)?;
+            let issued = match client.issue_device_cert(&access, &norm_did, &csr_pem) {
+                Ok(res) => res,
+                Err(err) if err.is_unauthorized() && rt.auth.current_session().is_some() => {
+                    access = rt.auth.refresh_after_unauthorized(&access)?;
+                    client.issue_device_cert(&access, &norm_did, &csr_pem)?
+                }
+                Err(err) => return Err(err),
+            };
+            let now = now_unix_sec();
+            let expires_at_unix_sec = issued
+                .expires_at_unix_sec
+                .or_else(|| parse_rfc3339_unix_sec(&issued.expires_at))
+                .unwrap_or_else(|| now.saturating_add(7 * 86_400));
+            let issued_at_unix_sec = parse_rfc3339_unix_sec(&issued.issued_at).unwrap_or(now);
+            let meta = DeviceCertMetadata {
+                serial_hex: issued.serial_hex,
+                user_id: issued.user_id,
+                device_id: issued.device_id,
+                expires_at_unix_sec,
+                fingerprint_sha256: issued.fingerprint_sha256,
+                issued_at_unix_sec,
+            };
+            rt.cert_manager()
+                .save_device_cert(&issued.cert_pem, &meta)
+                .map_err(AuthClientError::Protocol)?;
+            Ok(cert_status_json(&rt))
         }
         "logout" => {
             if let Some(rt) = runtime::global_runtime() {

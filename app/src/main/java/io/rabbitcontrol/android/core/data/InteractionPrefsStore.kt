@@ -77,6 +77,27 @@ enum class ConnectionModePref(
     }
 }
 
+enum class HostAuthMode(
+    val wireValue: String,
+    @StringRes val labelRes: Int,
+    private val defaultLabel: String,
+) {
+    TempCode("temp_code", R.string.host_auth_mode_temp, "动态临时验证码"),
+    FixedPassword("fixed_password", R.string.host_auth_mode_fixed, "固定访问密码"),
+    ApprovalOnly("approval_only", R.string.host_auth_mode_approval, "仅手动审批");
+
+    val label: String
+        get() = AppStrings.get(labelRes, defaultLabel)
+
+    companion object {
+        fun fromWire(raw: String?): HostAuthMode = when (raw?.trim()?.lowercase()) {
+            "fixed_password", "fixed" -> FixedPassword
+            "approval_only", "approval" -> ApprovalOnly
+            else -> TempCode
+        }
+    }
+}
+
 @Immutable
 data class InteractionPrefs(
     val touchMode: TouchInputMode = TouchInputMode.Trackpad,
@@ -95,12 +116,27 @@ data class InteractionPrefs(
     val preferHardwareDecode: Boolean = true,
     val upnpEnabled: Boolean = false,
     val connectionMode: ConnectionModePref = ConnectionModePref.Auto,
+    val encryptByDefault: Boolean = true,
+    val autoLockRemoteOnDisconnect: Boolean = false,
+    val terminalFontSizeSp: Int = 12,
+    val hostAuthMode: HostAuthMode = HostAuthMode.TempCode,
+    val hostFixedPassword: String = "",
 )
 
 class InteractionPrefsStore(context: Context) {
     private val prefs = context.getSharedPreferences("rabbitcontrol_interaction_prefs", Context.MODE_PRIVATE)
     private val _state = MutableStateFlow(load())
     val state: StateFlow<InteractionPrefs> = _state.asStateFlow()
+
+    private fun decryptFixedPassword(raw: String?): String {
+        if (raw.isNullOrBlank()) return ""
+        return KeystoreCrypto.decrypt(KEY_ALIAS_HOST_PW, raw) ?: ""
+    }
+
+    private fun encryptFixedPassword(pw: String): String {
+        if (pw.isEmpty()) return ""
+        return runCatching { KeystoreCrypto.encrypt(KEY_ALIAS_HOST_PW, pw) }.getOrDefault("")
+    }
 
     private fun load(): InteractionPrefs {
         val touchMode = TouchInputMode.entries.getOrNull(prefs.getInt("touch_mode", 0))
@@ -114,6 +150,7 @@ class InteractionPrefsStore(context: Context) {
         val themeMode = AppThemeMode.entries.getOrNull(prefs.getInt("theme_mode", 0))
             ?: AppThemeMode.System
         val connectionMode = ConnectionModePref.fromWire(prefs.getString("connection_mode", null))
+        val hostAuthMode = HostAuthMode.fromWire(prefs.getString("host_auth_mode", null))
         return InteractionPrefs(
             touchMode = touchMode,
             pointerSensitivity = prefs.getFloat("sensitivity", 1.15f).coerceIn(0.4f, 3.0f),
@@ -131,13 +168,20 @@ class InteractionPrefsStore(context: Context) {
             preferHardwareDecode = prefs.getBoolean("prefer_hardware_decode", true),
             upnpEnabled = prefs.getBoolean("upnp_enabled", false),
             connectionMode = connectionMode,
+            encryptByDefault = prefs.getBoolean("encrypt_by_default", true),
+            autoLockRemoteOnDisconnect = prefs.getBoolean("auto_lock_remote_on_disconnect", false),
+            terminalFontSizeSp = prefs.getInt("terminal_font_size_sp", 12).coerceIn(10, 20),
+            hostAuthMode = hostAuthMode,
+            hostFixedPassword = decryptFixedPassword(prefs.getString("host_fixed_password_enc", null)),
         )
     }
 
     fun update(transform: (InteractionPrefs) -> InteractionPrefs) {
-        val next = transform(_state.value)
+        val rawNext = transform(_state.value)
+        val next = rawNext.copy(terminalFontSizeSp = rawNext.terminalFontSizeSp.coerceIn(10, 20))
+        val prevPw = _state.value.hostFixedPassword
         _state.value = next
-        prefs.edit()
+        val editor = prefs.edit()
             .putInt("touch_mode", next.touchMode.ordinal)
             .putFloat("sensitivity", next.pointerSensitivity)
             .putBoolean("natural_scroll", next.naturalScroll)
@@ -154,6 +198,18 @@ class InteractionPrefsStore(context: Context) {
             .putBoolean("prefer_hardware_decode", next.preferHardwareDecode)
             .putBoolean("upnp_enabled", next.upnpEnabled)
             .putString("connection_mode", next.connectionMode.wireValue)
-            .apply()
+            .putBoolean("encrypt_by_default", next.encryptByDefault)
+            .putBoolean("auto_lock_remote_on_disconnect", next.autoLockRemoteOnDisconnect)
+            .putInt("terminal_font_size_sp", next.terminalFontSizeSp)
+            .putString("host_auth_mode", next.hostAuthMode.wireValue)
+        if (next.hostFixedPassword != prevPw) {
+            val enc = encryptFixedPassword(next.hostFixedPassword)
+            if (enc.isEmpty()) editor.remove("host_fixed_password_enc") else editor.putString("host_fixed_password_enc", enc)
+        }
+        editor.apply()
+    }
+
+    private companion object {
+        const val KEY_ALIAS_HOST_PW = "rabbitcontrol.host.pw.v1"
     }
 }

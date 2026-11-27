@@ -6,6 +6,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.rabbitcontrol.android.error.RcErrorCodes
 import io.rabbitcontrol.android.R
+import io.rabbitcontrol.android.core.data.InteractionPrefs
+import io.rabbitcontrol.android.core.data.InteractionPrefsStore
+import io.rabbitcontrol.android.core.data.TerminalPasswordStore
 import io.rabbitcontrol.android.core.error.RcUiErrorCodec
 import io.rabbitcontrol.android.core.i18n.AppStrings
 import io.rabbitcontrol.android.core.i18n.NativeErrorLocalizer
@@ -32,14 +35,21 @@ data class TerminalTabState(
 
 class TerminalViewModel(
     private val sessionManager: SessionManager,
+    private val terminalPasswordStore: TerminalPasswordStore,
+    private val prefsStore: InteractionPrefsStore,
 ) : ViewModel() {
 
     private val buffers = mutableMapOf<Int, AnsiTerminalBuffer>()
     private var cols = 80
     private var rows = 24
     private var refreshedForStreaming = false
+    private var autoAttemptedLockSession = false
+    private var pendingRememberPassword: String? = null
+    private var pendingRememberUsername: String? = null
 
     val sessionState: StateFlow<ActiveSessionState> = sessionManager.state
+    val prefs: StateFlow<InteractionPrefs> = prefsStore.state
+    val savedDeviceIds: StateFlow<Set<String>> = terminalPasswordStore.savedDeviceIds
 
     private val _sessions = MutableStateFlow<List<TerminalSessionSummary>>(emptyList())
     val sessions: StateFlow<List<TerminalSessionSummary>> = _sessions.asStateFlow()
@@ -70,8 +80,36 @@ class TerminalViewModel(
                         refreshedForStreaming = true
                         refreshSessions()
                     }
+                    if (st.terminalLockState.required && !st.terminalLockState.unlocked) {
+                        if (!autoAttemptedLockSession && st.targetId.isNotBlank()) {
+                            autoAttemptedLockSession = true
+                            val saved = terminalPasswordStore.get(st.targetId)
+                            if (saved != null) {
+                                sessionManager.unlockTerminal(
+                                    password = saved.password,
+                                    username = saved.username ?: st.terminalLockState.username,
+                                )
+                            }
+                        }
+                    } else if (!st.terminalLockState.required) {
+                        autoAttemptedLockSession = false
+                    }
+                    val unlockRes = st.lastTerminalUnlockResult
+                    if (unlockRes?.ok == true) {
+                        val pw = pendingRememberPassword
+                        val user = pendingRememberUsername ?: st.terminalLockState.username
+                        pendingRememberPassword = null
+                        pendingRememberUsername = null
+                        if (!pw.isNullOrEmpty() && st.targetId.isNotBlank()) {
+                            terminalPasswordStore.save(st.targetId, pw, user)
+                        }
+                        refreshSessions()
+                    }
                 } else if (st.status is SessionStatus.Idle || st.status is SessionStatus.Ended || st.status is SessionStatus.Error) {
                     refreshedForStreaming = false
+                    autoAttemptedLockSession = false
+                    pendingRememberPassword = null
+                    pendingRememberUsername = null
                 }
             }
         }
@@ -226,6 +264,31 @@ class TerminalViewModel(
 
     fun clearError() {
         _error.value = null
+    }
+
+    fun submitUnlock(password: String, username: String?, remember: Boolean) {
+        val targetId = sessionManager.state.value.targetId
+        if (remember && targetId.isNotBlank()) {
+            pendingRememberPassword = password
+            pendingRememberUsername = username
+        } else {
+            pendingRememberPassword = null
+            pendingRememberUsername = null
+        }
+        sessionManager.unlockTerminal(password, username)
+    }
+
+    fun clearSavedPassword() {
+        val targetId = sessionManager.state.value.targetId
+        if (targetId.isNotBlank()) {
+            terminalPasswordStore.clear(targetId)
+        }
+    }
+
+    fun adjustFontSize(deltaSp: Int) {
+        prefsStore.update { cur ->
+            cur.copy(terminalFontSizeSp = (cur.terminalFontSizeSp + deltaSp).coerceIn(10, 20))
+        }
     }
 
     private fun handleEvent(ev: TerminalToolEvent) {

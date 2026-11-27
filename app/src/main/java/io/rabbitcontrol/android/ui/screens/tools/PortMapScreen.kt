@@ -123,6 +123,13 @@ fun PortMapScreen(
                 onBack = onBack,
             )
 
+            Text(
+                text = stringResource(R.string.pm_auto_persist_hint),
+                fontSize = 11.sp,
+                color = palette.muted,
+                modifier = Modifier.padding(horizontal = RabbitSpacing.Lg, vertical = 2.dp),
+            )
+
             if (!sessionState.toolPermissions.allowPortMap) {
                 Text(
                     text = stringResource(R.string.tool_permission_disabled_pm),

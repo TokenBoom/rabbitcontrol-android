@@ -12,7 +12,6 @@ import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.WindowManager
 import android.provider.Settings
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -20,10 +19,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.rabbitcontrol.android.error.RcErrorAction
 import io.rabbitcontrol.android.MainActivity
 import io.rabbitcontrol.android.R
+import io.rabbitcontrol.android.core.data.AppLockStore
 import io.rabbitcontrol.android.core.data.DeviceToolKind
 import io.rabbitcontrol.android.core.data.OrientationPreference
 import io.rabbitcontrol.android.core.i18n.AppLocaleManager
@@ -31,14 +32,17 @@ import io.rabbitcontrol.android.core.i18n.AppStrings
 import io.rabbitcontrol.android.core.input.ScancodeMapper
 import io.rabbitcontrol.android.core.session.SessionStatus
 import io.rabbitcontrol.android.session.Core
+import io.rabbitcontrol.android.ui.components.AppLockOverlay
 import io.rabbitcontrol.android.ui.components.RabbitToast
 import io.rabbitcontrol.android.ui.components.RabbitToastHost
 import io.rabbitcontrol.android.ui.components.RcErrorHost
 import io.rabbitcontrol.android.ui.theme.RabbitTheme
+import org.koin.android.ext.android.inject
 import org.koin.androidx.viewmodel.ext.android.viewModel
 
-class SessionActivity : ComponentActivity() {
+class SessionActivity : FragmentActivity() {
     private val viewModel: SessionViewModel by viewModel()
+    private val appLockStore: AppLockStore by inject()
 
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(AppLocaleManager.wrapContext(newBase))
@@ -82,6 +86,7 @@ class SessionActivity : ComponentActivity() {
                         },
                         onExitSession = { finish() },
                     )
+                    AppLockOverlay(appLockStore = appLockStore)
                     RabbitToastHost(modifier = Modifier.align(Alignment.TopCenter))
                     RcErrorHost(
                         onAction = { action, err, onRetry ->

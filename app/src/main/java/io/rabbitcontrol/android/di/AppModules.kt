@@ -1,10 +1,13 @@
 package io.rabbitcontrol.android.di
 
 import io.rabbitcontrol.android.core.data.AccountRepository
+import io.rabbitcontrol.android.core.data.AppLockStore
 import io.rabbitcontrol.android.core.data.InteractionPrefsStore
+import io.rabbitcontrol.android.core.data.PortMapRuleStore
 import io.rabbitcontrol.android.core.data.ProxyConfigStore
 import io.rabbitcontrol.android.core.data.SessionLayoutStore
 import io.rabbitcontrol.android.core.data.TargetHistoryStore
+import io.rabbitcontrol.android.core.data.TerminalPasswordStore
 import io.rabbitcontrol.android.core.data.ToolOrderStore
 import io.rabbitcontrol.android.core.data.WallpaperCache
 import io.rabbitcontrol.android.core.host.HostManager
@@ -31,22 +34,25 @@ val dataModule = module {
     single { WallpaperCache(androidContext()) }
     single { ProxyConfigStore(androidContext()) }
     single { SessionLayoutStore(androidContext()) }
+    single { AppLockStore(androidContext()) }
+    single { TerminalPasswordStore(androidContext()) }
+    single { PortMapRuleStore(androidContext()) }
     single { AppUpdateManager(androidContext()) }
     single { CoreUpdateManager(androidContext()) }
 }
 
 val sessionModule = module {
     single { ClipboardSyncBridge(androidContext()) }
-    single { SessionManager(androidContext(), get(), get(), get(), get()) }
+    single { SessionManager(androidContext(), get(), get(), get(), get(), get(), get()) }
     single { HostManager(androidContext(), get(), get()) }
 }
 
 val viewModelModule = module {
     viewModel { AuthViewModel(get()) }
-    viewModel { HomeViewModel(get(), get(), get(), get(), get(), get(), get()) }
-    viewModel { DeviceDetailViewModel(get(), get(), get(), get(), get()) }
+    viewModel { HomeViewModel(get(), get(), get(), get(), get(), get(), get(), get()) }
+    viewModel { DeviceDetailViewModel(get(), get(), get(), get(), get(), get()) }
     viewModel { SessionViewModel(get(), get(), get(), get()) }
     viewModel { FileTransferViewModel(androidContext(), get()) }
-    viewModel { TerminalViewModel(get()) }
-    viewModel { PortMapViewModel(get()) }
+    viewModel { TerminalViewModel(get(), get(), get()) }
+    viewModel { PortMapViewModel(get(), get()) }
 }

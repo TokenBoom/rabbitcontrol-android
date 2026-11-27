@@ -925,4 +925,136 @@
     <string name="ft_notice_renamed">Renamed</string>
     <string name="ft_err_delete_failed">Failed to delete item</string>
     <string name="ft_err_rename_failed">Failed to rename item</string>
+
+    <!-- v0.2.3 Alignment Capabilities -->
+    <string name="home_filter_controllable">Controllable (%1$d)</string>
+    <string name="home_section_non_controllable">Non-controllable Devices (%1$d)</string>
+    <string name="home_remote_control_off">Remote control off</string>
+    <string name="home_remote_control_off_hint">Remote control is disabled on this device</string>
+    <string name="home_device_more_cd">Device actions</string>
+    <string name="home_menu_security">Security Settings</string>
+
+    <string name="device_rename_title">Rename Device</string>
+    <string name="device_rename_hint">Enter device alias</string>
+    <string name="device_rename_success">Device renamed</string>
+    <string name="device_rename_empty_err">Device alias cannot be empty</string>
+
+    <string name="detail_tools_session_active">Tools-only session active</string>
+    <string name="detail_tools_session_sub">Connected without desktop video stream</string>
+    <string name="detail_clear_term_pw">Clear Saved Terminal Password</string>
+    <string name="detail_cleared_term_pw">Saved terminal password cleared</string>
+
+    <string name="pm_auto_persist_hint">Rules are saved per device and auto-restored on reconnect</string>
+
+    <string name="cp_bitrate_auto">Auto</string>
+    <string name="cp_host_mute_title">Host Mute</string>
+    <string name="cp_privacy_custom">Custom Image</string>
+    <string name="cp_privacy_custom_applied">Custom privacy curtain image applied</string>
+    <string name="cp_privacy_custom_failed">Failed to load selected image or size exceeded limit</string>
+    <string name="cp_mouse_mode_label">Mouse Cursor Mode</string>
+    <string name="cp_mouse_mode_smart">Smart</string>
+    <string name="cp_mouse_mode_remote">Remote</string>
+    <string name="cp_mouse_mode_local">Local</string>
+    <string name="cp_lock_on_disconnect">Lock remote screen on disconnect</string>
+    <string name="cp_host_update_title">Remote Host Update</string>
+    <string name="cp_host_update_check_btn">Check for Host Update</string>
+    <string name="cp_host_update_checking">Checking…</string>
+    <string name="cp_host_update_latest">Host is up to date (v%1$s)</string>
+    <string name="cp_host_update_check_err">Check failed: %1$s</string>
+    <string name="cp_host_update_apply">Update Host to v%1$s</string>
+    <string name="cp_host_update_confirm_title">Update Remote Host</string>
+    <string name="cp_host_update_confirm_msg">Trigger owner-authorized host update to v%1$s? The remote host will restart briefly during installation.</string>
+    <string name="cp_host_update_apply_btn">Start Update</string>
+    <string name="cp_host_update_done">Host update completed</string>
+
+    <string name="term_unlock_title">System Password Required</string>
+    <string name="term_unlock_sub">The remote screen is locked. Enter the remote OS login password to unlock remote terminal access.</string>
+    <string name="term_unlock_user_label">System Username (Optional)</string>
+    <string name="term_unlock_user_hint">Leave blank for current user</string>
+    <string name="term_unlock_pw_label">System Password</string>
+    <string name="term_unlock_pw_hint">Enter OS login password</string>
+    <string name="term_unlock_remember">Remember password for this device</string>
+    <string name="term_unlock_btn">Verify &amp; Unlock</string>
+    <string name="term_unlock_cooldown">Too many attempts. Retry in %1$ds</string>
+
+    <string name="host_auth_mode_title">Verification Mode</string>
+    <string name="host_auth_mode_temp">Temp Code</string>
+    <string name="host_auth_mode_fixed">Fixed Password</string>
+    <string name="host_auth_mode_approval">Approval Only</string>
+    <string name="host_auth_mode_approval_note">Every incoming assistance request will require manual approval on this device.</string>
+    <string name="host_fixed_pw_label">Fixed Access Password</string>
+    <string name="host_fixed_pw_hint">Enter fixed password</string>
+    <string name="host_fixed_pw_saved">Fixed access password updated</string>
+
+    <string name="sec_title">Security Settings</string>
+    <string name="sec_app_lock_section">Client App Lock</string>
+    <string name="sec_lock_on">Enabled</string>
+    <string name="sec_lock_off">Off</string>
+    <string name="sec_session_section">Session Security</string>
+    <string name="sec_mtls_default_title">Encrypt Connections by Default (mTLS)</string>
+    <string name="sec_mtls_default_sub">Authenticate peers and encrypt session traffic with device certificates</string>
+    <string name="sec_lock_on_disconnect_title">Lock Remote Screen on Disconnect</string>
+    <string name="sec_lock_on_disconnect_sub">Default choice checked in session exit confirmation</string>
+    <string name="sec_cert_section">Device mTLS Certificate</string>
+    <string name="sec_cert_loading">Checking…</string>
+    <string name="sec_cert_valid">Valid</string>
+    <string name="sec_cert_needs_renewal">Needs Renewal</string>
+    <string name="sec_cert_missing">Not Issued</string>
+    <string name="sec_cert_fingerprint">SHA-256 Fingerprint</string>
+    <string name="sec_cert_serial">Serial Number</string>
+    <string name="sec_cert_expires">Expires At</string>
+    <string name="sec_cert_none_desc">No local device certificate issued yet. Sign in and tap Renew Certificate.</string>
+    <string name="sec_cert_renew_btn">Renew Certificate</string>
+    <string name="sec_cert_renewing">Renewing…</string>
+    <string name="sec_cert_renew_ok">Device certificate renewed</string>
+
+    <string name="app_lock_enable_title">Enable App Lock</string>
+    <string name="app_lock_enable_sub">Require PIN or biometric authentication before viewing devices or connecting</string>
+    <string name="app_lock_change_pin">Change PIN</string>
+    <string name="app_lock_pin_len_tag">%1$d-digit PIN</string>
+    <string name="app_lock_bio_title">Biometric Quick Unlock</string>
+    <string name="app_lock_bio_sub">Use fingerprint or face recognition to unlock the app</string>
+    <string name="app_lock_timeout_label">Auto-lock Timeout</string>
+    <string name="app_lock_timeout_immediate">Immediate</string>
+    <string name="app_lock_timeout_1m">1 min</string>
+    <string name="app_lock_timeout_5m">5 min</string>
+    <string name="app_lock_timeout_never">Never</string>
+    <string name="app_lock_now_btn">Lock Now</string>
+    <string name="app_lock_set_pin_title">Set App Lock PIN</string>
+    <string name="app_lock_disable_title">Verify PIN to Disable</string>
+    <string name="app_lock_verify_old_title">Verify Current PIN</string>
+    <string name="app_lock_new_pin_label">New PIN (4–6 digits)</string>
+    <string name="app_lock_current_pin_label">Current PIN</string>
+    <string name="app_lock_confirm_pin_label">Confirm PIN</string>
+    <string name="app_lock_pin_hint">4–6 digits</string>
+    <string name="app_lock_pin_format_err">Please enter a 4 to 6 digit PIN</string>
+    <string name="app_lock_pin_mismatch_err">PIN entries do not match</string>
+    <string name="app_lock_pin_saved">App Lock PIN saved</string>
+    <string name="app_lock_disabled_toast">App Lock disabled</string>
+    <string name="app_lock_wrong_pin">Incorrect PIN, please try again</string>
+    <string name="app_lock_overlay_title">App Locked</string>
+    <string name="app_lock_overlay_sub">Enter your %1$d-digit PIN to unlock</string>
+    <string name="app_lock_bio_btn">Unlock with Biometrics</string>
+    <string name="app_lock_bio_prompt_title">Unlock RabbitControl</string>
+    <string name="app_lock_bio_prompt_sub">Verify your identity to continue</string>
+    <string name="app_lock_use_pin">Use PIN</string>
+    <string name="app_lock_blocked_connect">App is locked. Unlock before connecting.</string>
+
+    <!-- Settings Menu Consolidation -->
+    <string name="home_menu_network">Network &amp; Connection</string>
+    <string name="home_menu_general">General</string>
+    <string name="home_menu_updates">Versions &amp; Updates</string>
+    <string name="home_badge_updates_available">Update Available</string>
+    <string name="settings_diagnostics_title">Diagnostics</string>
+    <string name="settings_diagnostics_desc">Verify local video decoding, rendering, and touch input without connecting to a remote host.</string>
+    <string name="updates_check_all">Check All Updates</string>
+    <string name="updates_app_section_title">App Version</string>
+    <string name="updates_core_section_title">Core Engine</string>
+    <string name="updates_check_now">Check for Updates</string>
+    <string name="updates_view_update">View &amp; Update</string>
+    <string name="updates_restart_now">Restart to Apply</string>
+    <string name="updates_checking">Checking…</string>
+    <string name="updates_up_to_date">Up to date</string>
+    <string name="proxy_save_btn">Save Proxy Settings</string>
+    <string name="network_summary_proxy_tag">Proxy</string>
 </resources>

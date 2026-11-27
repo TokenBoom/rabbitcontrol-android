@@ -34,10 +34,14 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.KeyOff
+import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -93,11 +97,16 @@ fun TerminalScreen(
     val renderedText by viewModel.renderedText.collectAsStateWithLifecycle()
     val ctrlSticky by viewModel.ctrlSticky.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
+    val prefs by viewModel.prefs.collectAsStateWithLifecycle()
+    val savedDeviceIds by viewModel.savedDeviceIds.collectAsStateWithLifecycle()
 
     var renameTarget by remember { mutableStateOf<TerminalSessionSummary?>(null) }
     var renameDraft by remember { mutableStateOf("") }
 
     val inInteractiveTerm = activeTermId != null
+    val hasSavedPw = sessionState.targetId.isNotBlank() && sessionState.targetId in savedDeviceIds
+    val lockState = sessionState.terminalLockState
+    val showUnlockModal = lockState.required && !lockState.unlocked
 
     Column(
         modifier = Modifier
@@ -115,13 +124,29 @@ fun TerminalScreen(
             contentColor = if (inInteractiveTerm) SessionPalette.text else palette.text,
             mutedColor = if (inInteractiveTerm) SessionPalette.muted else palette.muted,
             actions = {
+                if (hasSavedPw) {
+                    val clearedMsg = stringResource(R.string.detail_cleared_term_pw)
+                    IconButton(
+                        onClick = {
+                            viewModel.clearSavedPassword()
+                            RabbitToast.info(clearedMsg)
+                        },
+                        modifier = Modifier.size(44.dp),
+                    ) {
+                        Icon(
+                            Icons.Rounded.KeyOff,
+                            stringResource(R.string.detail_clear_term_pw),
+                            tint = if (inInteractiveTerm) SessionPalette.muted else palette.muted,
+                        )
+                    }
+                }
                 if (!inInteractiveTerm) {
                     IconButton(onClick = viewModel::refreshSessions, modifier = Modifier.size(44.dp)) {
                         Icon(Icons.Rounded.Refresh, stringResource(R.string.common_refresh), tint = palette.muted)
                     }
                     Button(
                         onClick = viewModel::createTerminal,
-                        enabled = sessionState.status is SessionStatus.Streaming,
+                        enabled = sessionState.status is SessionStatus.Streaming && !showUnlockModal,
                         shape = RoundedCornerShape(RabbitRadius.Md),
                         elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
                         colors = ButtonDefaults.buttonColors(
@@ -330,6 +355,8 @@ fun TerminalScreen(
             LaunchedEffect(renderedText) {
                 vScroll.scrollTo(vScroll.maxValue)
             }
+            val termFontSp = prefs.terminalFontSizeSp.toFloat()
+            val termLineHeightSp = (termFontSp * 1.38f)
 
             BoxWithConstraints(
                 modifier = Modifier
@@ -338,8 +365,8 @@ fun TerminalScreen(
                     .background(SessionPalette.trackpad)
                     .padding(10.dp),
             ) {
-                val estCols = (maxWidth.value / 7.4f).toInt().coerceIn(36, 180)
-                val estRows = (maxHeight.value / 17.5f).toInt().coerceIn(12, 80)
+                val estCols = (maxWidth.value / (termFontSp * 0.6f)).toInt().coerceIn(36, 180)
+                val estRows = (maxHeight.value / termLineHeightSp).toInt().coerceIn(12, 80)
                 LaunchedEffect(estCols, estRows) {
                     viewModel.updateGridSize(estCols, estRows)
                 }
@@ -347,8 +374,8 @@ fun TerminalScreen(
                 Text(
                     text = renderedText,
                     fontFamily = FontFamily.Monospace,
-                    fontSize = 12.5.sp,
-                    lineHeight = 17.sp,
+                    fontSize = termFontSp.sp,
+                    lineHeight = termLineHeightSp.sp,
                     color = SessionPalette.text,
                     modifier = Modifier
                         .fillMaxSize()
@@ -384,6 +411,9 @@ fun TerminalScreen(
                     TermKeyChip("|") { viewModel.sendTextOrCommand("|") }
                     TermKeyChip("~") { viewModel.sendTextOrCommand("~") }
                     TermKeyChip("/") { viewModel.sendTextOrCommand("/") }
+                    TermKeyChip("A-") { viewModel.adjustFontSize(-1) }
+                    TermKeyChip("${prefs.terminalFontSizeSp}") {}
+                    TermKeyChip("A+") { viewModel.adjustFontSize(1) }
                     TermKeyChip(stringResource(R.string.term_clear_screen)) { viewModel.clearActiveBuffer() }
                 }
 
@@ -458,6 +488,72 @@ fun TerminalScreen(
                 onValueChange = { renameDraft = it },
                 placeholder = stringResource(R.string.term_rename_hint),
             )
+        }
+    }
+
+    if (showUnlockModal) {
+        var unlockUser by remember(lockState.username) { mutableStateOf(lockState.username.orEmpty()) }
+        var unlockPw by remember { mutableStateOf("") }
+        var rememberPw by remember { mutableStateOf(false) }
+        val unlockResult = sessionState.lastTerminalUnlockResult
+        val retryLeft = maxOf(lockState.retryAfterSecs, unlockResult?.retryAfterSecs ?: 0)
+        RabbitDialog(
+            title = stringResource(R.string.term_unlock_title),
+            message = stringResource(R.string.term_unlock_sub),
+            onDismissRequest = onBack,
+            dismissLabel = stringResource(R.string.common_back),
+            confirmLabel = stringResource(R.string.term_unlock_btn),
+            confirmEnabled = unlockPw.isNotEmpty() && retryLeft == 0,
+            onConfirm = {
+                viewModel.submitUnlock(unlockPw, unlockUser.ifBlank { null }, rememberPw)
+            },
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                RabbitTextField(
+                    value = unlockUser,
+                    onValueChange = { unlockUser = it },
+                    label = stringResource(R.string.term_unlock_user_label),
+                    placeholder = stringResource(R.string.term_unlock_user_hint),
+                )
+                RabbitTextField(
+                    value = unlockPw,
+                    onValueChange = { unlockPw = it },
+                    label = stringResource(R.string.term_unlock_pw_label),
+                    placeholder = stringResource(R.string.term_unlock_pw_hint),
+                    isPassword = true,
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { rememberPw = !rememberPw },
+                ) {
+                    Checkbox(
+                        checked = rememberPw,
+                        onCheckedChange = { rememberPw = it },
+                        colors = CheckboxDefaults.colors(checkedColor = palette.primary),
+                    )
+                    Text(
+                        text = stringResource(R.string.term_unlock_remember),
+                        fontSize = 13.sp,
+                        color = palette.text,
+                    )
+                }
+                if (unlockResult != null && !unlockResult.ok && !unlockResult.error.isNullOrBlank()) {
+                    Text(
+                        text = NativeErrorLocalizer.localize(unlockResult.error),
+                        fontSize = 12.sp,
+                        color = palette.danger,
+                    )
+                }
+                if (retryLeft > 0) {
+                    Text(
+                        text = stringResource(R.string.term_unlock_cooldown, retryLeft),
+                        fontSize = 12.sp,
+                        color = palette.warning,
+                    )
+                }
+            }
         }
     }
 

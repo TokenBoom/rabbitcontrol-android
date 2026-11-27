@@ -1,8 +1,6 @@
 package io.rabbitcontrol.android.ui.screens.home
 
-import android.content.Intent
 import android.graphics.Bitmap
-import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -13,6 +11,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -40,29 +39,32 @@ import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Bookmark
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.DarkMode
+import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.DesktopWindows
 import androidx.compose.material.icons.rounded.Devices
 import androidx.compose.material.icons.rounded.Dns
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
-import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.LaptopMac
-import androidx.compose.material.icons.rounded.Memory
+import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PhoneAndroid
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.rounded.Public
-import androidx.compose.material.icons.rounded.Router
 import androidx.compose.material.icons.rounded.ScreenShare
+import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.Sensors
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.SettingsRemote
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.StarOutline
 import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.WifiOff
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -114,7 +116,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.rabbitcontrol.android.error.RcErrorAction
 import com.rabbitcontrol.android.error.RcUiError
 import io.rabbitcontrol.android.R
-import io.rabbitcontrol.android.core.data.AppThemeMode
+import io.rabbitcontrol.android.core.data.ProxyModeOption
 import io.rabbitcontrol.android.core.data.rememberWallpaperImage
 import io.rabbitcontrol.android.core.i18n.AppLanguageMode
 import io.rabbitcontrol.android.core.i18n.AppLocaleManager
@@ -124,10 +126,8 @@ import io.rabbitcontrol.android.core.nativebridge.UpnpState
 import io.rabbitcontrol.android.core.session.SessionStatus
 import io.rabbitcontrol.android.core.update.AppUpdateManager
 import io.rabbitcontrol.android.core.update.AppUpdateUiState
-import io.rabbitcontrol.android.core.update.CoreDownloadState
 import io.rabbitcontrol.android.core.update.CoreUpdateManager
 import io.rabbitcontrol.android.core.update.CoreUpdateUiState
-import io.rabbitcontrol.android.core.update.UpdateDownloadState
 import io.rabbitcontrol.android.ui.components.RabbitCard
 import io.rabbitcontrol.android.ui.components.RabbitDialog
 import io.rabbitcontrol.android.ui.components.RabbitEmptyState
@@ -141,8 +141,6 @@ import io.rabbitcontrol.android.ui.components.RabbitTextField
 import io.rabbitcontrol.android.ui.components.RabbitToast
 import io.rabbitcontrol.android.ui.components.StatusTone
 import io.rabbitcontrol.android.ui.screens.auth.AuthStep
-import io.rabbitcontrol.android.ui.screens.settings.AppUpdateDialog
-import io.rabbitcontrol.android.ui.screens.settings.CoreUpdateDialog
 import io.rabbitcontrol.android.ui.screens.settings.getAppVersionName
 import io.rabbitcontrol.android.ui.theme.LocalRabbitPalette
 import io.rabbitcontrol.android.ui.theme.RabbitElevation
@@ -164,7 +162,6 @@ fun HomeScreen(
     onOpenAuth: (AuthStep, Boolean) -> Unit,
     onOpenDevice: (RemoteDevice) -> Unit,
     onReturnToDesktop: () -> Unit,
-    onOpenPreviewCheck: () -> Unit,
     onOpenProfileRoute: (String) -> Unit,
     viewModel: HomeViewModel = koinViewModel(),
 ) {
@@ -297,12 +294,9 @@ fun HomeScreen(
                 HomeTab.Assist -> AssistTab(viewModel = viewModel, onOpenDevice = onOpenDevice)
                 HomeTab.Me -> ProfileTab(
                     viewModel = viewModel,
-                    updateManager = updateManager,
                     updateState = updateState,
-                    coreUpdateManager = coreUpdateManager,
                     coreUpdateState = coreUpdateState,
                     onOpenAuth = onOpenAuth,
-                    onOpenPreviewCheck = onOpenPreviewCheck,
                     onOpenProfileRoute = onOpenProfileRoute,
                 )
             }
@@ -366,13 +360,15 @@ private fun DevicesTab(
     val savedEmails by viewModel.savedAccountEmails.collectAsStateWithLifecycle()
     val profile by viewModel.profile.collectAsStateWithLifecycle()
     val devices by viewModel.devices.collectAsStateWithLifecycle()
-    val onlineOnly by viewModel.onlineOnly.collectAsStateWithLifecycle()
+    val deviceFilter by viewModel.deviceFilter.collectAsStateWithLifecycle()
     val refreshing by viewModel.refreshingDevices.collectAsStateWithLifecycle()
     val restoring by viewModel.restoring.collectAsStateWithLifecycle()
     val error by viewModel.deviceError.collectAsStateWithLifecycle()
     val wallpaperVersion by viewModel.wallpaperVersion.collectAsStateWithLifecycle()
 
     var showServerSheet by remember { mutableStateOf(false) }
+    var renameTarget by remember { mutableStateOf<RemoteDevice?>(null) }
+    var removeTarget by remember { mutableStateOf<RemoteDevice?>(null) }
     val pullState = rememberPullToRefreshState()
 
     PullToRefreshBox(
@@ -401,8 +397,10 @@ private fun DevicesTab(
             verticalArrangement = Arrangement.spacedBy(RabbitSpacing.Md),
             contentPadding = PaddingValues(top = RabbitSpacing.Md, bottom = RabbitSpacing.Xl),
         ) {
-            val online = devices.filter { (it.online || it.busy) && !it.disabled }
-            val offline = devices.filterNot { (it.online || it.busy) && !it.disabled }
+            val controllableDevices = devices.filter { it.allowRemoteControl }
+            val nonControllableDevices = devices.filterNot { it.allowRemoteControl }
+            val online = controllableDevices.filter { (it.online || it.busy) && !it.disabled }
+            val offline = controllableDevices.filterNot { (it.online || it.busy) && !it.disabled }
 
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -454,18 +452,24 @@ private fun DevicesTab(
 
                     if (profile != null && profile?.needsPassword == false && devices.isNotEmpty()) {
                         Row(
+                            modifier = Modifier.horizontalScroll(rememberScrollState()),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             DeviceFilterChip(
-                                label = stringResource(R.string.home_filter_all, devices.size),
-                                selected = !onlineOnly,
-                                onClick = { if (onlineOnly) viewModel.toggleOnlineOnly() },
+                                label = stringResource(R.string.home_filter_controllable, controllableDevices.size),
+                                selected = deviceFilter == DeviceListFilter.Controllable,
+                                onClick = { viewModel.setDeviceFilter(DeviceListFilter.Controllable) },
                             )
                             DeviceFilterChip(
                                 label = stringResource(R.string.home_filter_online, online.size),
-                                selected = onlineOnly,
-                                onClick = { if (!onlineOnly) viewModel.toggleOnlineOnly() },
+                                selected = deviceFilter == DeviceListFilter.Online,
+                                onClick = { viewModel.setDeviceFilter(DeviceListFilter.Online) },
+                            )
+                            DeviceFilterChip(
+                                label = stringResource(R.string.home_filter_all, devices.size),
+                                selected = deviceFilter == DeviceListFilter.AllDevices,
+                                onClick = { viewModel.setDeviceFilter(DeviceListFilter.AllDevices) },
                             )
                         }
                     }
@@ -569,7 +573,9 @@ private fun DevicesTab(
                     }
                 }
 
-                val showGroupHeaders = online.isNotEmpty() && !onlineOnly && offline.isNotEmpty()
+                val showOffline = deviceFilter != DeviceListFilter.Online && offline.isNotEmpty()
+                val showNonControllable = deviceFilter == DeviceListFilter.AllDevices && nonControllableDevices.isNotEmpty()
+                val showGroupHeaders = (online.isNotEmpty() && showOffline) || showNonControllable
 
                 if (online.isNotEmpty()) {
                     if (showGroupHeaders) {
@@ -579,11 +585,17 @@ private fun DevicesTab(
                     }
                     items(online, key = { it.id }) { dev ->
                         val thumb = rememberWallpaperImage(viewModel.wallpaperCache, dev.id, wallpaperVersion, 320)
-                        DeviceCard(device = dev, thumbnail = thumb, onClick = { onOpenDevice(dev) })
+                        DeviceCard(
+                            device = dev,
+                            thumbnail = thumb,
+                            onClick = { onOpenDevice(dev) },
+                            onRename = { renameTarget = dev },
+                            onRemove = { removeTarget = dev },
+                        )
                     }
                 }
 
-                if (!onlineOnly && offline.isNotEmpty()) {
+                if (showOffline) {
                     if (showGroupHeaders) {
                         item {
                             RabbitSectionHeader(title = stringResource(R.string.home_section_offline, offline.size))
@@ -591,7 +603,31 @@ private fun DevicesTab(
                     }
                     items(offline, key = { it.id }) { dev ->
                         val thumb = rememberWallpaperImage(viewModel.wallpaperCache, dev.id, wallpaperVersion, 320)
-                        DeviceCard(device = dev, thumbnail = thumb, onClick = { onOpenDevice(dev) })
+                        DeviceCard(
+                            device = dev,
+                            thumbnail = thumb,
+                            onClick = { onOpenDevice(dev) },
+                            onRename = { renameTarget = dev },
+                            onRemove = { removeTarget = dev },
+                        )
+                    }
+                }
+
+                if (showNonControllable) {
+                    item {
+                        RabbitSectionHeader(title = stringResource(R.string.home_section_non_controllable, nonControllableDevices.size))
+                    }
+                    items(nonControllableDevices, key = { "nc_${it.id}" }) { dev ->
+                        val thumb = rememberWallpaperImage(viewModel.wallpaperCache, dev.id, wallpaperVersion, 320)
+                        DeviceCard(
+                            device = dev,
+                            thumbnail = thumb,
+                            onClick = {
+                                RabbitToast.info(AppStrings.get(R.string.home_remote_control_off_hint, "该设备未开启被控端，不支持远控连接"))
+                            },
+                            onRename = { renameTarget = dev },
+                            onRemove = { removeTarget = dev },
+                        )
                     }
                 }
             }
@@ -654,6 +690,54 @@ private fun DevicesTab(
             }
         }
     }
+
+    val currentRename = renameTarget
+    if (currentRename != null) {
+        var aliasDraft by remember(currentRename.id) { mutableStateOf(currentRename.name) }
+        val renamedMsg = stringResource(R.string.device_rename_success)
+        RabbitDialog(
+            title = stringResource(R.string.device_rename_title),
+            onDismissRequest = { renameTarget = null },
+            dismissLabel = stringResource(R.string.common_cancel),
+            confirmLabel = stringResource(R.string.common_save),
+            confirmEnabled = aliasDraft.trim().isNotEmpty(),
+            onConfirm = {
+                val target = currentRename
+                renameTarget = null
+                viewModel.renameDevice(target.id, aliasDraft.trim()) { ok, err ->
+                    if (ok) RabbitToast.success(renamedMsg)
+                    else if (!err.isNullOrBlank()) RabbitToast.error(err)
+                }
+            },
+        ) {
+            RabbitTextField(
+                value = aliasDraft,
+                onValueChange = { aliasDraft = it },
+                placeholder = stringResource(R.string.device_rename_hint),
+            )
+        }
+    }
+
+    val currentRemove = removeTarget
+    if (currentRemove != null) {
+        val removedMsg = stringResource(R.string.detail_unbind_success)
+        RabbitDialog(
+            title = stringResource(R.string.detail_unbind_title),
+            message = stringResource(R.string.detail_unbind_msg, currentRemove.name),
+            onDismissRequest = { removeTarget = null },
+            dismissLabel = stringResource(R.string.common_cancel),
+            confirmLabel = stringResource(R.string.detail_unbind_confirm),
+            destructive = true,
+            onConfirm = {
+                val target = currentRemove
+                removeTarget = null
+                viewModel.removeDevice(target.id) { ok, err ->
+                    if (ok) RabbitToast.success(removedMsg)
+                    else if (!err.isNullOrBlank()) RabbitToast.error(err)
+                }
+            },
+        )
+    }
 }
 
 @Composable
@@ -708,10 +792,19 @@ private fun deviceOsIcon(raw: String): ImageVector {
 }
 
 @Composable
-private fun DeviceCard(device: RemoteDevice, thumbnail: ImageBitmap?, onClick: () -> Unit) {
+private fun DeviceCard(
+    device: RemoteDevice,
+    thumbnail: ImageBitmap?,
+    onClick: () -> Unit,
+    onRename: () -> Unit,
+    onRemove: () -> Unit,
+) {
     val palette = LocalRabbitPalette.current
-    val online = (device.online || device.busy) && !device.disabled
+    var menuExpanded by remember { mutableStateOf(false) }
+    val controllable = device.allowRemoteControl
+    val online = controllable && (device.online || device.busy) && !device.disabled
     val (statusLabel, dotColor) = when {
+        !controllable -> stringResource(R.string.home_remote_control_off) to Color(0xFF9E9E9E)
         device.disabled -> stringResource(R.string.home_status_disabled) to Color(0xFF9E9E9E)
         device.busy -> stringResource(R.string.home_status_busy) to Color(0xFF60A5FA)
         device.online -> stringResource(R.string.home_status_online) to Color(0xFF34D399)
@@ -720,7 +813,9 @@ private fun DeviceCard(device: RemoteDevice, thumbnail: ImageBitmap?, onClick: (
     RabbitCard(
         onClick = onClick,
         contentPadding = PaddingValues(0.dp),
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .alpha(if (controllable) 1f else 0.78f),
     ) {
         Row(
             modifier = Modifier
@@ -842,7 +937,16 @@ private fun DeviceCard(device: RemoteDevice, thumbnail: ImageBitmap?, onClick: (
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    if (online) {
+                    if (!controllable) {
+                        Text(
+                            text = stringResource(R.string.home_remote_control_off),
+                            fontSize = 11.sp,
+                            lineHeight = 14.sp,
+                            color = palette.muted.copy(alpha = 0.85f),
+                            maxLines = 1,
+                            style = CompactCenteredTextStyle,
+                        )
+                    } else if (online) {
                         Row(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(8.dp))
@@ -910,19 +1014,59 @@ private fun DeviceCard(device: RemoteDevice, thumbnail: ImageBitmap?, onClick: (
                         }
                     }
                     Spacer(modifier = Modifier.weight(1f))
-                    Box(
-                        modifier = Modifier
-                            .size(24.dp)
-                            .clip(CircleShape)
-                            .background(palette.field),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                            null,
-                            tint = palette.muted,
-                            modifier = Modifier.size(15.dp),
-                        )
+                    Box {
+                        Box(
+                            modifier = Modifier
+                                .size(26.dp)
+                                .clip(CircleShape)
+                                .clickable { menuExpanded = true },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.Rounded.MoreVert,
+                                contentDescription = stringResource(R.string.home_device_more_cd),
+                                tint = palette.muted,
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = menuExpanded,
+                            onDismissRequest = { menuExpanded = false },
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.device_rename_title)) },
+                                leadingIcon = { Icon(Icons.Rounded.Edit, null, modifier = Modifier.size(18.dp)) },
+                                onClick = {
+                                    menuExpanded = false
+                                    onRename()
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.detail_unbind), color = palette.danger) },
+                                leadingIcon = { Icon(Icons.Rounded.DeleteOutline, null, tint = palette.danger, modifier = Modifier.size(18.dp)) },
+                                onClick = {
+                                    menuExpanded = false
+                                    onRemove()
+                                },
+                            )
+                        }
+                    }
+                    if (controllable) {
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Box(
+                            modifier = Modifier
+                                .size(24.dp)
+                                .clip(CircleShape)
+                                .background(palette.field),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                                null,
+                                tint = palette.muted,
+                                modifier = Modifier.size(15.dp),
+                            )
+                        }
                     }
                 }
             }
@@ -1155,22 +1299,16 @@ private fun AssistTab(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ProfileTab(
     viewModel: HomeViewModel,
-    updateManager: AppUpdateManager,
     updateState: AppUpdateUiState,
-    coreUpdateManager: CoreUpdateManager,
     coreUpdateState: CoreUpdateUiState,
     onOpenAuth: (AuthStep, Boolean) -> Unit,
-    onOpenPreviewCheck: () -> Unit,
     onOpenProfileRoute: (String) -> Unit,
 ) {
     val palette = LocalRabbitPalette.current
     val context = LocalContext.current
-    @Suppress("UNUSED_VARIABLE")
-    val currentConfig = LocalConfiguration.current
     val versionName = remember { getAppVersionName(context) }
 
     val profile by viewModel.profile.collectAsStateWithLifecycle()
@@ -1181,16 +1319,13 @@ private fun ProfileTab(
     val proxyConfig by viewModel.proxyConfig.collectAsStateWithLifecycle()
     val hostState by viewModel.hostState.collectAsStateWithLifecycle()
     val upnpStatus by viewModel.upnpStatus.collectAsStateWithLifecycle()
+    val appLockState by viewModel.appLockState.collectAsStateWithLifecycle()
     val languageMode by AppLocaleManager.mode.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) {
         viewModel.refreshUpnpStatus()
     }
 
-    var showThemeSheet by remember { mutableStateOf(false) }
-    var showLanguageSheet by remember { mutableStateOf(false) }
-    var showVersionDialog by remember { mutableStateOf(false) }
-    var showCoreDialog by remember { mutableStateOf(false) }
     var showLogoutConfirm by remember { mutableStateOf(false) }
 
     val currentLangLabel = when (languageMode) {
@@ -1273,7 +1408,7 @@ private fun ProfileTab(
             }
         }
 
-        // Card 2: Grouped Settings & Features
+        // Card 2: Connections & Services
         RabbitCard(
             modifier = Modifier.fillMaxWidth(),
             contentPadding = PaddingValues(horizontal = RabbitSpacing.Lg, vertical = 4.dp),
@@ -1305,37 +1440,41 @@ private fun ProfileTab(
             )
             HorizontalDivider(color = palette.line, thickness = 1.dp)
 
-            ProfileMenuRow(
-                icon = Icons.Rounded.Sensors,
-                title = stringResource(R.string.cp_connection_mode),
-                trailingText = prefs.connectionMode.label,
-                onClick = { onOpenProfileRoute("settings/proxy") },
-            )
-            HorizontalDivider(color = palette.line, thickness = 1.dp)
-
+            val upnpSummaryShort = when {
+                !upnpStatus.enabled || upnpStatus.state == UpnpState.Disabled -> null
+                upnpStatus.state == UpnpState.Mapped -> "UPnP ${stringResource(R.string.upnp_badge_mapped_short)}"
+                upnpStatus.state == UpnpState.Discovering -> "UPnP ${stringResource(R.string.upnp_badge_discovering_short)}"
+                else -> "UPnP ${stringResource(R.string.upnp_badge_unavailable_short)}"
+            }
+            val proxyTag = stringResource(R.string.network_summary_proxy_tag)
+            val networkSummary = buildList {
+                add(prefs.connectionMode.label)
+                if (upnpSummaryShort != null) add(upnpSummaryShort)
+                if (proxyConfig.mode != ProxyModeOption.None) add(proxyTag)
+            }.joinToString(" · ")
             ProfileMenuRow(
                 icon = Icons.Rounded.Public,
-                title = stringResource(R.string.home_menu_proxy),
-                trailingText = proxyConfig.summaryLabel(),
-                onClick = { onOpenProfileRoute("settings/proxy") },
+                title = stringResource(R.string.home_menu_network),
+                trailingText = networkSummary,
+                onClick = { onOpenProfileRoute("settings/network") },
             )
-            HorizontalDivider(color = palette.line, thickness = 1.dp)
+        }
 
-            val (upnpPillLabel, upnpPillTone) = when {
-                !upnpStatus.enabled || upnpStatus.state == UpnpState.Disabled ->
-                    stringResource(R.string.upnp_badge_disabled) to StatusTone.Muted
-                upnpStatus.state == UpnpState.Mapped ->
-                    stringResource(R.string.upnp_badge_mapped_short) to StatusTone.Success
-                upnpStatus.state == UpnpState.Discovering ->
-                    stringResource(R.string.upnp_badge_discovering_short) to StatusTone.Primary
-                else ->
-                    stringResource(R.string.upnp_badge_unavailable_short) to StatusTone.Danger
-            }
+        // Card 3: Security & Preferences
+        RabbitCard(
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(horizontal = RabbitSpacing.Lg, vertical = 4.dp),
+        ) {
             ProfileMenuRow(
-                icon = Icons.Rounded.Router,
-                title = stringResource(R.string.home_menu_upnp),
-                trailingContent = { RabbitStatusPill(label = upnpPillLabel, tone = upnpPillTone) },
-                onClick = { onOpenProfileRoute("settings/upnp") },
+                icon = Icons.Rounded.Security,
+                title = stringResource(R.string.home_menu_security),
+                trailingContent = {
+                    RabbitStatusPill(
+                        label = stringResource(if (appLockState.enabled) R.string.sec_lock_on else R.string.sec_lock_off),
+                        tone = if (appLockState.enabled) StatusTone.Success else StatusTone.Muted,
+                    )
+                },
+                onClick = { onOpenProfileRoute("settings/security") },
             )
             HorizontalDivider(color = palette.line, thickness = 1.dp)
 
@@ -1348,45 +1487,40 @@ private fun ProfileTab(
             HorizontalDivider(color = palette.line, thickness = 1.dp)
 
             ProfileMenuRow(
-                icon = Icons.Rounded.DarkMode,
-                title = stringResource(R.string.home_menu_theme),
-                trailingText = prefs.themeMode.label,
-                onClick = { showThemeSheet = true },
-            )
-            HorizontalDivider(color = palette.line, thickness = 1.dp)
-
-            ProfileMenuRow(
-                icon = Icons.Rounded.Language,
-                title = stringResource(R.string.home_menu_language),
-                trailingText = currentLangLabel,
-                onClick = { showLanguageSheet = true },
-            )
-            HorizontalDivider(color = palette.line, thickness = 1.dp)
-
-            ProfileMenuRow(
-                icon = Icons.Rounded.PlayArrow,
-                title = stringResource(R.string.home_menu_preview_check),
-                trailingText = stringResource(R.string.home_menu_preview_trailing),
-                onClick = onOpenPreviewCheck,
+                icon = Icons.Rounded.Settings,
+                title = stringResource(R.string.home_menu_general),
+                trailingText = "${prefs.themeMode.label} · $currentLangLabel",
+                onClick = { onOpenProfileRoute("settings/general") },
             )
         }
 
-        // Card 3: Updates & About
+        // Card 4: Versions & About
         RabbitCard(
             modifier = Modifier.fillMaxWidth(),
             contentPadding = PaddingValues(horizontal = RabbitSpacing.Lg, vertical = 4.dp),
         ) {
             val newVer = updateState.availableRelease?.versionName
+            val loadedCore = coreUpdateState.loadedCore
+            val newCoreVer = coreUpdateState.availableUpdate?.manifest?.coreVersion
+            val pendingRestart = loadedCore.pendingRestartVersion != null
+            val hasAnyUpdateBadge = pendingRestart || newVer != null || newCoreVer != null
+
             ProfileMenuRow(
                 icon = Icons.Rounded.SystemUpdate,
-                title = stringResource(R.string.home_menu_app_update),
-                trailingText = if (newVer == null) "v$versionName" else null,
-                trailingContent = if (newVer != null) {
+                title = stringResource(R.string.home_menu_updates),
+                trailingText = if (!hasAnyUpdateBadge) "v$versionName" else null,
+                trailingContent = if (hasAnyUpdateBadge) {
                     {
+                        val badgeLabel = when {
+                            pendingRestart -> stringResource(R.string.home_badge_pending_restart)
+                            newVer != null && newCoreVer != null -> stringResource(R.string.home_badge_updates_available)
+                            newVer != null -> stringResource(R.string.home_badge_new_app, newVer)
+                            else -> stringResource(R.string.home_badge_new_core, newCoreVer.orEmpty())
+                        }
                         Row(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(RabbitRadius.Pill))
-                                .background(palette.dangerSoft)
+                                .background(if (pendingRestart) palette.primarySoft else palette.dangerSoft)
                                 .padding(horizontal = 8.dp, vertical = 3.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(5.dp),
@@ -1395,13 +1529,13 @@ private fun ProfileTab(
                                 modifier = Modifier
                                     .size(6.dp)
                                     .clip(CircleShape)
-                                    .background(Color(0xFFE53935)),
+                                    .background(if (pendingRestart) palette.primary else Color(0xFFE53935)),
                             )
                             Text(
-                                text = stringResource(R.string.home_badge_new_app, newVer),
+                                text = badgeLabel,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.SemiBold,
-                                color = palette.danger,
+                                color = if (pendingRestart) palette.primaryText else palette.danger,
                                 maxLines = 1,
                             )
                         }
@@ -1409,78 +1543,10 @@ private fun ProfileTab(
                 } else {
                     null
                 },
-                onClick = {
-                    showVersionDialog = true
-                    if (!updateState.hasUpdate &&
-                        updateState.downloadState !is UpdateDownloadState.Downloading &&
-                        updateState.downloadState !is UpdateDownloadState.ReadyToInstall
-                    ) {
-                        updateManager.checkForUpdate(force = true)
-                    }
-                },
+                onClick = { onOpenProfileRoute("settings/updates") },
             )
             HorizontalDivider(color = palette.line, thickness = 1.dp)
-            val newCoreVer = coreUpdateState.availableUpdate?.manifest?.coreVersion
-            val loadedCore = coreUpdateState.loadedCore
-            ProfileMenuRow(
-                icon = Icons.Rounded.Memory,
-                title = stringResource(R.string.home_menu_core_update),
-                trailingText = if (newCoreVer == null && loadedCore.pendingRestartVersion == null) {
-                    "v${loadedCore.version} · ${
-                        if (loadedCore.isDynamic) {
-                            stringResource(R.string.home_core_dynamic)
-                        } else {
-                            stringResource(R.string.home_core_builtin)
-                        }
-                    }"
-                } else {
-                    null
-                },
-                trailingContent = if (newCoreVer != null || loadedCore.pendingRestartVersion != null) {
-                    {
-                        val isPending = loadedCore.pendingRestartVersion != null
-                        Row(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(RabbitRadius.Pill))
-                                .background(if (isPending) palette.primarySoft else palette.dangerSoft)
-                                .padding(horizontal = 8.dp, vertical = 3.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(5.dp),
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(6.dp)
-                                    .clip(CircleShape)
-                                    .background(if (isPending) palette.primary else Color(0xFFE53935)),
-                            )
-                            Text(
-                                text = if (isPending) {
-                                    stringResource(R.string.home_badge_pending_restart)
-                                } else {
-                                    stringResource(R.string.home_badge_new_core, newCoreVer.orEmpty())
-                                },
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = if (isPending) palette.primaryText else palette.danger,
-                                maxLines = 1,
-                            )
-                        }
-                    }
-                } else {
-                    null
-                },
-                onClick = {
-                    showCoreDialog = true
-                    if (!coreUpdateState.hasUpdate &&
-                        coreUpdateState.downloadState !is CoreDownloadState.Downloading &&
-                        coreUpdateState.downloadState !is CoreDownloadState.Verifying &&
-                        coreUpdateState.downloadState !is CoreDownloadState.ReadyToRestart
-                    ) {
-                        coreUpdateManager.checkForUpdate(force = true)
-                    }
-                },
-            )
-            HorizontalDivider(color = palette.line, thickness = 1.dp)
+
             ProfileMenuRow(
                 icon = Icons.Rounded.Info,
                 title = stringResource(R.string.home_menu_about),
@@ -1510,154 +1576,6 @@ private fun ProfileTab(
             }
         }
         Spacer(modifier = Modifier.height(8.dp))
-    }
-
-    if (showThemeSheet) {
-        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-        ModalBottomSheet(
-            onDismissRequest = { showThemeSheet = false },
-            sheetState = sheetState,
-            containerColor = palette.surface,
-            tonalElevation = 0.dp,
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .navigationBarsPadding()
-                    .padding(horizontal = RabbitSpacing.Xl)
-                    .padding(bottom = 20.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Text(stringResource(R.string.home_menu_theme), fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
-                Text(stringResource(R.string.home_theme_sheet_sub), fontSize = 12.sp, color = palette.muted)
-                Spacer(modifier = Modifier.height(2.dp))
-                AppThemeMode.entries.forEach { mode ->
-                    val selected = prefs.themeMode == mode
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .defaultMinSize(minHeight = 52.dp)
-                            .clip(RoundedCornerShape(RabbitRadius.Md))
-                            .background(if (selected) palette.primarySoft else palette.field)
-                            .border(
-                                1.dp,
-                                if (selected) palette.primary else palette.line,
-                                RoundedCornerShape(RabbitRadius.Md),
-                            )
-                            .clickable {
-                                viewModel.updatePrefs { it.copy(themeMode = mode) }
-                                showThemeSheet = false
-                            }
-                            .padding(horizontal = 14.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            text = mode.label,
-                            fontSize = 14.sp,
-                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                            color = palette.text,
-                            modifier = Modifier.weight(1f),
-                        )
-                        if (selected) {
-                            Icon(Icons.Rounded.Check, null, tint = palette.primaryText, modifier = Modifier.size(18.dp))
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if (showLanguageSheet) {
-        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-        ModalBottomSheet(
-            onDismissRequest = { showLanguageSheet = false },
-            sheetState = sheetState,
-            containerColor = palette.surface,
-            tonalElevation = 0.dp,
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .navigationBarsPadding()
-                    .padding(horizontal = RabbitSpacing.Xl)
-                    .padding(bottom = 20.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Text(stringResource(R.string.home_menu_language), fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
-                Text(stringResource(R.string.home_language_sheet_sub), fontSize = 12.sp, color = palette.muted)
-                Spacer(modifier = Modifier.height(2.dp))
-                AppLanguageMode.entries.forEach { lang ->
-                    val selected = languageMode == lang
-                    val label = when (lang) {
-                        AppLanguageMode.System -> stringResource(R.string.lang_follow_system)
-                        AppLanguageMode.SimplifiedChinese -> stringResource(R.string.lang_simplified_chinese)
-                        AppLanguageMode.TraditionalChinese -> stringResource(R.string.lang_traditional_chinese)
-                        AppLanguageMode.English -> stringResource(R.string.lang_english)
-                    }
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .defaultMinSize(minHeight = 52.dp)
-                            .clip(RoundedCornerShape(RabbitRadius.Md))
-                            .background(if (selected) palette.primarySoft else palette.field)
-                            .border(
-                                1.dp,
-                                if (selected) palette.primary else palette.line,
-                                RoundedCornerShape(RabbitRadius.Md),
-                            )
-                            .clickable {
-                                showLanguageSheet = false
-                                AppLocaleManager.setLanguageMode(context, lang)
-                            }
-                            .padding(horizontal = 14.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            text = label,
-                            fontSize = 14.sp,
-                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                            color = palette.text,
-                            modifier = Modifier.weight(1f),
-                        )
-                        if (selected) {
-                            Icon(Icons.Rounded.Check, null, tint = palette.primaryText, modifier = Modifier.size(18.dp))
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if (showVersionDialog) {
-        AppUpdateDialog(
-            state = updateState,
-            onRetryCheck = { updateManager.checkForUpdate(force = true) },
-            onStartDownload = { rel -> updateManager.startDownload(rel) },
-            onCancelDownload = { updateManager.cancelDownload() },
-            onInstall = { path -> updateManager.triggerInstall(path) },
-            onOpenReleasePage = { url ->
-                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                runCatching { context.startActivity(intent) }
-            },
-            onDismiss = { showVersionDialog = false },
-        )
-    }
-
-    if (showCoreDialog) {
-        CoreUpdateDialog(
-            state = coreUpdateState,
-            onRetryCheck = { coreUpdateManager.checkForUpdate(force = true) },
-            onStartDownload = { candidate -> coreUpdateManager.startDownload(candidate) },
-            onCancelDownload = { coreUpdateManager.cancelDownload() },
-            onRevertToBuiltIn = { coreUpdateManager.revertToBuiltIn() },
-            onRestartApp = { coreUpdateManager.restartApp() },
-            onSaveMirrorPrefix = { prefix -> coreUpdateManager.setMirrorPrefix(prefix) },
-            onOpenReleasePage = { url ->
-                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                runCatching { context.startActivity(intent) }
-            },
-            onDismiss = { showCoreDialog = false },
-        )
     }
 
     if (showLogoutConfirm) {

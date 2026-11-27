@@ -1,5 +1,12 @@
 package io.rabbitcontrol.android.ui.session
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
+import android.util.Base64
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -46,6 +53,7 @@ import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.HelpOutline
+import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Keyboard
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Monitor
@@ -55,6 +63,7 @@ import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.ScreenRotation
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.SportsEsports
+import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material.icons.rounded.TouchApp
 import androidx.compose.material.icons.rounded.Tune
@@ -66,6 +75,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -379,6 +389,10 @@ fun SessionControlPanel(
         MtlsFingerprintDialog(
             transport = neg.transport,
             fingerprint = neg.peerCertFingerprint,
+            privacySupported = state.privacy.supported,
+            privacyMode = state.privacy.mode,
+            hostMuteSupported = state.hostMute.supported,
+            hostMuted = state.hostMute.muted,
             onDismiss = { showEncryptionDialog = false },
         )
     }
@@ -559,9 +573,27 @@ private fun ControlsTabBody(
     }
 
     if (state.privacy.supported) {
+        val ctx = LocalContext.current
+        val customImagePicker = rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.PickVisualMedia(),
+        ) { uri: Uri? ->
+            if (uri != null) {
+                val b64 = encodeImageUriToBase64(ctx, uri)
+                if (!b64.isNullOrBlank()) {
+                    viewModel.setPrivacyMode("privacy", "custom", b64)
+                    RabbitToast.success(AppStrings.get(R.string.cp_privacy_custom_applied, "已应用自定义防窥壁纸"))
+                } else {
+                    RabbitToast.error(AppStrings.get(R.string.cp_privacy_custom_failed, "无法读取所选图片"))
+                }
+            }
+        }
         HorizontalDivider(color = SessionPalette.border, thickness = 1.dp)
         val privacyModeLabel = when (state.privacy.mode) {
-            "privacy" -> stringResource(R.string.cp_privacy_mode)
+            "privacy" -> if (state.privacy.preset == "custom") {
+                stringResource(R.string.cp_privacy_custom)
+            } else {
+                stringResource(R.string.cp_privacy_mode)
+            }
             "black" -> stringResource(R.string.cp_privacy_black)
             else -> stringResource(R.string.cp_privacy_off)
         }
@@ -573,9 +605,10 @@ private fun ControlsTabBody(
             Text(stringResource(R.string.cp_privacy_curtain), color = SessionPalette.muted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
             Text(privacyModeLabel, color = SessionPalette.accentText, fontSize = 12.sp, fontWeight = FontWeight.Medium)
         }
-        Row(
+        FlowRow(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             listOf(
                 "off" to stringResource(R.string.cp_privacy_off),
@@ -584,11 +617,130 @@ private fun ControlsTabBody(
             ).forEach { (modeId, label) ->
                 SessionKeyChip(
                     label = label,
-                    highlighted = state.privacy.mode == modeId,
+                    highlighted = state.privacy.mode == modeId && (modeId != "privacy" || state.privacy.preset != "custom"),
                 ) {
                     viewModel.setPrivacyMode(modeId)
                 }
             }
+            SessionKeyChip(
+                label = stringResource(R.string.cp_privacy_custom),
+                highlighted = state.privacy.mode == "privacy" && state.privacy.preset == "custom",
+            ) {
+                customImagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+            }
+        }
+    }
+
+    HorizontalDivider(color = SessionPalette.border, thickness = 1.dp)
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(stringResource(R.string.cp_mouse_mode_label), color = SessionPalette.muted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        val mmLabel = when (state.mouseMode) {
+            "remote" -> stringResource(R.string.cp_mouse_mode_remote)
+            "local" -> stringResource(R.string.cp_mouse_mode_local)
+            else -> stringResource(R.string.cp_mouse_mode_smart)
+        }
+        Text(mmLabel, color = SessionPalette.accentText, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        listOf(
+            "smart" to stringResource(R.string.cp_mouse_mode_smart),
+            "remote" to stringResource(R.string.cp_mouse_mode_remote),
+            "local" to stringResource(R.string.cp_mouse_mode_local),
+        ).forEach { (modeKey, label) ->
+            SessionKeyChip(
+                label = label,
+                highlighted = state.mouseMode == modeKey,
+            ) {
+                viewModel.setMouseMode(modeKey)
+            }
+        }
+    }
+    SessionSwitchRow(
+        label = stringResource(R.string.cp_lock_on_disconnect),
+        checked = prefs.autoLockRemoteOnDisconnect,
+        onCheckedChange = viewModel::setAutoLockRemoteOnDisconnect,
+    )
+
+    val hostVer = state.remoteHostVersion
+    if (hostVer != null && hostVer.isOwnerSession && hostVer.updateCapable) {
+        var confirmHostUpdate by remember { mutableStateOf(false) }
+        val checkInfo = state.remoteUpdateCheckInfo
+        val prog = state.remoteUpdateProgress
+        val updating = prog != null && prog.stage !in setOf("idle", "succeeded", "failed")
+        HorizontalDivider(color = SessionPalette.border, thickness = 1.dp)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Icon(Icons.Rounded.SystemUpdate, null, tint = SessionPalette.accentText, modifier = Modifier.size(16.dp))
+                Text(stringResource(R.string.cp_host_update_title), color = SessionPalette.text, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+            }
+            Text("v${hostVer.version} (${hostVer.arch})", color = SessionPalette.muted, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+        }
+        if (updating && prog != null) {
+            LinearProgressIndicator(
+                progress = { (prog.progressPct / 100f).coerceIn(0f, 1f) },
+                color = SessionPalette.accent,
+                trackColor = SessionPalette.border,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "${prog.message.ifBlank { prog.stage }} (${prog.progressPct}%)",
+                    color = SessionPalette.accentText,
+                    fontSize = 11.sp,
+                    modifier = Modifier.weight(1f),
+                )
+                SessionKeyChip(stringResource(R.string.common_cancel)) {
+                    viewModel.cancelRemoteHostUpdate()
+                }
+            }
+        } else if (checkInfo?.hasUpdate == true && !checkInfo.latestVersion.isNullOrBlank()) {
+            SessionKeyChip(stringResource(R.string.cp_host_update_apply, checkInfo.latestVersion)) {
+                confirmHostUpdate = true
+            }
+        } else {
+            val statusTxt = when {
+                checkInfo?.checking == true -> stringResource(R.string.cp_host_update_checking)
+                checkInfo?.error != null -> stringResource(R.string.cp_host_update_check_err, checkInfo.error)
+                checkInfo?.latestVersion != null -> stringResource(R.string.cp_host_update_latest, hostVer.version)
+                else -> stringResource(R.string.cp_host_update_check_btn)
+            }
+            SessionKeyChip(statusTxt, enabled = checkInfo?.checking != true) {
+                viewModel.checkRemoteHostUpdate()
+            }
+        }
+        if (prog != null && prog.stage == "failed" && !prog.error.isNullOrBlank()) {
+            Text(prog.error, color = SessionPalette.dangerText, fontSize = 11.sp)
+        } else if (prog != null && prog.stage == "succeeded") {
+            Text(stringResource(R.string.cp_host_update_done), color = SessionPalette.success, fontSize = 11.sp)
+        }
+        if (confirmHostUpdate && checkInfo?.latestVersion != null) {
+            io.rabbitcontrol.android.ui.components.RabbitDialog(
+                title = stringResource(R.string.cp_host_update_confirm_title),
+                message = stringResource(R.string.cp_host_update_confirm_msg, checkInfo.latestVersion),
+                onDismissRequest = { confirmHostUpdate = false },
+                dismissLabel = stringResource(R.string.common_cancel),
+                confirmLabel = stringResource(R.string.cp_host_update_apply_btn),
+                darkSessionStyle = true,
+                onConfirm = {
+                    confirmHostUpdate = false
+                    viewModel.triggerRemoteHostUpdate()
+                },
+            )
         }
     }
 
@@ -1015,7 +1167,7 @@ private fun DisplayTabBody(
         Text("${curFps}fps", color = SessionPalette.accentText, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
     }
     val maxFpsCap = maxOf(dc?.maxFps ?: 120, curFps, 60)
-    val fpsOptions = listOf(30, 60, 90, 120).filter { it <= maxFpsCap }
+    val fpsOptions = listOf(30, 60, 90, 120, 144, 240).filter { it <= maxFpsCap }
     FlowRow(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1035,9 +1187,12 @@ private fun DisplayTabBody(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(stringResource(R.string.cp_bitrate), color = SessionPalette.muted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-        if (activeBps != null && activeBps > 0) {
-            Text("${activeBps / 1_000_000}M", color = SessionPalette.accentText, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
-        }
+        Text(
+            text = if (activeBps == null || activeBps <= 0) stringResource(R.string.cp_bitrate_auto) else "${activeBps / 1_000_000}M",
+            color = SessionPalette.accentText,
+            fontSize = 12.sp,
+            fontFamily = FontFamily.Monospace,
+        )
     }
     FlowRow(
         modifier = Modifier.fillMaxWidth(),
@@ -1045,13 +1200,16 @@ private fun DisplayTabBody(
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         listOf(
-            4_000_000 to "4M",
+            0 to stringResource(R.string.cp_bitrate_auto),
             8_000_000 to "8M",
             14_000_000 to "14M",
-            24_000_000 to "24M",
-            40_000_000 to "40M",
+            30_000_000 to "30M",
+            60_000_000 to "60M",
+            100_000_000 to "100M",
+            150_000_000 to "150M",
         ).forEach { (bps, lbl) ->
-            SessionKeyChip(lbl, highlighted = activeBps == bps) {
+            val selected = if (bps == 0) (activeBps == null || activeBps == 0) else activeBps == bps
+            SessionKeyChip(lbl, highlighted = selected) {
                 viewModel.setBitrate(bps)
             }
         }
@@ -1304,6 +1462,10 @@ private fun SessionToolRow(
 private fun MtlsFingerprintDialog(
     transport: String,
     fingerprint: String?,
+    privacySupported: Boolean,
+    privacyMode: String,
+    hostMuteSupported: Boolean,
+    hostMuted: Boolean,
     onDismiss: () -> Unit,
 ) {
     val clipboard = LocalClipboardManager.current
@@ -1359,6 +1521,44 @@ private fun MtlsFingerprintDialog(
                         fontSize = 12.sp,
                         fontFamily = FontFamily.Monospace,
                     )
+                }
+                if (privacySupported) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(
+                            text = stringResource(R.string.cp_privacy_curtain),
+                            color = SessionPalette.muted,
+                            fontSize = 12.sp,
+                        )
+                        Text(
+                            text = when (privacyMode) {
+                                "privacy" -> stringResource(R.string.cp_privacy_mode)
+                                "black" -> stringResource(R.string.cp_privacy_black)
+                                else -> stringResource(R.string.cp_privacy_off)
+                            },
+                            color = SessionPalette.text,
+                            fontSize = 12.sp,
+                        )
+                    }
+                }
+                if (hostMuteSupported) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(
+                            text = stringResource(R.string.cp_host_mute_title),
+                            color = SessionPalette.muted,
+                            fontSize = 12.sp,
+                        )
+                        Text(
+                            text = stringResource(if (hostMuted) R.string.cp_host_mute_on else R.string.cp_host_mute_off),
+                            color = SessionPalette.text,
+                            fontSize = 12.sp,
+                        )
+                    }
                 }
                 Text(
                     text = stringResource(R.string.cp_mtls_fingerprint_label),
@@ -1574,4 +1774,41 @@ private fun CreateVirtualDisplayDialog(
             }
         }
     }
+}
+
+private fun encodeImageUriToBase64(context: android.content.Context, uri: Uri): String? {
+    return runCatching {
+        val rawBytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return null
+        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, opts)
+        val maxSide = maxOf(opts.outWidth, opts.outHeight).coerceAtLeast(1)
+        var sample = 1
+        while (maxSide / sample > 1920) {
+            sample *= 2
+        }
+        val decoded = BitmapFactory.decodeByteArray(
+            rawBytes,
+            0,
+            rawBytes.size,
+            BitmapFactory.Options().apply { inSampleSize = sample },
+        ) ?: return null
+        val scale = minOf(1f, 1280f / maxOf(decoded.width, decoded.height).coerceAtLeast(1))
+        val targetBitmap = if (scale < 1f) {
+            Bitmap.createScaledBitmap(
+                decoded,
+                (decoded.width * scale).roundToInt().coerceAtLeast(1),
+                (decoded.height * scale).roundToInt().coerceAtLeast(1),
+                true,
+            )
+        } else {
+            decoded
+        }
+        val baos = java.io.ByteArrayOutputStream()
+        targetBitmap.compress(Bitmap.CompressFormat.JPEG, 78, baos)
+        if (targetBitmap !== decoded) targetBitmap.recycle()
+        decoded.recycle()
+        val jpeg = baos.toByteArray()
+        if (jpeg.size > 170 * 1024) return null
+        Base64.encodeToString(jpeg, Base64.NO_WRAP)
+    }.getOrNull()
 }

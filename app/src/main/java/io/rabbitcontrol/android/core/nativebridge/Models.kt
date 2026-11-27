@@ -207,6 +207,137 @@ data class HostMuteStateModel(
 )
 
 @Immutable
+data class TerminalLockStateModel(
+    val required: Boolean = false,
+    val unlocked: Boolean = true,
+    val username: String? = null,
+    val retryAfterSecs: Int = 0,
+)
+
+@Immutable
+data class TerminalUnlockResultModel(
+    val ok: Boolean = false,
+    val error: String? = null,
+    val retryAfterSecs: Int = 0,
+    val timestampMs: Long = System.currentTimeMillis(),
+)
+
+@Immutable
+data class RemoteHostVersionModel(
+    val version: String,
+    val arch: String,
+    val os: String,
+    val updateCapable: Boolean = false,
+    val isOwnerSession: Boolean = false,
+    val serviceInstalled: Boolean = false,
+)
+
+@Immutable
+data class RemoteUpdateProgressModel(
+    val stage: String = "idle",
+    val progressPct: Int = 0,
+    val downloadedBytes: Long = 0L,
+    val totalBytes: Long = 0L,
+    val targetVersion: String = "",
+    val message: String = "",
+    val needControllerRelay: Boolean = false,
+    val error: String? = null,
+)
+
+@Immutable
+data class RemoteUpdateCheckInfo(
+    val checking: Boolean = false,
+    val latestVersion: String? = null,
+    val hasUpdate: Boolean = false,
+    val downloadUrl: String? = null,
+    val expectedSha256: String? = null,
+    val assetName: String? = null,
+    val error: String? = null,
+)
+
+@Immutable
+data class DeviceCertStatusModel(
+    val valid: Boolean = false,
+    val serialHex: String? = null,
+    val userId: String? = null,
+    val deviceId: String? = null,
+    val fingerprintSha256: String? = null,
+    val issuedAtUnixSec: Long = 0L,
+    val expiresAtUnixSec: Long = 0L,
+    val needsRenewal: Boolean = true,
+)
+
+fun parseTerminalLockState(obj: JSONObject?): TerminalLockStateModel {
+    if (obj == null) return TerminalLockStateModel()
+    val rawUser = obj.optString("username").takeIf { it.isNotBlank() && it != "null" }
+    val retry = obj.optInt("retry_after_secs", obj.optInt("retryAfterSecs", 0))
+    return TerminalLockStateModel(
+        required = obj.optBoolean("required", false),
+        unlocked = obj.optBoolean("unlocked", true),
+        username = rawUser,
+        retryAfterSecs = retry.coerceAtLeast(0),
+    )
+}
+
+fun parseTerminalUnlockResult(obj: JSONObject?): TerminalUnlockResultModel {
+    if (obj == null) return TerminalUnlockResultModel(ok = false)
+    val err = obj.optString("error").takeIf { it.isNotBlank() && it != "null" }
+    val retry = obj.optInt("retry_after_secs", obj.optInt("retryAfterSecs", 0))
+    return TerminalUnlockResultModel(
+        ok = obj.optBoolean("ok", false),
+        error = err,
+        retryAfterSecs = retry.coerceAtLeast(0),
+        timestampMs = System.currentTimeMillis(),
+    )
+}
+
+fun parseRemoteHostVersion(obj: JSONObject?): RemoteHostVersionModel? {
+    if (obj == null) return null
+    val ver = obj.optString("version").trim()
+    if (ver.isEmpty() || ver == "null") return null
+    return RemoteHostVersionModel(
+        version = ver,
+        arch = obj.optString("arch").trim(),
+        os = obj.optString("os").trim(),
+        updateCapable = obj.optBoolean("updateCapable", obj.optBoolean("update_capable", false)),
+        isOwnerSession = obj.optBoolean("isOwnerSession", obj.optBoolean("is_owner_session", false)),
+        serviceInstalled = obj.optBoolean("serviceInstalled", obj.optBoolean("service_installed", false)),
+    )
+}
+
+fun parseRemoteUpdateProgress(obj: JSONObject?): RemoteUpdateProgressModel? {
+    if (obj == null) return null
+    val stage = obj.optString("stage").trim().lowercase().ifBlank { "idle" }
+    val err = obj.optString("error").takeIf { it.isNotBlank() && it != "null" }
+    return RemoteUpdateProgressModel(
+        stage = stage,
+        progressPct = obj.optInt("progressPct", obj.optInt("progress_pct", 0)).coerceIn(0, 100),
+        downloadedBytes = obj.optLong("downloadedBytes", obj.optLong("downloaded_bytes", 0L)),
+        totalBytes = obj.optLong("totalBytes", obj.optLong("total_bytes", 0L)),
+        targetVersion = obj.optString("targetVersion", obj.optString("target_version", "")),
+        message = obj.optString("message", ""),
+        needControllerRelay = obj.optBoolean("needControllerRelay", obj.optBoolean("need_controller_relay", false)),
+        error = err,
+    )
+}
+
+fun parseDeviceCertStatus(obj: JSONObject?): DeviceCertStatusModel {
+    if (obj == null) return DeviceCertStatusModel()
+    fun JSONObject.optStrOrNull(k1: String, k2: String = k1): String? =
+        optString(k1).ifBlank { optString(k2) }.takeIf { it.isNotBlank() && it != "null" }
+    return DeviceCertStatusModel(
+        valid = obj.optBoolean("valid", false),
+        serialHex = obj.optStrOrNull("serialHex", "serial_hex"),
+        userId = obj.optStrOrNull("userId", "user_id"),
+        deviceId = obj.optStrOrNull("deviceId", "device_id"),
+        fingerprintSha256 = obj.optStrOrNull("fingerprintSha256", "fingerprint_sha256"),
+        issuedAtUnixSec = obj.optLong("issuedAtUnixSec", obj.optLong("issued_at_unix_sec", 0L)),
+        expiresAtUnixSec = obj.optLong("expiresAtUnixSec", obj.optLong("expires_at_unix_sec", 0L)),
+        needsRenewal = obj.optBoolean("needsRenewal", obj.optBoolean("needs_renewal", true)),
+    )
+}
+
+@Immutable
 data class DisplayConfigModel(
     val width: Int,
     val height: Int,

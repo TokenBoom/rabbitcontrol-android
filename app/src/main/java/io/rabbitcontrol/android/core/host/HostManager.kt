@@ -11,6 +11,7 @@ import com.rabbitcontrol.android.error.RcErrorCodes
 import com.rabbitcontrol.android.error.RcUiError
 import io.rabbitcontrol.android.R
 import io.rabbitcontrol.android.core.data.AccountRepository
+import io.rabbitcontrol.android.core.data.HostAuthMode
 import io.rabbitcontrol.android.core.data.InteractionPrefsStore
 import io.rabbitcontrol.android.core.error.RcUiErrorCodec
 import io.rabbitcontrol.android.core.i18n.AppStrings
@@ -49,6 +50,7 @@ data class HostUiState(
     val connectedIsOwner: Boolean = false,
     val pendingApproval: HostApprovalPromptModel? = null,
     val tempCode: String? = null,
+    val authMode: HostAuthMode = HostAuthMode.TempCode,
     val allowRemoteAssist: Boolean = false,
     val allowAssistFileTransfer: Boolean = true,
     val ownerSelfControlReady: Boolean = false,
@@ -70,6 +72,7 @@ class HostManager(
 
     private val _state = MutableStateFlow(
         HostUiState(
+            authMode = prefsStore.state.value.hostAuthMode,
             allowRemoteAssist = prefsStore.state.value.hostAllowRemoteAssist,
             allowAssistFileTransfer = prefsStore.state.value.hostAllowAssistFileTransfer,
             accessibilityEnabled = RabbitAccessibilityService.isEnabled(context),
@@ -101,10 +104,14 @@ class HostManager(
     }
 
     fun enableHostWithProjection(resultCode: Int, data: Intent) {
-        val allowAssist = prefsStore.state.value.hostAllowRemoteAssist
-        val allowAssistFiles = prefsStore.state.value.hostAllowAssistFileTransfer
+        val prefs = prefsStore.state.value
+        val allowAssist = prefs.hostAllowRemoteAssist
+        val allowAssistFiles = prefs.hostAllowAssistFileTransfer
+        val authMode = prefs.hostAuthMode
+        val fixedPw = prefs.hostFixedPassword.trim()
         _state.value = _state.value.copy(
             starting = true,
+            authMode = authMode,
             allowRemoteAssist = allowAssist,
             allowAssistFileTransfer = allowAssistFiles,
             lastError = null,
@@ -116,10 +123,19 @@ class HostManager(
             val (screenW, screenH, _) = queryDisplayMetrics()
             Core.setHostScreenMetrics(screenW, screenH)
 
+            val effectiveMode = if (authMode == HostAuthMode.FixedPassword && fixedPw.isEmpty()) {
+                HostAuthMode.TempCode
+            } else {
+                authMode
+            }
             val req = JSONObject()
                 .put("allowRemoteAssist", allowAssist)
                 .put("allowAssistFileTransfer", allowAssistFiles)
                 .put("requireApproval", true)
+                .put("authMode", effectiveMode.wireValue)
+            if (effectiveMode == HostAuthMode.FixedPassword && fixedPw.isNotEmpty()) {
+                req.put("password", fixedPw)
+            }
 
             val res = runCatching { JSONObject(Core.startHost(req.toString())) }
             res.onSuccess { obj ->
@@ -302,6 +318,7 @@ class HostManager(
 
     fun rotateTempCode() {
         if (!_state.value.enabled || !_state.value.allowRemoteAssist) return
+        if (_state.value.authMode != HostAuthMode.TempCode) return
         scope.launch {
             runCatching {
                 JSONObject(Core.hostCommand(JSONObject().put("type", "rotate_password").toString()))
@@ -310,6 +327,46 @@ class HostManager(
                 if (pw != null) {
                     _state.value = _state.value.copy(tempCode = pw)
                 }
+            }
+        }
+    }
+
+    fun setHostAuthMode(mode: HostAuthMode, fixedPassword: String? = null) {
+        val cleanFixed = fixedPassword?.trim() ?: prefsStore.state.value.hostFixedPassword
+        if (mode == HostAuthMode.FixedPassword && cleanFixed.isBlank()) {
+            prefsStore.update { it.copy(hostAuthMode = mode) }
+            _state.value = _state.value.copy(authMode = mode)
+            return
+        }
+        prefsStore.update {
+            it.copy(
+                hostAuthMode = mode,
+                hostFixedPassword = if (fixedPassword != null) cleanFixed else it.hostFixedPassword,
+            )
+        }
+        _state.value = _state.value.copy(authMode = mode)
+        if (!_state.value.enabled) return
+        scope.launch {
+            val cmd = JSONObject()
+                .put("type", "set_password_mode")
+                .put("mode", mode.wireValue)
+            if (mode == HostAuthMode.FixedPassword) {
+                cmd.put("password", cleanFixed)
+            }
+            runCatching {
+                JSONObject(Core.hostCommand(cmd.toString()))
+            }.onSuccess { resp ->
+                val pw = resp.optString("password").takeIf { it.isNotBlank() && it != "null" }
+                _state.value = _state.value.copy(
+                    authMode = mode,
+                    tempCode = if (mode == HostAuthMode.ApprovalOnly) null else pw,
+                )
+            }.onFailure { err ->
+                val uiErr = RcUiErrorCodec.fromThrowable(err, fallbackCode = RcErrorCodes.SESSION_HOST_NOT_READY)
+                _state.value = _state.value.copy(
+                    lastError = uiErr.message,
+                    lastUiError = uiErr,
+                )
             }
         }
     }

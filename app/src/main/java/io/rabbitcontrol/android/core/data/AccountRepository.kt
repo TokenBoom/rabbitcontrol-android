@@ -10,12 +10,15 @@ import io.rabbitcontrol.android.R
 import io.rabbitcontrol.android.core.error.RcUiErrorCodec
 import io.rabbitcontrol.android.core.error.RcUiErrorException
 import io.rabbitcontrol.android.core.i18n.AppStrings
+import io.rabbitcontrol.android.core.nativebridge.DeviceCertStatusModel
 import io.rabbitcontrol.android.core.nativebridge.NativeRuntimeBootstrap
 import io.rabbitcontrol.android.core.nativebridge.RemoteDevice
 import io.rabbitcontrol.android.core.nativebridge.ServerConfigModel
 import io.rabbitcontrol.android.core.nativebridge.SignalStatusSnapshot
+import io.rabbitcontrol.android.core.nativebridge.UpnpState
 import io.rabbitcontrol.android.core.nativebridge.UpnpStatusModel
 import io.rabbitcontrol.android.core.nativebridge.UserProfile
+import io.rabbitcontrol.android.core.nativebridge.parseDeviceCertStatus
 import io.rabbitcontrol.android.core.nativebridge.parseUpnpStatusPayload
 import io.rabbitcontrol.android.session.Core
 import kotlinx.coroutines.CoroutineScope
@@ -57,6 +60,7 @@ class AccountRepository(
     @Volatile
     private var pendingNativeRestoreJob: Job? = null
     private var upnpMulticastReleaseJob: Job? = null
+    private var upnpPollJob: Job? = null
     private var upnpMulticastLock: WifiManager.MulticastLock? = null
     private val appInForeground = MutableStateFlow(true)
     private val backgroundKeepAlive = MutableStateFlow(false)
@@ -111,8 +115,10 @@ class AccountRepository(
     private fun startSignalPoller() {
         scope.launch {
             NativeRuntimeBootstrap.ensureReady(appContext)
+            var ticks = 0
             while (isActive) {
                 shouldPollSignal.first { it }
+                ticks += 1
                 runCatching {
                     val rawStr = Core.pollSignalEvents()
                     if (rawStr != null) {
@@ -237,6 +243,17 @@ class AccountRepository(
                                     d
                                 }
                             }
+                        }
+                    }
+                }
+                val curUpnp = _upnpStatus.value
+                val shouldPollUpnp = (curUpnp.enabled && curUpnp.state == UpnpState.Discovering && ticks % 2 == 0) ||
+                    (prefsStore.state.value.upnpEnabled && _signalStatus.value.state == "connected" && ticks % 10 == 0)
+                if (shouldPollUpnp) {
+                    runCatching {
+                        val parsed = parseUpnpStatusPayload(Core.getUpnpStatus())
+                        if (parsed != _upnpStatus.value) {
+                            _upnpStatus.value = parsed
                         }
                     }
                 }
@@ -436,6 +453,9 @@ class AccountRepository(
             UpnpStatusModel(enabled = prefsStore.state.value.upnpEnabled)
         }
         _upnpStatus.value = parsed
+        if (parsed.enabled && parsed.state == UpnpState.Discovering) {
+            pollUpnpUntilSettled()
+        }
         parsed
     }
 
@@ -446,11 +466,31 @@ class AccountRepository(
             if (enabled) {
                 acquireUpnpMulticastLockTemporarily()
             } else {
+                upnpPollJob?.cancel()
+                upnpPollJob = null
                 releaseUpnpMulticastLock()
             }
             val parsed = parseUpnpStatusPayload(Core.setUpnpEnabled(enabled))
             _upnpStatus.value = parsed
+            if (parsed.enabled && parsed.state == UpnpState.Discovering) {
+                pollUpnpUntilSettled()
+            }
             parsed
+        }
+    }
+
+    private fun pollUpnpUntilSettled() {
+        if (upnpPollJob?.isActive == true) return
+        upnpPollJob = scope.launch {
+            repeat(20) {
+                delay(1_000L)
+                val parsed = runCatching { parseUpnpStatusPayload(Core.getUpnpStatus()) }.getOrNull()
+                    ?: return@launch
+                _upnpStatus.value = parsed
+                if (!parsed.enabled || parsed.state != UpnpState.Discovering) {
+                    return@launch
+                }
+            }
         }
     }
 
@@ -764,6 +804,68 @@ class AccountRepository(
             )
         }
         _devices.value = _devices.value.filterNot { it.id == deviceId }
+    }
+
+    suspend fun renameDevice(deviceId: String, alias: String): RemoteDevice = withContext(Dispatchers.IO) {
+        val selected = checkNotNull(_server.value) {
+            AppStrings.get(R.string.repo_err_no_server, "请先配置服务器")
+        }
+        val cleanAlias = alias.trim()
+        require(cleanAlias.isNotEmpty()) {
+            AppStrings.get(R.string.device_rename_empty_err, "备注名不能为空")
+        }
+        val resp = authenticated {
+            request(
+                "rename_device",
+                selected,
+                "access" to it.getString("access_token"),
+                "targetDeviceId" to deviceId,
+                "alias" to cleanAlias,
+            )
+        }
+        val devObj = resp.optJSONObject("device")
+        val updatedName = devObj?.optString("alias")?.takeIf { it.isNotBlank() } ?: cleanAlias
+        var resultDevice: RemoteDevice? = null
+        _devices.value = _devices.value.map { d ->
+            if (d.id == deviceId) {
+                val updated = d.copy(name = updatedName)
+                resultDevice = updated
+                updated
+            } else {
+                d
+            }
+        }
+        resultDevice ?: RemoteDevice(
+            id = deviceId,
+            name = updatedName,
+            os = devObj?.optString("os").orEmpty(),
+            online = devObj?.optBoolean("online") ?: false,
+            busy = devObj?.optBoolean("in_session") ?: false,
+            disabled = devObj?.optBoolean("disabled") ?: false,
+            allowRemoteAssist = devObj?.optBoolean("allow_remote_assist") ?: false,
+            allowRemoteControl = devObj?.optBoolean("allow_remote_control", true) ?: true,
+            wolCapable = devObj?.optBoolean("wol_capable", false) ?: false,
+        )
+    }
+
+    suspend fun getDeviceCertStatus(): DeviceCertStatusModel = withContext(Dispatchers.IO) {
+        NativeRuntimeBootstrap.ensureReady(appContext)
+        val resp = JSONObject(Core.account(JSONObject().put("action", "cert_status").toString()))
+        parseDeviceCertStatus(resp)
+    }
+
+    suspend fun renewDeviceCert(): DeviceCertStatusModel = withContext(Dispatchers.IO) {
+        val selected = checkNotNull(_server.value) {
+            AppStrings.get(R.string.repo_err_no_server, "请先配置服务器")
+        }
+        val resp = authenticated {
+            request(
+                "renew_cert",
+                selected,
+                "access" to it.getString("access_token"),
+            )
+        }
+        parseDeviceCertStatus(resp)
     }
 
     suspend fun changePassword(current: String, replacement: String): UserProfile = withContext(Dispatchers.IO) {
