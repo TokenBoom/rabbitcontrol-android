@@ -76,6 +76,7 @@ import com.rabbitcontrol.android.error.RcErrorPresentation
 import io.rabbitcontrol.android.R
 import io.rabbitcontrol.android.core.nativebridge.ServerConfigModel
 import io.rabbitcontrol.android.ui.components.ProvideRabbitTextToolbar
+import io.rabbitcontrol.android.ui.components.RabbitAdaptiveSheet
 import io.rabbitcontrol.android.ui.components.RabbitCard
 import io.rabbitcontrol.android.ui.components.RabbitDialog
 import io.rabbitcontrol.android.ui.components.RabbitPrimaryButton
@@ -351,8 +352,8 @@ fun AuthScreen(
         ) {
             Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .widthIn(max = 480.dp),
+                    .widthIn(max = 480.dp)
+                    .fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(RabbitSpacing.Md),
             ) {
                 when (state.step) {
@@ -919,7 +920,6 @@ fun AuthScreen(
     }
 
     if (showServerSheet && state.step == AuthStep.Server) {
-        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         val editing = state.editingServer
         val submitText = when {
             state.busy -> if (editing != null && !viewModel.needsReprobeForEdit(editing)) {
@@ -931,11 +931,9 @@ fun AuthScreen(
             editing != null -> stringResource(R.string.auth_reverify_and_save)
             else -> stringResource(R.string.auth_verify_and_add)
         }
-        ModalBottomSheet(
+        RabbitAdaptiveSheet(
             onDismissRequest = { showServerSheet = false },
-            sheetState = sheetState,
-            containerColor = palette.surface,
-            tonalElevation = 0.dp,
+            maxDialogWidth = 500.dp,
         ) {
             ProvideRabbitTextToolbar {
                 Column(

@@ -26,10 +26,21 @@ Powered by [**TokenBoom/rabbitcontrol-core**](https://github.com/TokenBoom/rabbi
 | :---: |
 | <img src="docs/ui/en/control-landscape.png" width="760" alt="Remote Control Landscape" /> |
 
+### Tablet (Adaptive Large Screen)
+
+| Devices & Detail (Two-Pane) | Remote Assistance (Two-Column) |
+| :---: | :---: |
+| <img src="docs/ui/en/tablet-devices.png" width="400" alt="Tablet Devices and Detail Two-Pane" /> | <img src="docs/ui/en/tablet-assist.png" width="400" alt="Tablet Remote Assistance" /> |
+
+| Profile & Settings (Two-Pane) | File Transfer (Split Workspace) |
+| :---: | :---: |
+| <img src="docs/ui/en/tablet-settings.png" width="400" alt="Tablet Profile and Settings" /> | <img src="docs/ui/en/tablet-transfer.png" width="400" alt="Tablet File Transfer" /> |
+
 ---
 
 ## Features
 
+- **Adaptive Tablet & Large-Screen UI**: Responsive window-size breakpoints (`Compact` / `Medium` / `Expanded`) switching to a slim `NavigationRail`, persistent List-Detail two-pane layouts for Devices & Settings, two-column Remote Assistance, split-pane File Transfer & collapsible-sidebar Terminal, centered adaptive dialogs (`RabbitAdaptiveSheet`), anchored server popover, and tablet-scaled remote session controls.
 - **Server Discovery & PKI Verification**: Connect to self-hosted RabbitControl servers (default API port `21118`) with 64-character SHA-256 CA fingerprint verification and dynamic core hot-updates (`core-v*` verified via ECDSA P-256 with automatic rollback).
 - **Account & Device Management**: Sign in with RabbitControl credentials, manage bound devices, filter by online status, remove devices, inspect details, and send Wake-on-LAN (WoL) packets.
 - **Connection Strategy & Networking**: Configurable connection mode (`Auto` / `P2P Only` / `TCP Relay`) with immediate in-session switching, SOCKS5 / HTTP outbound proxy support, UPnP / NAT-PMP port mapping diagnostics, and automatic network route-change recovery (`NetworkRouteMonitor`).

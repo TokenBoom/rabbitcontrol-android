@@ -158,6 +158,7 @@ fun SessionControlPanel(
     onOpenTool: (DeviceToolKind) -> Unit,
     onRequestDisconnect: () -> Unit,
     onDismiss: () -> Unit,
+    isTablet: Boolean = false,
 ) {
     val state by viewModel.sessionState.collectAsStateWithLifecycle()
     val diag by viewModel.media.collectAsStateWithLifecycle()
@@ -196,8 +197,11 @@ fun SessionControlPanel(
                         .heightIn(max = 440.dp)
                 } else {
                     Modifier
-                        .fillMaxWidth(0.45f)
-                        .widthIn(min = 320.dp, max = 360.dp)
+                        .widthIn(
+                            min = if (isTablet) 360.dp else 320.dp,
+                            max = if (isTablet) 420.dp else 360.dp,
+                        )
+                        .fillMaxWidth()
                         .fillMaxHeight()
                 },
             )
@@ -1476,8 +1480,8 @@ private fun MtlsFingerprintDialog(
             color = SessionPalette.chromeElevated,
             border = BorderStroke(1.dp, SessionPalette.border),
             modifier = Modifier
-                .fillMaxWidth()
-                .widthIn(max = 360.dp),
+                .widthIn(max = 360.dp)
+                .fillMaxWidth(),
         ) {
             Column(
                 modifier = Modifier.padding(18.dp),
@@ -1650,8 +1654,8 @@ private fun CreateVirtualDisplayDialog(
             color = SessionPalette.chromeElevated,
             border = BorderStroke(1.dp, SessionPalette.border),
             modifier = Modifier
-                .fillMaxWidth()
-                .widthIn(max = 360.dp),
+                .widthIn(max = 360.dp)
+                .fillMaxWidth(),
         ) {
             Column(
                 modifier = Modifier.padding(18.dp),

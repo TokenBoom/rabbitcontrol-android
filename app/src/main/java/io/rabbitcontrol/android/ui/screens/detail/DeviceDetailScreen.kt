@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -88,6 +89,7 @@ import io.rabbitcontrol.android.core.data.DeviceToolKind
 import io.rabbitcontrol.android.core.data.rememberWallpaperImage
 import io.rabbitcontrol.android.core.nativebridge.RemoteDevice
 import io.rabbitcontrol.android.core.session.SessionStatus
+import io.rabbitcontrol.android.ui.components.RabbitAdaptiveSheet
 import io.rabbitcontrol.android.ui.components.RabbitCard
 import io.rabbitcontrol.android.ui.components.RabbitDialog
 import io.rabbitcontrol.android.ui.components.RabbitPrimaryButton
@@ -117,6 +119,7 @@ fun DeviceDetailScreen(
     onBack: () -> Unit,
     onEnterDesktop: (watchOnly: Boolean) -> Unit,
     onOpenTool: (DeviceToolKind) -> Unit,
+    embedded: Boolean = false,
     viewModel: DeviceDetailViewModel = koinViewModel(),
 ) {
     val palette = LocalRabbitPalette.current
@@ -142,10 +145,10 @@ fun DeviceDetailScreen(
     val isCurrentConnected = activeSession.targetId == liveDevice.id && activeSession.negotiated != null && !isCurrentToolsOnly
     val isFav = liveDevice.id in favorites
 
-    var sheetMode by remember { mutableStateOf<DetailSheetMode?>(null) }
-    var powerConfirmKind by remember { mutableStateOf<String?>(null) }
-    var showRemoveConfirm by remember { mutableStateOf(false) }
-    var showRenameDialog by remember { mutableStateOf(false) }
+    var sheetMode by remember(liveDevice.id) { mutableStateOf<DetailSheetMode?>(null) }
+    var powerConfirmKind by remember(liveDevice.id) { mutableStateOf<String?>(null) }
+    var showRemoveConfirm by remember(liveDevice.id) { mutableStateOf(false) }
+    var showRenameDialog by remember(liveDevice.id) { mutableStateOf(false) }
     val osLabel = remember(liveDevice.os) { formatDetailOs(liveDevice.os) }
 
     fun triggerTool(kind: DeviceToolKind) {
@@ -167,13 +170,16 @@ fun DeviceDetailScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(palette.canvas)
-            .systemBarsPadding(),
+            .then(if (embedded) Modifier else Modifier.systemBarsPadding()),
     ) {
-        Column(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
             RabbitTopBar(
                 title = liveDevice.name,
                 subtitle = osLabel,
-                onBack = onBack,
+                onBack = if (embedded) null else onBack,
                 actions = {
                     if (liveDevice.id.isNotBlank() && !liveDevice.id.contains(':')) {
                         IconButton(
@@ -202,7 +208,9 @@ fun DeviceDetailScreen(
 
             Column(
                 modifier = Modifier
-                    .fillMaxSize()
+                    .weight(1f)
+                    .widthIn(max = 760.dp)
+                    .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = RabbitSpacing.Lg, vertical = RabbitSpacing.Sm),
                 verticalArrangement = Arrangement.spacedBy(RabbitSpacing.Lg),
@@ -260,7 +268,7 @@ fun DeviceDetailScreen(
                                 text = if (isCurrentConnected) {
                                     stringResource(R.string.detail_session_connected)
                                 } else {
-                                    viewModel.lastConnectedLabel(device.id)
+                                    viewModel.lastConnectedLabel(liveDevice.id)
                                 },
                                 fontSize = 13.sp,
                                 color = Color(0xFFD4D4D4),
@@ -469,11 +477,11 @@ fun DeviceDetailScreen(
                         Text(osLabel, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = palette.text)
                     }
 
-                    if (device.id.isNotBlank()) {
+                    if (liveDevice.id.isNotBlank()) {
                         Spacer(modifier = Modifier.height(12.dp))
                         HorizontalDivider(color = palette.line, thickness = 1.dp)
                         Spacer(modifier = Modifier.height(8.dp))
-                        val formatted = if (device.id.contains(':')) device.id else device.id.chunked(3).joinToString(" ")
+                        val formatted = if (liveDevice.id.contains(':')) liveDevice.id else liveDevice.id.chunked(3).joinToString(" ")
                         val copiedIdMsg = stringResource(R.string.detail_copied_id)
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -482,7 +490,7 @@ fun DeviceDetailScreen(
                                 .defaultMinSize(minHeight = 44.dp)
                                 .clip(RoundedCornerShape(RabbitRadius.Sm))
                                 .clickable {
-                                    clipboard.setText(AnnotatedString(device.id))
+                                    clipboard.setText(AnnotatedString(liveDevice.id))
                                     RabbitToast.success(copiedIdMsg)
                                 }
                                 .padding(vertical = 4.dp),
@@ -545,7 +553,7 @@ fun DeviceDetailScreen(
                         }
                     }
 
-                    if (device.id.isNotBlank() && !device.id.contains(':')) {
+                    if (liveDevice.id.isNotBlank() && !liveDevice.id.contains(':')) {
                         Spacer(modifier = Modifier.height(8.dp))
                         HorizontalDivider(color = palette.line, thickness = 1.dp)
                         Spacer(modifier = Modifier.height(8.dp))
@@ -587,14 +595,11 @@ fun DeviceDetailScreen(
 
     val activeSheet = sheetMode
     if (activeSheet != null) {
-        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         var draftOrder by remember(activeSheet, toolOrder) { mutableStateOf(toolOrder) }
 
-        ModalBottomSheet(
+        RabbitAdaptiveSheet(
             onDismissRequest = { sheetMode = null },
-            sheetState = sheetState,
-            containerColor = palette.surface,
-            tonalElevation = 0.dp,
+            maxDialogWidth = 480.dp,
         ) {
             Column(
                 modifier = Modifier
@@ -808,7 +813,7 @@ fun DeviceDetailScreen(
         val unsupportedMsg = stringResource(R.string.detail_power_unsupported, verb)
         RabbitDialog(
             title = stringResource(R.string.detail_power_confirm_title, verb),
-            message = stringResource(R.string.detail_power_confirm_msg, verb, device.name),
+            message = stringResource(R.string.detail_power_confirm_msg, verb, liveDevice.name),
             onDismissRequest = { powerConfirmKind = null },
             dismissLabel = stringResource(R.string.common_cancel),
             confirmLabel = stringResource(R.string.detail_power_confirm_btn, verb),

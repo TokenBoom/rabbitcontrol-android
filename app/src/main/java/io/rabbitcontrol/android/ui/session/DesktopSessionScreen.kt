@@ -154,6 +154,7 @@ fun DesktopSessionScreen(
             .background(SessionPalette.canvas),
     ) {
         val isPortrait = maxHeight >= maxWidth
+        val isTabletDevice = LocalConfiguration.current.smallestScreenWidthDp >= 600
         val screenWidthPx = constraints.maxWidth.toFloat()
         val pxPerDp = if (maxWidth.value > 0f) screenWidthPx / maxWidth.value else 1f
         val screenHeightPx = constraints.maxHeight.toFloat()
@@ -166,7 +167,7 @@ fun DesktopSessionScreen(
     val streamH = state.displayConfig?.height ?: state.negotiated?.height ?: 1080
     val isRemoteVertical = streamH > streamW
     val usePortraitTrackpad = when (prefs.portraitLayoutMode) {
-        PortraitLayoutMode.Auto -> !isRemoteVertical
+        PortraitLayoutMode.Auto -> !isRemoteVertical && !isTabletDevice
         PortraitLayoutMode.Fullscreen -> false
         PortraitLayoutMode.SplitTrackpad -> true
     }
@@ -731,6 +732,7 @@ fun DesktopSessionScreen(
         ) {
             SessionKeyboardBar(
                 isPortrait = isPortrait,
+                isTablet = isTabletDevice,
                 isMacHost = isMacTarget,
                 stickyMods = stickyMods,
                 onToggleMod = viewModel::toggleStickyModifier,
@@ -752,13 +754,15 @@ fun DesktopSessionScreen(
                 .offset { IntOffset(virtualKbdOffsetX.roundToInt(), virtualKbdOffsetY.roundToInt()) },
         ) {
             val maxDragY = screenHeightPx * 0.55f
-            val maxDragX = if (isPortrait) {
+            val virtualKbdWidthDp = if (isTabletDevice) 780f else 480f
+            val maxDragX = if (isPortrait && !isTabletDevice) {
                 0f
             } else {
-                ((screenWidthPx - (480f * pxPerDp).coerceAtMost(screenWidthPx)) * 0.5f).coerceAtLeast(0f)
+                ((screenWidthPx - (virtualKbdWidthDp * pxPerDp).coerceAtMost(screenWidthPx)) * 0.5f).coerceAtLeast(0f)
             }
             SessionVirtualKeyboard(
                 isPortrait = isPortrait,
+                isTablet = isTabletDevice,
                 isMacHost = isMacTarget,
                 stickyMods = stickyMods,
                 dockedTop = virtualKbdDockedTop,
@@ -996,23 +1000,25 @@ fun DesktopSessionScreen(
             )
         }
 
+        val controlPanelBottomSheet = isPortrait && !isTabletDevice
         AnimatedVisibility(
             visible = drawerOpen,
-            enter = if (isPortrait) {
+            enter = if (controlPanelBottomSheet) {
                 slideInVertically(animationSpec = tween(220)) { it }
             } else {
                 slideInHorizontally(animationSpec = tween(220)) { it }
             },
-            exit = if (isPortrait) {
+            exit = if (controlPanelBottomSheet) {
                 slideOutVertically(animationSpec = tween(180)) { it }
             } else {
                 slideOutHorizontally(animationSpec = tween(180)) { it }
             },
-            modifier = Modifier.align(if (isPortrait) Alignment.BottomCenter else Alignment.CenterEnd),
+            modifier = Modifier.align(if (controlPanelBottomSheet) Alignment.BottomCenter else Alignment.CenterEnd),
         ) {
             SessionControlPanel(
                 viewModel = viewModel,
-                isPortrait = isPortrait,
+                isPortrait = controlPanelBottomSheet,
+                isTablet = isTabletDevice,
                 initialTab = initialControlTab,
                 onQuickAction = ::handleQuickAction,
                 onEditSidebarSlot = { side, idx ->

@@ -60,11 +60,16 @@ class SessionActivity : FragmentActivity() {
 
         setContent {
             val prefs by viewModel.prefs.collectAsStateWithLifecycle()
-            LaunchedEffect(prefs.orientationPref) {
-                requestedOrientation = when (prefs.orientationPref) {
-                    OrientationPreference.AutoSensor -> ActivityInfo.SCREEN_ORIENTATION_SENSOR
-                    OrientationPreference.LandscapeFirst -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                    OrientationPreference.PortraitTrackpad -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            val isTabletDevice = resources.configuration.smallestScreenWidthDp >= 600
+            LaunchedEffect(prefs.orientationPref, isTabletDevice) {
+                requestedOrientation = if (isTabletDevice) {
+                    ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                } else {
+                    when (prefs.orientationPref) {
+                        OrientationPreference.AutoSensor -> ActivityInfo.SCREEN_ORIENTATION_SENSOR
+                        OrientationPreference.LandscapeFirst -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                        OrientationPreference.PortraitTrackpad -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                    }
                 }
             }
             RabbitTheme(darkTheme = true) {

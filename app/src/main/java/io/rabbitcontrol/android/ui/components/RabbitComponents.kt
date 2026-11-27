@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -32,9 +33,11 @@ import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalTextStyle
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -42,6 +45,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -512,33 +516,44 @@ fun RabbitEmptyState(
     onAction: (() -> Unit)? = null,
 ) {
     val palette = LocalRabbitPalette.current
-    RabbitCard(modifier = modifier.fillMaxWidth()) {
-        Column(
+    Box(
+        modifier = modifier.fillMaxWidth(),
+        contentAlignment = Alignment.Center,
+    ) {
+        RabbitCard(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = RabbitSpacing.Sm),
-            horizontalAlignment = Alignment.CenterHorizontally,
+                .widthIn(max = 420.dp)
+                .fillMaxWidth(),
         ) {
-            Box(
+            Column(
                 modifier = Modifier
-                    .size(48.dp)
-                    .clip(RoundedCornerShape(RabbitRadius.Md))
-                    .background(palette.primarySoft),
-                contentAlignment = Alignment.Center,
+                    .fillMaxWidth()
+                    .padding(vertical = RabbitSpacing.Sm),
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Icon(icon, contentDescription = null, tint = palette.primaryText, modifier = Modifier.size(24.dp))
-            }
-            Spacer(modifier = Modifier.height(RabbitSpacing.Md))
-            Text(title, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = palette.text, textAlign = TextAlign.Center)
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(description, fontSize = 13.sp, color = palette.muted, textAlign = TextAlign.Center)
-            if (!actionLabel.isNullOrBlank() && onAction != null) {
-                Spacer(modifier = Modifier.height(RabbitSpacing.Lg))
-                RabbitSecondaryButton(
-                    label = actionLabel,
-                    onClick = onAction,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(RoundedCornerShape(RabbitRadius.Md))
+                        .background(palette.primarySoft),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(icon, contentDescription = null, tint = palette.primaryText, modifier = Modifier.size(24.dp))
+                }
+                Spacer(modifier = Modifier.height(RabbitSpacing.Md))
+                Text(title, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = palette.text, textAlign = TextAlign.Center)
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(description, fontSize = 13.sp, color = palette.muted, textAlign = TextAlign.Center)
+                if (!actionLabel.isNullOrBlank() && onAction != null) {
+                    Spacer(modifier = Modifier.height(RabbitSpacing.Lg))
+                    RabbitSecondaryButton(
+                        label = actionLabel,
+                        onClick = onAction,
+                        modifier = Modifier
+                            .widthIn(max = 260.dp)
+                            .fillMaxWidth(),
+                    )
+                }
             }
         }
     }
@@ -591,7 +606,12 @@ fun RabbitDialog(
     val primaryColor = if (darkSessionStyle) SessionPalette.accent else palette.primary
     val config = LocalConfiguration.current
     val isLandscape = config.screenWidthDp > config.screenHeightDp
-    val maxDialogWidth = if (darkSessionStyle && isLandscape) 340.dp else 360.dp
+    val isTablet = config.smallestScreenWidthDp >= 600
+    val maxDialogWidth = when {
+        darkSessionStyle && isLandscape -> 340.dp
+        isTablet -> 440.dp
+        else -> 360.dp
+    }
     val contentPad = if (isLandscape) 16.dp else 20.dp
     val buttonHeight = if (isLandscape) 40.dp else 44.dp
 
@@ -680,6 +700,52 @@ fun RabbitDialog(
                     }
                 }
             }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun RabbitAdaptiveSheet(
+    onDismissRequest: () -> Unit,
+    maxDialogWidth: Dp = 480.dp,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val palette = LocalRabbitPalette.current
+    val useCenteredDialog = LocalConfiguration.current.screenWidthDp >= 600
+    if (!useCenteredDialog) {
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
+            onDismissRequest = onDismissRequest,
+            sheetState = sheetState,
+            containerColor = palette.surface,
+            tonalElevation = 0.dp,
+            content = content,
+        )
+    } else {
+        Dialog(
+            onDismissRequest = onDismissRequest,
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            Surface(
+                modifier = Modifier
+                    .imePadding()
+                    .padding(horizontal = 24.dp, vertical = 24.dp)
+                    .widthIn(max = maxDialogWidth)
+                    .fillMaxWidth(),
+                shape = RoundedCornerShape(RabbitRadius.Xl),
+                color = palette.surface,
+                tonalElevation = 0.dp,
+                shadowElevation = RabbitElevation.Sheet,
+                border = BorderStroke(1.dp, palette.line),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = RabbitSpacing.Lg),
+                    content = content,
+                )
             }
         }
     }

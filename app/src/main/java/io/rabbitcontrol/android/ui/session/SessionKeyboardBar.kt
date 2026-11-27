@@ -43,6 +43,7 @@ import io.rabbitcontrol.android.ui.theme.SessionPalette
 @Composable
 fun SessionKeyboardBar(
     isPortrait: Boolean = true,
+    isTablet: Boolean = false,
     isMacHost: Boolean,
     stickyMods: Int,
     onToggleMod: (bit: Int, scancode: Int) -> Unit,
@@ -53,8 +54,12 @@ fun SessionKeyboardBar(
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val compact = !isPortrait
-    val itemHeight = if (compact) 30.dp else 34.dp
+    val compact = !isPortrait && !isTablet
+    val itemHeight = when {
+        isTablet -> 36.dp
+        compact -> 30.dp
+        else -> 34.dp
+    }
     val primaryModBit = if (isMacHost) ScancodeMapper.MOD_LEFT_GUI else ScancodeMapper.MOD_LEFT_CTRL
     val primaryModSc = if (isMacHost) ScancodeMapper.SC_LEFT_GUI else ScancodeMapper.SC_LEFT_CTRL
     val primaryLabel = if (isMacHost) "⌘" else "Ctrl"
@@ -62,7 +67,13 @@ fun SessionKeyboardBar(
     Surface(
         modifier = modifier
             .padding(horizontal = if (isPortrait) 8.dp else 12.dp)
-            .widthIn(max = if (isPortrait) 380.dp else 460.dp)
+            .widthIn(
+                max = when {
+                    isTablet -> 680.dp
+                    isPortrait -> 380.dp
+                    else -> 460.dp
+                },
+            )
             .fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
         color = SessionPalette.chromeElevated.copy(alpha = 0.88f),

@@ -7,17 +7,20 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -72,6 +75,9 @@ import io.rabbitcontrol.android.ui.theme.LocalRabbitPalette
 import io.rabbitcontrol.android.ui.theme.RabbitElevation
 import io.rabbitcontrol.android.ui.theme.RabbitRadius
 import io.rabbitcontrol.android.ui.theme.RabbitSpacing
+import io.rabbitcontrol.android.ui.theme.RabbitVerticalDivider
+import io.rabbitcontrol.android.ui.theme.RabbitWidthClass
+import io.rabbitcontrol.android.ui.theme.rememberRabbitLayoutInfo
 import org.koin.androidx.compose.koinViewModel
 
 private enum class FileTransferTab(@androidx.annotation.StringRes val labelRes: Int) {
@@ -100,15 +106,6 @@ fun FileTransferScreen(
     var renameInput by remember { mutableStateOf("") }
     var deleteTarget by remember { mutableStateOf<io.rabbitcontrol.android.core.nativebridge.RemoteFileEntry?>(null) }
 
-    val pickFilesLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenMultipleDocuments(),
-    ) { uris ->
-        if (uris.isNotEmpty()) {
-            viewModel.uploadUris(uris)
-            selectedTab = FileTransferTab.Queue
-        }
-    }
-
     LaunchedEffect(notice) {
         val current = notice
         if (current != null && current.message.isNotBlank()) {
@@ -121,145 +118,23 @@ fun FileTransferScreen(
         }
     }
 
-    Scaffold(
-        containerColor = palette.canvas,
-        floatingActionButton = {
-            if (selectedTab == FileTransferTab.Remote) {
-                FloatingActionButton(
-                    onClick = { pickFilesLauncher.launch(arrayOf("*/*")) },
-                    containerColor = palette.primary,
-                    contentColor = Color.White,
-                    elevation = FloatingActionButtonDefaults.elevation(
-                        defaultElevation = RabbitElevation.Floating,
-                        pressedElevation = 3.dp,
-                        focusedElevation = RabbitElevation.Floating,
-                        hoveredElevation = RabbitElevation.Floating,
-                    ),
-                ) {
-                    Icon(Icons.Rounded.UploadFile, stringResource(R.string.ft_cd_upload))
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val widthClass = rememberRabbitLayoutInfo(maxWidth).widthClass
+        val isExpanded = widthClass == RabbitWidthClass.Expanded
+
+        val pickFilesLauncher = rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.OpenMultipleDocuments(),
+        ) { uris ->
+            if (uris.isNotEmpty()) {
+                viewModel.uploadUris(uris)
+                if (!isExpanded) {
+                    selectedTab = FileTransferTab.Queue
                 }
             }
-        },
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding),
-        ) {
-            RabbitTopBar(
-                title = stringResource(R.string.ft_title),
-                subtitle = deviceName,
-                onBack = onBack,
-                actions = {
-                    if (selectedTab == FileTransferTab.Remote) {
-                        IconButton(onClick = { showMkdirDialog = true }, modifier = Modifier.size(44.dp)) {
-                            Icon(Icons.Rounded.CreateNewFolder, stringResource(R.string.ft_cd_mkdir), tint = palette.text)
-                        }
-                        IconButton(
-                            onClick = { viewModel.listRemoteDir(currentPath.ifBlank { null }) },
-                            modifier = Modifier.size(44.dp),
-                        ) {
-                            Icon(Icons.Rounded.Refresh, stringResource(R.string.common_refresh), tint = palette.text)
-                        }
-                    } else {
-                        IconButton(onClick = viewModel::clearFinished, modifier = Modifier.size(44.dp)) {
-                            Icon(Icons.Rounded.DeleteSweep, stringResource(R.string.ft_cd_clear_done), tint = palette.text)
-                        }
-                    }
-                },
-            )
+        }
 
-            Box(modifier = Modifier.padding(horizontal = RabbitSpacing.Lg, vertical = RabbitSpacing.Xs)) {
-                val remoteTabLabel = stringResource(R.string.ft_tab_remote)
-                val queueTabLabel = stringResource(R.string.ft_tab_queue)
-                RabbitSegmentedControl(
-                    options = FileTransferTab.entries,
-                    selected = selectedTab,
-                    labelProvider = {
-                        when (it) {
-                            FileTransferTab.Remote -> remoteTabLabel
-                            FileTransferTab.Queue -> "$queueTabLabel (${transfers.size})"
-                        }
-                    },
-                    onSelect = { selectedTab = it },
-                )
-            }
-
-            when (val st = sessionState.status) {
-                is SessionStatus.Connecting -> {
-                    Text(
-                        text = st.label,
-                        fontSize = 12.sp,
-                        color = palette.primaryText,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = RabbitSpacing.Lg, vertical = 4.dp)
-                            .clip(RoundedCornerShape(RabbitRadius.Sm))
-                            .background(palette.primarySoft)
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
-                    )
-                }
-                is SessionStatus.Reconnecting -> {
-                    Text(
-                        text = st.reason.ifBlank { stringResource(R.string.session_reconnecting_generic) },
-                        fontSize = 12.sp,
-                        color = palette.warning,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = RabbitSpacing.Lg, vertical = 4.dp)
-                            .clip(RoundedCornerShape(RabbitRadius.Sm))
-                            .background(palette.warningSoft)
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
-                    )
-                }
-                is SessionStatus.Error -> {
-                    val errText = st.uiError?.let { it.message.ifBlank { it.title } }
-                        ?: NativeErrorLocalizer.localize(st.message)
-                    Text(
-                        text = stringResource(R.string.ft_session_error, errText),
-                        fontSize = 12.sp,
-                        color = palette.danger,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = RabbitSpacing.Lg, vertical = 4.dp)
-                            .clip(RoundedCornerShape(RabbitRadius.Sm))
-                            .background(palette.dangerSoft)
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
-                    )
-                }
-                is SessionStatus.Ended -> {
-                    val reasonText = st.uiError?.let { it.message.ifBlank { it.title } }
-                        ?: NativeErrorLocalizer.localize(st.reason)
-                    Text(
-                        text = stringResource(R.string.ft_session_disconnected, reasonText),
-                        fontSize = 12.sp,
-                        color = palette.danger,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = RabbitSpacing.Lg, vertical = 4.dp)
-                            .clip(RoundedCornerShape(RabbitRadius.Sm))
-                            .background(palette.dangerSoft)
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
-                    )
-                }
-                else -> Unit
-            }
-
-            if (!sessionState.toolPermissions.allowFileTransfer) {
-                Text(
-                    text = stringResource(R.string.tool_permission_disabled_ft),
-                    fontSize = 12.sp,
-                    color = palette.warning,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = RabbitSpacing.Lg, vertical = 4.dp)
-                        .clip(RoundedCornerShape(RabbitRadius.Sm))
-                        .background(palette.warningSoft)
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                )
-            }
-
-            if (selectedTab == FileTransferTab.Remote) {
+        val remotePane: @Composable (Modifier) -> Unit = { paneModifier ->
+            Column(modifier = paneModifier) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -390,7 +265,27 @@ fun FileTransferScreen(
                         }
                     }
                 }
-            } else {
+            }
+        }
+
+        val queuePane: @Composable (Modifier) -> Unit = { paneModifier ->
+            Column(modifier = paneModifier) {
+                if (isExpanded) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = RabbitSpacing.Lg, vertical = RabbitSpacing.Sm),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "${stringResource(R.string.ft_tab_queue)} (${transfers.size})",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = palette.text,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(RabbitSpacing.Lg),
@@ -460,6 +355,191 @@ fun FileTransferScreen(
                                 fontSize = 12.sp,
                                 color = if (item.status == "failed") palette.danger else palette.muted,
                             )
+                        }
+                    }
+                }
+            }
+        }
+
+        Scaffold(
+            containerColor = palette.canvas,
+            floatingActionButton = {
+                if (isExpanded || selectedTab == FileTransferTab.Remote) {
+                    FloatingActionButton(
+                        onClick = { pickFilesLauncher.launch(arrayOf("*/*")) },
+                        containerColor = palette.primary,
+                        contentColor = Color.White,
+                        elevation = FloatingActionButtonDefaults.elevation(
+                            defaultElevation = RabbitElevation.Floating,
+                            pressedElevation = 3.dp,
+                            focusedElevation = RabbitElevation.Floating,
+                            hoveredElevation = RabbitElevation.Floating,
+                        ),
+                    ) {
+                        Icon(Icons.Rounded.UploadFile, stringResource(R.string.ft_cd_upload))
+                    }
+                }
+            },
+        ) { padding ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding),
+            ) {
+                RabbitTopBar(
+                    title = stringResource(R.string.ft_title),
+                    subtitle = deviceName,
+                    onBack = onBack,
+                    actions = {
+                        if (isExpanded || selectedTab == FileTransferTab.Remote) {
+                            IconButton(onClick = { showMkdirDialog = true }, modifier = Modifier.size(44.dp)) {
+                                Icon(Icons.Rounded.CreateNewFolder, stringResource(R.string.ft_cd_mkdir), tint = palette.text)
+                            }
+                            IconButton(
+                                onClick = { viewModel.listRemoteDir(currentPath.ifBlank { null }) },
+                                modifier = Modifier.size(44.dp),
+                            ) {
+                                Icon(Icons.Rounded.Refresh, stringResource(R.string.common_refresh), tint = palette.text)
+                            }
+                        }
+                        if (isExpanded || selectedTab == FileTransferTab.Queue) {
+                            IconButton(onClick = viewModel::clearFinished, modifier = Modifier.size(44.dp)) {
+                                Icon(Icons.Rounded.DeleteSweep, stringResource(R.string.ft_cd_clear_done), tint = palette.text)
+                            }
+                        }
+                    },
+                )
+
+                if (!isExpanded) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = RabbitSpacing.Lg, vertical = RabbitSpacing.Xs),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        val remoteTabLabel = stringResource(R.string.ft_tab_remote)
+                        val queueTabLabel = stringResource(R.string.ft_tab_queue)
+                        RabbitSegmentedControl(
+                            options = FileTransferTab.entries,
+                            selected = selectedTab,
+                            labelProvider = {
+                                when (it) {
+                                    FileTransferTab.Remote -> remoteTabLabel
+                                    FileTransferTab.Queue -> "$queueTabLabel (${transfers.size})"
+                                }
+                            },
+                            onSelect = { selectedTab = it },
+                            modifier = Modifier.widthIn(max = 720.dp),
+                        )
+                    }
+                }
+
+                when (val st = sessionState.status) {
+                    is SessionStatus.Connecting -> {
+                        Text(
+                            text = st.label,
+                            fontSize = 12.sp,
+                            color = palette.primaryText,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = RabbitSpacing.Lg, vertical = 4.dp)
+                                .clip(RoundedCornerShape(RabbitRadius.Sm))
+                                .background(palette.primarySoft)
+                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                        )
+                    }
+                    is SessionStatus.Reconnecting -> {
+                        Text(
+                            text = st.reason.ifBlank { stringResource(R.string.session_reconnecting_generic) },
+                            fontSize = 12.sp,
+                            color = palette.warning,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = RabbitSpacing.Lg, vertical = 4.dp)
+                                .clip(RoundedCornerShape(RabbitRadius.Sm))
+                                .background(palette.warningSoft)
+                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                        )
+                    }
+                    is SessionStatus.Error -> {
+                        val errText = st.uiError?.let { it.message.ifBlank { it.title } }
+                            ?: NativeErrorLocalizer.localize(st.message)
+                        Text(
+                            text = stringResource(R.string.ft_session_error, errText),
+                            fontSize = 12.sp,
+                            color = palette.danger,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = RabbitSpacing.Lg, vertical = 4.dp)
+                                .clip(RoundedCornerShape(RabbitRadius.Sm))
+                                .background(palette.dangerSoft)
+                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                        )
+                    }
+                    is SessionStatus.Ended -> {
+                        val reasonText = st.uiError?.let { it.message.ifBlank { it.title } }
+                            ?: NativeErrorLocalizer.localize(st.reason)
+                        Text(
+                            text = stringResource(R.string.ft_session_disconnected, reasonText),
+                            fontSize = 12.sp,
+                            color = palette.danger,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = RabbitSpacing.Lg, vertical = 4.dp)
+                                .clip(RoundedCornerShape(RabbitRadius.Sm))
+                                .background(palette.dangerSoft)
+                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                        )
+                    }
+                    else -> Unit
+                }
+
+                if (!sessionState.toolPermissions.allowFileTransfer) {
+                    Text(
+                        text = stringResource(R.string.tool_permission_disabled_ft),
+                        fontSize = 12.sp,
+                        color = palette.warning,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = RabbitSpacing.Lg, vertical = 4.dp)
+                            .clip(RoundedCornerShape(RabbitRadius.Sm))
+                            .background(palette.warningSoft)
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                    )
+                }
+
+                if (isExpanded) {
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth(),
+                    ) {
+                        remotePane(
+                            Modifier
+                                .weight(0.60f)
+                                .fillMaxHeight(),
+                        )
+                        RabbitVerticalDivider()
+                        queuePane(
+                            Modifier
+                                .weight(0.40f)
+                                .fillMaxHeight(),
+                        )
+                    }
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth(),
+                        contentAlignment = Alignment.TopCenter,
+                    ) {
+                        val paneMod = Modifier
+                            .widthIn(max = 720.dp)
+                            .fillMaxSize()
+                        if (selectedTab == FileTransferTab.Remote) {
+                            remotePane(paneMod)
+                        } else {
+                            queuePane(paneMod)
                         }
                     }
                 }

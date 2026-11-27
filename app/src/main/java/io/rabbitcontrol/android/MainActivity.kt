@@ -316,6 +316,16 @@ private fun RabbitControlNavRoot(
                 },
                 onReturnToDesktop = onOpenSessionActivity,
                 onOpenProfileRoute = { route -> navController.navigate(route) },
+                onOpenToolFromDetail = { device, kind ->
+                    selectedDevice = device
+                    when (kind) {
+                        DeviceToolKind.FileTransfer -> navController.navigate("transfer")
+                        DeviceToolKind.Terminal -> navController.navigate("terminal")
+                        DeviceToolKind.PortMap -> navController.navigate("portmap")
+                        DeviceToolKind.WatchMode -> onOpenSessionActivity()
+                    }
+                },
+                onOpenPreviewCheck = onOpenPreviewActivity,
             )
         }
 

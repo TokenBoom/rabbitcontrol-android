@@ -4,6 +4,8 @@ import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -13,12 +15,15 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.Add
@@ -65,10 +70,13 @@ import io.rabbitcontrol.android.ui.components.RabbitTextField
 import io.rabbitcontrol.android.ui.components.RabbitToast
 import io.rabbitcontrol.android.ui.components.RabbitTopBar
 import io.rabbitcontrol.android.ui.components.StatusTone
+import io.rabbitcontrol.android.core.nativebridge.PortMapRule
 import io.rabbitcontrol.android.ui.theme.LocalRabbitPalette
 import io.rabbitcontrol.android.ui.theme.RabbitElevation
 import io.rabbitcontrol.android.ui.theme.RabbitRadius
 import io.rabbitcontrol.android.ui.theme.RabbitSpacing
+import io.rabbitcontrol.android.ui.theme.RabbitWidthClass
+import io.rabbitcontrol.android.ui.theme.rememberRabbitLayoutInfo
 import org.koin.androidx.compose.koinViewModel
 
 @Composable
@@ -144,100 +152,98 @@ fun PortMapScreen(
                 )
             }
 
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(
-                    start = RabbitSpacing.Lg,
-                    end = RabbitSpacing.Lg,
-                    top = RabbitSpacing.Sm,
-                    bottom = 84.dp,
-                ),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+            BoxWithConstraints(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentAlignment = Alignment.TopCenter,
             ) {
-                if (rules.isEmpty()) {
-                    item {
-                        RabbitEmptyState(
-                            icon = Icons.Rounded.Cable,
-                            title = stringResource(R.string.pm_empty_title),
-                            description = stringResource(R.string.pm_empty_desc),
-                        )
-                    }
-                }
-                items(rules, key = { it.id }) { rule ->
-                    RabbitCard(
-                        contentPadding = PaddingValues(14.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                ) {
-                                    Text(rule.name, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
-                                    val tone = when {
-                                        !rule.error.isNullOrBlank() -> StatusTone.Danger
-                                        rule.enabled -> StatusTone.Success
-                                        else -> StatusTone.Muted
-                                    }
-                                    RabbitStatusPill(label = rule.status, tone = tone)
+                val widthClass = rememberRabbitLayoutInfo(maxWidth).widthClass
+                when (widthClass) {
+                    RabbitWidthClass.Expanded -> {
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(2),
+                            modifier = Modifier
+                                .widthIn(max = 1040.dp)
+                                .fillMaxSize(),
+                            contentPadding = PaddingValues(
+                                start = RabbitSpacing.Lg,
+                                end = RabbitSpacing.Lg,
+                                top = RabbitSpacing.Sm,
+                                bottom = 84.dp,
+                            ),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            if (rules.isEmpty()) {
+                                item(span = { GridItemSpan(maxLineSpan) }) {
+                                    RabbitEmptyState(
+                                        icon = Icons.Rounded.Cable,
+                                        title = stringResource(R.string.pm_empty_title),
+                                        description = stringResource(R.string.pm_empty_desc),
+                                    )
                                 }
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    "127.0.0.1:${rule.localPort} → ${rule.targetAddr}:${rule.targetPort}",
-                                    fontFamily = FontFamily.Monospace,
-                                    fontSize = 13.sp,
-                                    color = palette.primaryText,
+                            }
+                            gridItems(rules, key = { it.id }) { rule ->
+                                PortMapRuleCard(
+                                    rule = rule,
+                                    onToggle = { on -> viewModel.toggleRule(rule.id, on) },
+                                    onCopy = {
+                                        clipboard.setText(AnnotatedString("127.0.0.1:${rule.localPort}"))
+                                    },
+                                    onOpen = {
+                                        runCatching {
+                                            context.startActivity(
+                                                Intent(Intent.ACTION_VIEW, Uri.parse("http://127.0.0.1:${rule.localPort}")),
+                                            )
+                                        }
+                                    },
+                                    onDelete = { viewModel.deleteRule(rule.id) },
                                 )
                             }
-                            Switch(
-                                checked = rule.enabled,
-                                onCheckedChange = { on -> viewModel.toggleRule(rule.id, on) },
-                                colors = SwitchDefaults.colors(
-                                    checkedThumbColor = Color.White,
-                                    checkedTrackColor = palette.primary,
-                                    uncheckedThumbColor = palette.muted,
-                                    uncheckedTrackColor = palette.field,
-                                ),
-                            )
                         }
-                        Spacer(modifier = Modifier.height(10.dp))
-                        HorizontalDivider(color = palette.line, thickness = 1.dp)
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                stringResource(R.string.pm_stats, rule.activeConns, rule.bytesTx, rule.bytesRx),
-                                fontSize = 12.sp,
-                                color = if (!rule.error.isNullOrBlank()) palette.danger else palette.muted,
-                                modifier = Modifier.weight(1f),
-                            )
-                            val copiedText = stringResource(R.string.pm_copied, rule.localPort)
-                            IconButton(
-                                onClick = {
-                                    clipboard.setText(AnnotatedString("127.0.0.1:${rule.localPort}"))
-                                    RabbitToast.success(copiedText)
-                                },
-                                modifier = Modifier.size(44.dp),
-                            ) {
-                                Icon(Icons.Rounded.ContentCopy, stringResource(R.string.common_copy), tint = palette.muted, modifier = Modifier.size(18.dp))
+                    }
+                    else -> {
+                        LazyColumn(
+                            modifier = Modifier
+                                .then(
+                                    if (widthClass == RabbitWidthClass.Medium) Modifier.widthIn(max = 720.dp)
+                                    else Modifier,
+                                )
+                                .fillMaxSize(),
+                            contentPadding = PaddingValues(
+                                start = RabbitSpacing.Lg,
+                                end = RabbitSpacing.Lg,
+                                top = RabbitSpacing.Sm,
+                                bottom = 84.dp,
+                            ),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            if (rules.isEmpty()) {
+                                item {
+                                    RabbitEmptyState(
+                                        icon = Icons.Rounded.Cable,
+                                        title = stringResource(R.string.pm_empty_title),
+                                        description = stringResource(R.string.pm_empty_desc),
+                                    )
+                                }
                             }
-                            IconButton(
-                                onClick = {
-                                    runCatching {
-                                        context.startActivity(
-                                            Intent(Intent.ACTION_VIEW, Uri.parse("http://127.0.0.1:${rule.localPort}")),
-                                        )
-                                    }
-                                },
-                                modifier = Modifier.size(44.dp),
-                            ) {
-                                Icon(Icons.AutoMirrored.Rounded.OpenInNew, stringResource(R.string.common_open), tint = palette.primaryText, modifier = Modifier.size(18.dp))
-                            }
-                            IconButton(
-                                onClick = { viewModel.deleteRule(rule.id) },
-                                modifier = Modifier.size(44.dp),
-                            ) {
-                                Icon(Icons.Rounded.DeleteOutline, stringResource(R.string.common_delete), tint = palette.danger, modifier = Modifier.size(18.dp))
+                            items(rules, key = { it.id }) { rule ->
+                                PortMapRuleCard(
+                                    rule = rule,
+                                    onToggle = { on -> viewModel.toggleRule(rule.id, on) },
+                                    onCopy = {
+                                        clipboard.setText(AnnotatedString("127.0.0.1:${rule.localPort}"))
+                                    },
+                                    onOpen = {
+                                        runCatching {
+                                            context.startActivity(
+                                                Intent(Intent.ACTION_VIEW, Uri.parse("http://127.0.0.1:${rule.localPort}")),
+                                            )
+                                        }
+                                    },
+                                    onDelete = { viewModel.deleteRule(rule.id) },
+                                )
                             }
                         }
                     }
@@ -265,7 +271,6 @@ fun PortMapScreen(
             },
         ) {
             Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 RabbitTextField(
@@ -294,6 +299,88 @@ fun PortMapScreen(
                     placeholder = stringResource(R.string.pm_hint_remote_port),
                     keyboardType = KeyboardType.Number,
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PortMapRuleCard(
+    rule: PortMapRule,
+    onToggle: (Boolean) -> Unit,
+    onCopy: () -> Unit,
+    onOpen: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val palette = LocalRabbitPalette.current
+    RabbitCard(
+        contentPadding = PaddingValues(14.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(rule.name, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
+                    val tone = when {
+                        !rule.error.isNullOrBlank() -> StatusTone.Danger
+                        rule.enabled -> StatusTone.Success
+                        else -> StatusTone.Muted
+                    }
+                    RabbitStatusPill(label = rule.status, tone = tone)
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    "127.0.0.1:${rule.localPort} → ${rule.targetAddr}:${rule.targetPort}",
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 13.sp,
+                    color = palette.primaryText,
+                )
+            }
+            Switch(
+                checked = rule.enabled,
+                onCheckedChange = onToggle,
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color.White,
+                    checkedTrackColor = palette.primary,
+                    uncheckedThumbColor = palette.muted,
+                    uncheckedTrackColor = palette.field,
+                ),
+            )
+        }
+        Spacer(modifier = Modifier.height(10.dp))
+        HorizontalDivider(color = palette.line, thickness = 1.dp)
+        Spacer(modifier = Modifier.height(6.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                stringResource(R.string.pm_stats, rule.activeConns, rule.bytesTx, rule.bytesRx),
+                fontSize = 12.sp,
+                color = if (!rule.error.isNullOrBlank()) palette.danger else palette.muted,
+                modifier = Modifier.weight(1f),
+            )
+            val copiedText = stringResource(R.string.pm_copied, rule.localPort)
+            IconButton(
+                onClick = {
+                    onCopy()
+                    RabbitToast.success(copiedText)
+                },
+                modifier = Modifier.size(44.dp),
+            ) {
+                Icon(Icons.Rounded.ContentCopy, stringResource(R.string.common_copy), tint = palette.muted, modifier = Modifier.size(18.dp))
+            }
+            IconButton(
+                onClick = onOpen,
+                modifier = Modifier.size(44.dp),
+            ) {
+                Icon(Icons.AutoMirrored.Rounded.OpenInNew, stringResource(R.string.common_open), tint = palette.primaryText, modifier = Modifier.size(18.dp))
+            }
+            IconButton(
+                onClick = onDelete,
+                modifier = Modifier.size(44.dp),
+            ) {
+                Icon(Icons.Rounded.DeleteOutline, stringResource(R.string.common_delete), tint = palette.danger, modifier = Modifier.size(18.dp))
             }
         }
     }

@@ -174,6 +174,7 @@ fun getAppVersionName(context: Context): String {
 fun HostSettingsScreen(
     onBack: () -> Unit,
     onOpenAuth: (AuthStep, Boolean) -> Unit,
+    embedded: Boolean = false,
 ) {
     val palette = LocalRabbitPalette.current
     val context = LocalContext.current
@@ -239,13 +240,19 @@ fun HostSettingsScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(palette.canvas)
-            .systemBarsPadding(),
+            .then(if (embedded) Modifier else Modifier.systemBarsPadding()),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        RabbitTopBar(title = stringResource(R.string.home_menu_host_mode), onBack = onBack)
+        RabbitTopBar(
+            title = stringResource(R.string.home_menu_host_mode),
+            onBack = if (embedded) null else onBack,
+        )
 
         Column(
             modifier = Modifier
                 .weight(1f)
+                .widthIn(max = 720.dp)
+                .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = RabbitSpacing.Lg, vertical = RabbitSpacing.Md),
             verticalArrangement = Arrangement.spacedBy(RabbitSpacing.Md),
@@ -507,6 +514,7 @@ fun HostSettingsScreen(
 fun InteractionSettingsScreen(
     onBack: () -> Unit,
     onOpenPreviewCheck: () -> Unit,
+    embedded: Boolean = false,
 ) {
     val palette = LocalRabbitPalette.current
     val prefsStore: InteractionPrefsStore = koinInject()
@@ -516,13 +524,19 @@ fun InteractionSettingsScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(palette.canvas)
-            .systemBarsPadding(),
+            .then(if (embedded) Modifier else Modifier.systemBarsPadding()),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        RabbitTopBar(title = stringResource(R.string.home_menu_interaction), onBack = onBack)
+        RabbitTopBar(
+            title = stringResource(R.string.home_menu_interaction),
+            onBack = if (embedded) null else onBack,
+        )
 
         Column(
             modifier = Modifier
                 .weight(1f)
+                .widthIn(max = 720.dp)
+                .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = RabbitSpacing.Lg, vertical = RabbitSpacing.Md),
             verticalArrangement = Arrangement.spacedBy(RabbitSpacing.Md),
@@ -667,6 +681,7 @@ fun InteractionSettingsScreen(
 @Composable
 fun AboutScreen(
     onBack: () -> Unit,
+    embedded: Boolean = false,
 ) {
     val palette = LocalRabbitPalette.current
     val context = LocalContext.current
@@ -691,14 +706,22 @@ fun AboutScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(palette.canvas)
-            .systemBarsPadding(),
+            .then(if (embedded) Modifier else Modifier.systemBarsPadding()),
     ) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            RabbitTopBar(title = stringResource(R.string.home_menu_about), onBack = onBack)
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            RabbitTopBar(
+                title = stringResource(R.string.home_menu_about),
+                onBack = if (embedded) null else onBack,
+            )
 
             Column(
                 modifier = Modifier
                     .weight(1f)
+                    .widthIn(max = 720.dp)
+                    .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = RabbitSpacing.Lg, vertical = RabbitSpacing.Md),
                 verticalArrangement = Arrangement.spacedBy(RabbitSpacing.Md),
@@ -1792,6 +1815,7 @@ private fun IncompatibleCoreBanner(
 @Composable
 fun NetworkSettingsScreen(
     onBack: () -> Unit,
+    embedded: Boolean = false,
 ) {
     val palette = LocalRabbitPalette.current
     val proxyStore: ProxyConfigStore = koinInject()
@@ -1855,16 +1879,19 @@ fun NetworkSettingsScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(palette.canvas)
-            .systemBarsPadding(),
+            .then(if (embedded) Modifier else Modifier.systemBarsPadding()),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         RabbitTopBar(
             title = stringResource(R.string.home_menu_network),
-            onBack = onBack,
+            onBack = if (embedded) null else onBack,
         )
 
         Column(
             modifier = Modifier
                 .weight(1f)
+                .widthIn(max = 720.dp)
+                .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = RabbitSpacing.Lg, vertical = RabbitSpacing.Md),
             verticalArrangement = Arrangement.spacedBy(RabbitSpacing.Md),
@@ -2198,6 +2225,7 @@ fun NetworkSettingsScreen(
 @Composable
 fun GeneralSettingsScreen(
     onBack: () -> Unit,
+    embedded: Boolean = false,
 ) {
     val palette = LocalRabbitPalette.current
     val context = LocalContext.current
@@ -2209,16 +2237,19 @@ fun GeneralSettingsScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(palette.canvas)
-            .systemBarsPadding(),
+            .then(if (embedded) Modifier else Modifier.systemBarsPadding()),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         RabbitTopBar(
             title = stringResource(R.string.home_menu_general),
-            onBack = onBack,
+            onBack = if (embedded) null else onBack,
         )
 
         Column(
             modifier = Modifier
                 .weight(1f)
+                .widthIn(max = 720.dp)
+                .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = RabbitSpacing.Lg, vertical = RabbitSpacing.Md),
             verticalArrangement = Arrangement.spacedBy(RabbitSpacing.Md),
@@ -2335,6 +2366,7 @@ fun GeneralSettingsScreen(
 @Composable
 fun UpdateCenterScreen(
     onBack: () -> Unit,
+    embedded: Boolean = false,
 ) {
     val palette = LocalRabbitPalette.current
     val context = LocalContext.current
@@ -2378,16 +2410,19 @@ fun UpdateCenterScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(palette.canvas)
-            .systemBarsPadding(),
+            .then(if (embedded) Modifier else Modifier.systemBarsPadding()),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         RabbitTopBar(
             title = stringResource(R.string.home_menu_updates),
-            onBack = onBack,
+            onBack = if (embedded) null else onBack,
         )
 
         Column(
             modifier = Modifier
                 .weight(1f)
+                .widthIn(max = 720.dp)
+                .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = RabbitSpacing.Lg, vertical = RabbitSpacing.Md),
             verticalArrangement = Arrangement.spacedBy(RabbitSpacing.Md),

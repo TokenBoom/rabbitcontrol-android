@@ -26,10 +26,21 @@
 | :---: |
 | <img src="docs/ui/control-landscape.png" width="760" alt="远程控制横屏" /> |
 
+### 平板端（自适应大屏）
+
+| 我的设备与详情双栏 | 远程协助双栏 |
+| :---: | :---: |
+| <img src="docs/ui/tablet-devices.png" width="400" alt="平板设备与详情双栏" /> | <img src="docs/ui/tablet-assist.png" width="400" alt="平板远程协助" /> |
+
+| 个人中心与设置双栏 | 文件传输分栏工作区 |
+| :---: | :---: |
+| <img src="docs/ui/tablet-settings.png" width="400" alt="平板设置双栏" /> | <img src="docs/ui/tablet-transfer.png" width="400" alt="平板文件传输分栏" /> |
+
 ---
 
 ## 主要功能
 
+- **平板端自适应大屏布局**：基于窗口宽度断点（`Compact` / `Medium` / `Expanded`）自动切换左侧 `NavigationRail`、设备与设置常驻双栏、远程协助左右分栏、文件传输 60/40 分栏与可折叠会话栏终端、居中自适应弹窗与就近服务器下拉气泡，并针对平板优化了远程桌面方向、控制面板抽屉与虚拟键盘尺寸。
 - **服务器发现与安全热更新**：支持连接自建 RabbitControl 服务端（默认 API 端口 `21118`）、核对 64 位 SHA-256 CA 指纹，并支持 `rabbitcontrol-core` 独立热更新（ECDSA P-256 离线签名校验、16 KB 页对齐与崩溃自动回滚）。
 - **账号与设备管理**：支持 RabbitControl 账号登录、查看已绑定设备列表、按在线状态筛选、移除设备、查看设备详情以及发送远程开机（Wake-on-LAN）指令。
 - **连接策略与网络自适应**：支持「自动 / 仅 P2P / TCP 中继」连接模式配置与会中一键切换重连、SOCKS5 / HTTP 出站代理、UPnP / NAT-PMP 端口映射状态探测，以及基于系统网络切换回调的快速链路恢复。

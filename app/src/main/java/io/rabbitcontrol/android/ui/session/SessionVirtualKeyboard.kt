@@ -223,6 +223,7 @@ internal fun virtualKeyboardKeyRows(
 @Composable
 fun SessionVirtualKeyboard(
     isPortrait: Boolean,
+    isTablet: Boolean = false,
     isMacHost: Boolean,
     stickyMods: Int,
     dockedTop: Boolean = false,
@@ -266,10 +267,18 @@ fun SessionVirtualKeyboard(
         )
     }
 
-    val compact = !isPortrait
-    val keyHeight = if (isPortrait) 34.dp else 25.dp
-    val rowGap = if (isPortrait) 3.5.dp else 2.5.dp
-    val keyGap = 2.5.dp
+    val compact = !isPortrait && !isTablet
+    val keyHeight = when {
+        isTablet -> 40.dp
+        isPortrait -> 34.dp
+        else -> 25.dp
+    }
+    val rowGap = when {
+        isTablet -> 5.dp
+        isPortrait -> 3.5.dp
+        else -> 2.5.dp
+    }
+    val keyGap = if (isTablet) 4.dp else 2.5.dp
     val curOnDrag by rememberUpdatedState(onDrag)
     val curOnDragEnd by rememberUpdatedState(onDragEnd)
 
@@ -283,7 +292,7 @@ fun SessionVirtualKeyboard(
                 },
             )
             .padding(horizontal = if (isPortrait) 4.dp else 8.dp)
-            .widthIn(max = 480.dp)
+            .widthIn(max = if (isTablet) 780.dp else 480.dp)
             .fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
         color = SessionPalette.chromeElevated.copy(alpha = panelAlpha),

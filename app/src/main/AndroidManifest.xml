@@ -60,6 +60,7 @@
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|uiMode|locale|layoutDirection"
             android:exported="true"
             android:launchMode="singleTop"
+            android:resizeableActivity="true"
             android:theme="@style/Theme.RabbitControl.Splash"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>

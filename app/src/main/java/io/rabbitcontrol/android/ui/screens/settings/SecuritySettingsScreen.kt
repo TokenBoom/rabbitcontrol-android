@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -84,6 +85,7 @@ private enum class PinDialogMode {
 @Composable
 fun SecuritySettingsScreen(
     onBack: () -> Unit,
+    embedded: Boolean = false,
 ) {
     val palette = LocalRabbitPalette.current
     val context = LocalContext.current
@@ -119,13 +121,19 @@ fun SecuritySettingsScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(palette.canvas)
-            .systemBarsPadding(),
+            .then(if (embedded) Modifier else Modifier.systemBarsPadding()),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        RabbitTopBar(title = stringResource(R.string.sec_title), onBack = onBack)
+        RabbitTopBar(
+            title = stringResource(R.string.sec_title),
+            onBack = if (embedded) null else onBack,
+        )
 
         Column(
             modifier = Modifier
                 .weight(1f)
+                .widthIn(max = 720.dp)
+                .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = RabbitSpacing.Lg, vertical = RabbitSpacing.Md),
             verticalArrangement = Arrangement.spacedBy(RabbitSpacing.Md),
