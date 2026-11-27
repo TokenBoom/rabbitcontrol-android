@@ -16,29 +16,30 @@ Powered by [**TokenBoom/rabbitcontrol-core**](https://github.com/TokenBoom/rabbi
 
 | Devices | Device Detail & Tools | Remote Assistance |
 | :---: | :---: | :---: |
-| <img src="docs/ui/devices.png" width="240" alt="My Devices" /> | <img src="docs/ui/device-detail.png" width="240" alt="Device Detail & Tools" /> | <img src="docs/ui/assistance.png" width="240" alt="Remote Assistance" /> |
+| <img src="docs/ui/en/devices.png" width="240" alt="My Devices" /> | <img src="docs/ui/en/device-detail.png" width="240" alt="Device Detail & Tools" /> | <img src="docs/ui/en/assistance.png" width="240" alt="Remote Assistance" /> |
 
 | Profile & Settings | Remote Control (Portrait) | Decoder & Touch Verification |
 | :---: | :---: | :---: |
-| <img src="docs/ui/profile.png" width="240" alt="Profile & Settings" /> | <img src="docs/ui/control-portrait.png" width="240" alt="Remote Control Portrait" /> | <img src="docs/ui/session.png" width="240" alt="Decoder & Touch Verification" /> |
+| <img src="docs/ui/en/profile.png" width="240" alt="Profile & Settings" /> | <img src="docs/ui/en/control-portrait.png" width="240" alt="Remote Control Portrait" /> | <img src="docs/ui/en/session.png" width="240" alt="Decoder & Touch Verification" /> |
 
 | Remote Control (Landscape) |
 | :---: |
-| <img src="docs/ui/control-landscape.png" width="760" alt="Remote Control Landscape" /> |
+| <img src="docs/ui/en/control-landscape.png" width="760" alt="Remote Control Landscape" /> |
 
 ---
 
 ## Features
 
-- **Server Discovery & PKI Verification**: Connect to self-hosted RabbitControl servers (default API port `21118`) with 64-character SHA-256 CA fingerprint verification.
-- **Account & Device Management**: Sign in with RabbitControl credentials, manage bound devices, filter by online status, and inspect device details.
-- **Remote Assistance**: Connect via 9-digit device ID with recent history and favorites.
+- **Server Discovery & PKI Verification**: Connect to self-hosted RabbitControl servers (default API port `21118`) with 64-character SHA-256 CA fingerprint verification and dynamic core hot-updates (`core-v*` verified via ECDSA P-256 with automatic rollback).
+- **Account & Device Management**: Sign in with RabbitControl credentials, manage bound devices, filter by online status, remove devices, inspect details, and send Wake-on-LAN (WoL) packets.
+- **Connection Strategy & Networking**: Configurable connection mode (`Auto` / `P2P Only` / `TCP Relay`) with immediate in-session switching, SOCKS5 / HTTP outbound proxy support, UPnP / NAT-PMP port mapping diagnostics, and automatic network route-change recovery (`NetworkRouteMonitor`).
 - **Low-Latency Remote Desktop**:
-  - Hardware-accelerated H.264 video decoding via Android `MediaCodec` / `SurfaceView` and low-latency audio playback.
-  - Precision touch layer (`PrecisionTouchLayer`) supporting tap (left-click), long-press (right-click), single-finger drag, two-finger scroll, trackpad/direct modes, keyboard bar, and key mapping overlay.
-- **Remote Tools**: Built-in File Transfer, ANSI Terminal, and Port Mapping screens backed by `rc-tools`.
-- **Android Host Mode**: Screen capture encoding (`MediaProjection` + `HostScreenEncoder`) and input injection (`AccessibilityService`) for sharing the Android screen.
-- **Security**: Credentials and tokens protected using Android Keystore; transport secured with QUIC + mutual TLS via `rabbitcontrol-core`.
+  - Hardware-accelerated H.264 / HEVC / AV1 video decoding via Android `MediaCodec` / `SurfaceView` with hot-switchable HW/SW decode, live HUD codec telemetry, and High-Refresh Advisory prompts.
+  - Multi-display switching and virtual display creation/removal (`DisplaysState`, HiDPI 2x, phone aspect ratio preset).
+  - Precision touch layer (`PrecisionTouchLayer`) supporting tap (left-click), long-press (right-click), single-finger drag, two-finger scroll, trackpad/direct modes, full virtual keyboard, desktop key combos, and customizable key-mapping overlay.
+- **Privacy, Mute & mTLS Security**: In-session Privacy Curtain (`Off` / `Privacy` / `Black Screen`), Remote Host Mute (auto-restored on disconnect), Android Keystore credential storage, and mTLS peer certificate SHA-256 fingerprint viewer.
+- **Remote Tools**: Built-in File Transfer (browse, upload, download, mkdir, rename, delete), ANSI Terminal, and Port Mapping screens backed by `rc-tools` with live host permission enforcement.
+- **Android Host Mode & Multi-Language UI**: Screen capture encoding (`MediaProjection` + `HostScreenEncoder`) and input injection (`AccessibilityService`) for sharing the Android screen with live host capability reporting, plus System / English / Simplified Chinese / Traditional Chinese localization.
 
 ---
 
