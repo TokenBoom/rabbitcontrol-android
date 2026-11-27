@@ -658,6 +658,11 @@ impl AndroidRuntime {
             (1920, 1080, 60, 10_000_000)
         };
 
+        let signal_client = self
+            .signal
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         let ui_cfg = UiSessionConfig {
             connect_addr,
             password: req.password.filter(|p| !p.is_empty()),
@@ -682,6 +687,8 @@ impl AndroidRuntime {
             owner_grant,
             owner_signer,
             lan_direct_addr,
+            signal_client,
+            target_device_id: target_device_id.clone(),
         };
 
         // Disconnect any previous session cleanly before spawning the new one.
@@ -1348,9 +1355,17 @@ impl AndroidRuntime {
         *self.host.lock().unwrap_or_else(|e| e.into_inner()) = Some(handle);
         self.last_host_running.store(true, Ordering::Release);
         self.ensure_signal_started();
-        if let Some(sig) = self.signal.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+        let sig_opt = self
+            .signal
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if let Some(sig) = sig_opt.as_ref() {
             let _ = sig.set_allow_remote_control(true);
             let _ = sig.set_allow_remote_assist(req.allow_remote_assist);
+        }
+        if let Some(host) = self.host.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+            host.set_signal_client(sig_opt);
         }
 
         Ok(json!({
