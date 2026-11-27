@@ -14,6 +14,24 @@ All notable user-facing changes to **RabbitControl Android** are documented in t
 
 ---
 
+## [v0.2.3] - 2026-11-27
+
+This release upgrades the bundled core baseline to `rabbitcontrol-core v0.2.3`, aligns desktop-class security, host policy, device management, and in-session controls, adds unified `rabbitcontrol-core` release-manifest core OTA updates, streamlines the **Me** settings menu, and resolves UPnP discovery state sync.
+
+### Added
+- **Client App Lock & Security Settings**: Added 4–6 digit PIN lock and Android `BiometricPrompt` quick unlock with configurable auto-lock timeouts (`Immediate` / `1 min` / `5 min` / `Never`) and manual **Lock Now**; added a dedicated **Security Settings** screen with default mTLS toggle, default lock-on-disconnect toggle, and local device mTLS certificate inspection and renewal.
+- **Device Management, Tools-Only Session & Host Policies**:
+  - Grouped controllable vs. non-controllable devices in the device list and added device alias renaming.
+  - Added tools-only sessions (File Transfer / Terminal / Port Mapping without starting desktop video), Android Host verification modes (`Temp Code` / `Fixed Password` / `Approval Only`), locked-screen terminal OS password unlock with optional Android Keystore-encrypted per-device persistence, and per-device Port Mapping rule persistence with automatic restore on reconnect.
+- **In-Session Controls & Remote Host Update**: Added custom privacy curtain wallpaper selection, mouse cursor mode (`Smart` / `Remote` / `Local`), `Auto` bitrate option, lock-remote-screen-on-disconnect option on exit, and owner-authorized remote host update checks and upgrades.
+
+### Changed & Fixed
+- **Unified Core OTA Updates**: Updated `CoreUpdateManager` to fetch from `TokenBoom/rabbitcontrol-core` unified `release-manifest.json` with SHA-256 and ECDSA P-256 signature verification, keeping legacy `core-v*` releases as fallback.
+- **Settings Menu Consolidation**: Reorganized the **Me** tab from 13 rows into 8 rows across 3 semantic cards—merging Connection Mode, UPnP, and Outbound Proxy into **Network & Connection**, Appearance and Language into **General**, App and Core updates into **Versions & Updates**, and moving **Video & Touch Check** into **Remote Control Defaults → Diagnostics**.
+- **UPnP Polling Fix & Version Bump**: Fixed UPnP status staying stuck on `Probing…` until leaving the page by continuously polling until discovery completes; bumped bundled `rabbitcontrol-core` baseline and APK version to `0.2.3` (`versionCode = 5`).
+
+---
+
 ## [v0.2.2] - 2026-11-27
 
 This release upgrades the bundled engine to `rabbitcontrol-core v0.2.2` with `rabbitcontrol-spec v1.0.0`, brings full alignment for connection strategies, multi-display & virtual displays, live codec/decode switching, privacy curtain, host mute, mTLS verification, remote file operations, multi-language support, a full virtual keyboard, and key fixes for Android host mode.
