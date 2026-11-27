@@ -4,16 +4,20 @@ import android.content.Intent
 import androidx.annotation.StringRes
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.rabbitcontrol.android.error.RcErrorCodes
+import com.rabbitcontrol.android.error.RcUiError
 import io.rabbitcontrol.android.R
 import io.rabbitcontrol.android.core.data.AccountRepository
 import io.rabbitcontrol.android.core.data.InteractionPrefs
 import io.rabbitcontrol.android.core.data.InteractionPrefsStore
+import io.rabbitcontrol.android.core.data.ProxyConfigModel
+import io.rabbitcontrol.android.core.data.ProxyConfigStore
 import io.rabbitcontrol.android.core.data.TargetHistoryStore
 import io.rabbitcontrol.android.core.data.WallpaperCache
+import io.rabbitcontrol.android.core.error.RcUiErrorCodec
 import io.rabbitcontrol.android.core.host.HostManager
 import io.rabbitcontrol.android.core.host.HostUiState
 import io.rabbitcontrol.android.core.i18n.AppStrings
-import io.rabbitcontrol.android.core.i18n.NativeErrorLocalizer
 import io.rabbitcontrol.android.core.nativebridge.NativeRuntimeBootstrap
 import io.rabbitcontrol.android.core.nativebridge.RemoteDevice
 import io.rabbitcontrol.android.core.nativebridge.ServerConfigModel
@@ -23,6 +27,7 @@ import io.rabbitcontrol.android.core.session.ActiveSessionState
 import io.rabbitcontrol.android.core.session.SessionManager
 import io.rabbitcontrol.android.core.session.SessionStatus
 import io.rabbitcontrol.android.session.Core
+import io.rabbitcontrol.android.ui.components.RcErrorHub
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -48,6 +53,7 @@ class HomeViewModel(
     private val historyStore: TargetHistoryStore,
     val wallpaperCache: WallpaperCache,
     private val prefsStore: InteractionPrefsStore,
+    private val proxyStore: ProxyConfigStore,
     private val sessionManager: SessionManager,
     private val hostManager: HostManager,
 ) : ViewModel() {
@@ -61,6 +67,7 @@ class HomeViewModel(
     val recentTargets: StateFlow<List<String>> = historyStore.recent
     val favoriteTargets: StateFlow<List<String>> = historyStore.favorites
     val prefs: StateFlow<InteractionPrefs> = prefsStore.state
+    val proxyConfig: StateFlow<ProxyConfigModel> = proxyStore.state
     val activeSession: StateFlow<ActiveSessionState> = sessionManager.state
     val hostState: StateFlow<HostUiState> = hostManager.state
     val wallpaperVersion: StateFlow<Long> = wallpaperCache.version
@@ -72,8 +79,8 @@ class HomeViewModel(
     private val _refreshingDevices = MutableStateFlow(false)
     val refreshingDevices: StateFlow<Boolean> = _refreshingDevices.asStateFlow()
 
-    private val _deviceError = MutableStateFlow<String?>(null)
-    val deviceError: StateFlow<String?> = _deviceError.asStateFlow()
+    private val _deviceError = MutableStateFlow<RcUiError?>(null)
+    val deviceError: StateFlow<RcUiError?> = _deviceError.asStateFlow()
 
     private val _selectedTab = MutableStateFlow(HomeTab.Devices)
     val selectedTab: StateFlow<HomeTab> = _selectedTab.asStateFlow()
@@ -152,8 +159,11 @@ class HomeViewModel(
         viewModelScope.launch {
             runCatching { accountRepo.refreshDevices() }
                 .onFailure { err ->
-                    _deviceError.value = err.message?.let { NativeErrorLocalizer.localize(it) }
-                        ?: AppStrings.get(R.string.home_err_refresh_failed, "刷新设备列表失败")
+                    _deviceError.value = RcUiErrorCodec.fromThrowable(
+                        err,
+                        fallbackCode = RcErrorCodes.NETWORK_UNREACHABLE,
+                        fallbackMessage = AppStrings.get(R.string.home_err_refresh_failed, "刷新设备列表失败"),
+                    )
                 }
             _refreshingDevices.value = false
         }
@@ -210,6 +220,16 @@ class HomeViewModel(
     fun stopHost() = hostManager.stopHost()
 
     fun setHostAllowRemoteAssist(allow: Boolean) = hostManager.setAllowRemoteAssist(allow)
+
+    fun setHostAllowAssistFileTransfer(allow: Boolean) = hostManager.setAllowAssistFileTransfer(allow)
+
+    fun onMediaProjectionDenied() {
+        RcErrorHub.present(
+            RcUiErrorCodec.resolvePlatformError(
+                code = RcErrorCodes.PLATFORM_ANDROID_MEDIA_PROJECTION_DENIED,
+            ),
+        )
+    }
 
     fun respondHostApproval(generation: Long, accepted: Boolean) =
         hostManager.respondApproval(generation, accepted)

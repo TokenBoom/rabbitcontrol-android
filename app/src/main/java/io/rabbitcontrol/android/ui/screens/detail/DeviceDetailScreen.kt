@@ -37,6 +37,7 @@ import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.LaptopMac
 import androidx.compose.material.icons.rounded.LinkOff
+import androidx.compose.material.icons.rounded.Power
 import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Star
@@ -92,6 +93,7 @@ import io.rabbitcontrol.android.ui.components.RabbitSectionHeader
 import io.rabbitcontrol.android.ui.components.RabbitStatusPill
 import io.rabbitcontrol.android.ui.components.RabbitToast
 import io.rabbitcontrol.android.ui.components.RabbitTopBar
+import io.rabbitcontrol.android.ui.components.RcErrorHub
 import io.rabbitcontrol.android.ui.components.StatusTone
 import io.rabbitcontrol.android.ui.theme.LocalRabbitPalette
 import io.rabbitcontrol.android.ui.theme.RabbitElevation
@@ -121,27 +123,32 @@ fun DeviceDetailScreen(
     val activeSession by viewModel.activeSession.collectAsStateWithLifecycle()
     val connecting by viewModel.connecting.collectAsStateWithLifecycle()
     val removing by viewModel.removing.collectAsStateWithLifecycle()
+    val wolSending by viewModel.wolSending.collectAsStateWithLifecycle()
     val connectError by viewModel.connectError.collectAsStateWithLifecycle()
     val favorites by viewModel.favoriteTargets.collectAsStateWithLifecycle()
+    val liveDevices by viewModel.devices.collectAsStateWithLifecycle()
+    val liveDevice = remember(device, liveDevices) {
+        liveDevices.firstOrNull { it.id == device.id } ?: device
+    }
 
-    val wallpaperBitmap = rememberWallpaperImage(viewModel.wallpaperCache, device.id, wallpaperVersion, 960)
-    val isCurrentConnected = activeSession.targetId == device.id && activeSession.negotiated != null
-    val isFav = device.id in favorites
+    val wallpaperBitmap = rememberWallpaperImage(viewModel.wallpaperCache, liveDevice.id, wallpaperVersion, 960)
+    val isCurrentConnected = activeSession.targetId == liveDevice.id && activeSession.negotiated != null
+    val isFav = liveDevice.id in favorites
 
     var sheetMode by remember { mutableStateOf<DetailSheetMode?>(null) }
     var powerConfirmKind by remember { mutableStateOf<String?>(null) }
     var showRemoveConfirm by remember { mutableStateOf(false) }
-    val osLabel = remember(device.os) { formatDetailOs(device.os) }
+    val osLabel = remember(liveDevice.os) { formatDetailOs(liveDevice.os) }
 
     fun triggerTool(kind: DeviceToolKind) {
         when (kind) {
             DeviceToolKind.WatchMode -> {
-                viewModel.startSessionAndNavigate(device.id, device.name, device.os, watchOnly = true) {
+                viewModel.startSessionAndNavigate(liveDevice.id, liveDevice.name, liveDevice.os, watchOnly = true) {
                     onEnterDesktop(true)
                 }
             }
             DeviceToolKind.FileTransfer, DeviceToolKind.Terminal, DeviceToolKind.PortMap -> {
-                viewModel.startSessionAndNavigate(device.id, device.name, device.os, watchOnly = false) {
+                viewModel.startSessionAndNavigate(liveDevice.id, liveDevice.name, liveDevice.os, watchOnly = false) {
                     onOpenTool(kind)
                 }
             }
@@ -239,36 +246,72 @@ fun DeviceDetailScreen(
                                 color = Color(0xFFD4D4D4),
                             )
                             Spacer(modifier = Modifier.height(16.dp))
-                            Button(
-                                onClick = {
-                                    viewModel.startSessionAndNavigate(device.id, device.name, device.os, watchOnly = false) {
-                                        onEnterDesktop(false)
-                                    }
-                                },
-                                enabled = !connecting,
-                                shape = RoundedCornerShape(RabbitRadius.Pill),
-                                elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = palette.primary,
-                                    contentColor = Color.White,
-                                ),
-                                contentPadding = PaddingValues(horizontal = 22.dp),
-                                modifier = Modifier.height(48.dp),
+                            val canWol = !liveDevice.online && !liveDevice.disabled && liveDevice.wolCapable
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                if (connecting) {
-                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(stringResource(R.string.detail_connecting), fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                                } else {
-                                    Text(
-                                        stringResource(
-                                            if (isCurrentConnected) R.string.home_btn_resume_control else R.string.detail_enter_desktop,
+                                Button(
+                                    onClick = {
+                                        viewModel.startSessionAndNavigate(liveDevice.id, liveDevice.name, liveDevice.os, watchOnly = false) {
+                                            onEnterDesktop(false)
+                                        }
+                                    },
+                                    enabled = !connecting,
+                                    shape = RoundedCornerShape(RabbitRadius.Pill),
+                                    elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = palette.primary,
+                                        contentColor = Color.White,
+                                    ),
+                                    contentPadding = PaddingValues(horizontal = 22.dp),
+                                    modifier = Modifier.height(48.dp),
+                                ) {
+                                    if (connecting) {
+                                        CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(stringResource(R.string.detail_connecting), fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                                    } else {
+                                        Text(
+                                            stringResource(
+                                                if (isCurrentConnected) R.string.home_btn_resume_control else R.string.detail_enter_desktop,
+                                            ),
+                                            fontSize = 15.sp,
+                                            fontWeight = FontWeight.Medium,
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Icon(Icons.AutoMirrored.Rounded.ArrowForward, null, modifier = Modifier.size(18.dp))
+                                    }
+                                }
+                                if (canWol) {
+                                    Button(
+                                        onClick = {
+                                            viewModel.sendWakeOnLan(liveDevice.id) { msg ->
+                                                RabbitToast.success(msg)
+                                            }
+                                        },
+                                        enabled = !wolSending,
+                                        shape = RoundedCornerShape(RabbitRadius.Pill),
+                                        elevation = ButtonDefaults.buttonElevation(0.dp, 0.dp, 0.dp, 0.dp, 0.dp),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = Color(0xFF1F2937),
+                                            contentColor = Color.White,
                                         ),
-                                        fontSize = 15.sp,
-                                        fontWeight = FontWeight.Medium,
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Icon(Icons.AutoMirrored.Rounded.ArrowForward, null, modifier = Modifier.size(18.dp))
+                                        contentPadding = PaddingValues(horizontal = 16.dp),
+                                        modifier = Modifier.height(48.dp),
+                                    ) {
+                                        if (wolSending) {
+                                            CircularProgressIndicator(modifier = Modifier.size(15.dp), color = Color.White, strokeWidth = 2.dp)
+                                        } else {
+                                            Icon(Icons.Rounded.Power, null, modifier = Modifier.size(17.dp))
+                                        }
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            stringResource(if (wolSending) R.string.wol_sending else R.string.wol_button),
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Medium,
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -341,9 +384,9 @@ fun DeviceDetailScreen(
                 // Device Metadata & Power Entry Card
                 RabbitCard(modifier = Modifier.fillMaxWidth()) {
                     val (statusLabel, statusTone) = when {
-                        device.disabled -> stringResource(R.string.home_status_disabled) to StatusTone.Muted
-                        device.busy -> stringResource(R.string.home_status_busy) to StatusTone.Primary
-                        device.online -> stringResource(R.string.home_status_online) to StatusTone.Success
+                        liveDevice.disabled -> stringResource(R.string.home_status_disabled) to StatusTone.Muted
+                        liveDevice.busy -> stringResource(R.string.home_status_busy) to StatusTone.Primary
+                        liveDevice.online -> stringResource(R.string.home_status_online) to StatusTone.Success
                         else -> stringResource(R.string.home_status_offline) to StatusTone.Muted
                     }
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -444,8 +487,8 @@ fun DeviceDetailScreen(
 
     LaunchedEffect(connectError) {
         val err = connectError
-        if (!err.isNullOrBlank()) {
-            RabbitToast.error(err)
+        if (err != null) {
+            RcErrorHub.present(err)
             viewModel.clearError()
         }
     }

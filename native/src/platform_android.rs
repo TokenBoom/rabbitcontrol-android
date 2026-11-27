@@ -11,7 +11,7 @@ use rc_client_core::platform::{
 };
 use rc_decode::Decoder;
 use rc_encode::Encoder;
-use rc_pipeline::{PipelineConfig, PlatformMediaProvider};
+use rc_pipeline::{CodecCapability, PipelineConfig, PlatformMediaProvider};
 use rc_render::Renderer;
 use rc_session::ClipboardBackend;
 use rc_types::{Resolution, Result};
@@ -20,7 +20,9 @@ use crate::host_android::{
     self, AndroidCaptureBackend, AndroidInputInjector, AndroidPassthroughEncoder,
 };
 use crate::ndk_audio::AAudioPlayer;
-use crate::ndk_media::{AndroidSurfaceDecoder, AndroidSurfaceRenderer};
+use crate::ndk_media::{
+    probed_decode_capabilities, supports_hardware_hevc, AndroidSurfaceDecoder, AndroidSurfaceRenderer,
+};
 
 #[derive(Default)]
 struct ClipboardState {
@@ -92,6 +94,14 @@ impl PlatformMediaProvider for AndroidMediaProvider {
         Some(host_android::host_clock_us())
     }
 
+    fn supports_hevc(&self) -> bool {
+        supports_hardware_hevc()
+    }
+
+    fn decode_capabilities(&self) -> Vec<CodecCapability> {
+        probed_decode_capabilities()
+    }
+
     fn create_capture(&self, cfg: &PipelineConfig) -> Result<(Box<dyn CaptureBackend>, &'static str)> {
         let cap = AndroidCaptureBackend::new(cfg);
         Ok((Box::new(cap), "mediaprojection"))
@@ -102,7 +112,7 @@ impl PlatformMediaProvider for AndroidMediaProvider {
     }
 
     fn create_decoder(&self, cfg: &PipelineConfig) -> Result<(Box<dyn Decoder>, &'static str)> {
-        let dec = AndroidSurfaceDecoder::new(cfg.resolution.width, cfg.resolution.height);
+        let dec = AndroidSurfaceDecoder::new(cfg.resolution.width, cfg.resolution.height, cfg.codec);
         Ok((Box::new(dec), "mediacodec"))
     }
 

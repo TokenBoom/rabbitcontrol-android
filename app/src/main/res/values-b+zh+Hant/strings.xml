@@ -797,4 +797,49 @@
     <string name="preview_err_missing_sps">樣片缺少 H.264 參數集</string>
     <string name="preview_player_stats">%1$s\n1280 × 720 · 送顯 %2$d fps</string>
     <string name="preview_player_failed">畫面校驗失敗 · %1$s</string>
+
+    <!-- 結構化錯誤、出站代理、網路喚醒與工具權限 -->
+    <string name="err_action_relogin">重新登入</string>
+    <string name="err_action_change_password">變更密碼</string>
+    <string name="err_action_open_settings">前往設定</string>
+    <string name="err_action_open_permissions">開啟權限</string>
+    <string name="err_action_contact_admin">聯絡管理員</string>
+    <string name="err_contact_admin_code">請聯絡管理員並附上錯誤碼：%1$s</string>
+    <string name="err_show_detail">查看詳情</string>
+    <string name="err_hide_detail">收起詳情</string>
+
+    <string name="session_reconnecting_generic">連線中斷，正在重新連線…</string>
+
+    <string name="home_menu_proxy">出站代理</string>
+    <string name="home_wol_ready">支援喚醒</string>
+
+    <string name="host_allow_assist_file_transfer">允許協助傳輸檔案</string>
+    <string name="host_allow_assist_file_transfer_sub">允許遠端協助方於本機受控期間傳輸檔案</string>
+
+    <string name="proxy_settings_title">出站代理</string>
+    <string name="proxy_mode_label">代理模式</string>
+    <string name="proxy_mode_desc">用於控制訊號連線與遠控工作階段流量</string>
+    <string name="proxy_mode_none">直連（無代理）</string>
+    <string name="proxy_mode_system">跟隨系統代理</string>
+    <string name="proxy_mode_none_short">直連</string>
+    <string name="proxy_mode_system_short">系統代理</string>
+    <string name="proxy_mode_manual_short">手動</string>
+    <string name="proxy_protocol_label">代理協定</string>
+    <string name="proxy_host_label">代理位址</string>
+    <string name="proxy_host_hint">127.0.0.1 或 proxy.example.com</string>
+    <string name="proxy_port_label">連接埠 (1-65535)</string>
+    <string name="proxy_username_label">使用者名稱（可選）</string>
+    <string name="proxy_password_label">密碼（可選）</string>
+    <string name="proxy_optional_hint">不需驗證可留空</string>
+    <string name="proxy_saved">代理設定已儲存並生效</string>
+    <string name="proxy_err_host_required">請輸入有效的代理伺服器位址</string>
+    <string name="proxy_err_port_range">代理連接埠必須介於 1 與 65535 之間</string>
+
+    <string name="wol_button">遠端開機 (WoL)</string>
+    <string name="wol_sending">正在傳送喚醒指令…</string>
+    <string name="wol_sent_success">已傳送遠端開機指令</string>
+
+    <string name="tool_permission_disabled_ft">遠端主機目前已停用檔案傳輸權限</string>
+    <string name="tool_permission_disabled_term">遠端主機目前已停用遠端終端機權限</string>
+    <string name="tool_permission_disabled_pm">遠端主機目前已停用連接埠轉發權限</string>
 </resources>

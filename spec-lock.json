@@ -1,0 +1,12 @@
+{
+  "spec_repo": "TokenBoom/rabbitcontrol-spec",
+  "spec_version": "1.0.0",
+  "files": [
+    {
+      "artifact": "kotlin-android",
+      "source": "dist/kotlin-android/RcErrorModels.kt",
+      "target": "app/src/main/java/com/rabbitcontrol/android/error/RcErrorModels.kt",
+      "sha256": "d9a99e0ad8cce6f94cc7526885b012f1b6f8719167495462172fa58ab24afffc"
+    }
+  ]
+}

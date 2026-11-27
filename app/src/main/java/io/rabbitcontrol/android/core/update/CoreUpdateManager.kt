@@ -464,12 +464,35 @@ class CoreUpdateManager(
         val verifiedReleases = fetchVerifiedCoreReleases()
         val storeState = NativeLibraryLoader.runtimeStore()?.loadState()
         val blacklist = storeState?.blacklistedVersions ?: emptySet()
-        return selectCoreUpdateFromManifests(
+        val selection = selectCoreUpdateFromManifests(
             releases = verifiedReleases,
             effectiveCurrentVersion = effectiveCurrentVersion(),
             supportedAbiVersion = BuildConfig.CORE_ABI_VERSION,
             supportedAbis = Build.SUPPORTED_ABIS.toList(),
             blacklistedVersions = blacklist,
+        )
+        if (selection.bestCompatible == null && selection.incompatibleNotice == null) {
+            val upstreamNotice = runCatching { fetchUpstreamIncompatibleHint() }.getOrNull()
+            if (upstreamNotice != null) {
+                return selection.copy(incompatibleNotice = upstreamNotice)
+            }
+        }
+        return selection
+    }
+
+    private fun fetchUpstreamIncompatibleHint(): CoreIncompatibleNotice? {
+        val mirror = _state.value.mirrorPrefix
+        val raw = runCatching {
+            downloadBytes(applyMirrorPrefix(CORE_REPO_LATEST_MANIFEST_URL, mirror), maxBytes = 128 * 1024)
+                .toString(Charsets.UTF_8)
+        }.getOrNull() ?: return null
+        val manifest = runCatching { CoreReleaseManifest.parse(raw) }.getOrNull() ?: return null
+        if (manifest.abiVersion <= BuildConfig.CORE_ABI_VERSION) return null
+        return CoreIncompatibleNotice(
+            coreVersion = manifest.coreVersion,
+            requiredAbiVersion = manifest.abiVersion,
+            minAppVersion = manifest.minClientAndroidVersion,
+            htmlUrl = "$CORE_REPO_URL/releases/tag/${manifest.tag}",
         )
     }
 
@@ -648,6 +671,9 @@ class CoreUpdateManager(
     companion object {
         const val GITHUB_API_RELEASES =
             "https://api.github.com/repos/TokenBoom/rabbitcontrol-android/releases?per_page=20"
+        const val CORE_REPO_URL = "https://github.com/TokenBoom/rabbitcontrol-core"
+        const val CORE_REPO_LATEST_MANIFEST_URL =
+            "https://github.com/TokenBoom/rabbitcontrol-core/releases/latest/download/release-manifest.json"
         const val MANIFEST_FILENAME = "core-manifest.json"
         const val MANIFEST_SIG_FILENAME = "core-manifest.json.sig"
         private const val AUTO_CHECK_INTERVAL_MS = 6L * 60L * 60L * 1000L

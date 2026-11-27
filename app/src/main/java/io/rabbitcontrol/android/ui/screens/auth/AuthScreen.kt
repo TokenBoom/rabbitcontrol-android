@@ -72,6 +72,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.rabbitcontrol.android.error.RcErrorPresentation
 import io.rabbitcontrol.android.R
 import io.rabbitcontrol.android.core.nativebridge.ServerConfigModel
 import io.rabbitcontrol.android.ui.components.ProvideRabbitTextToolbar
@@ -84,6 +85,8 @@ import io.rabbitcontrol.android.ui.components.RabbitTextField
 import io.rabbitcontrol.android.ui.components.RabbitToast
 import io.rabbitcontrol.android.ui.components.RabbitToastModalOverlay
 import io.rabbitcontrol.android.ui.components.RabbitTopBar
+import io.rabbitcontrol.android.ui.components.RcErrorHub
+import io.rabbitcontrol.android.ui.components.RcInlineError
 import io.rabbitcontrol.android.ui.components.StatusTone
 import io.rabbitcontrol.android.ui.theme.LocalRabbitPalette
 import io.rabbitcontrol.android.ui.theme.RabbitElevation
@@ -121,10 +124,10 @@ fun AuthScreen(
         }
     }
 
-    LaunchedEffect(state.error) {
-        val err = state.error
-        if (!err.isNullOrBlank()) {
-            RabbitToast.error(err)
+    LaunchedEffect(state.uiError) {
+        val err = state.uiError
+        if (err != null && err.presentation != RcErrorPresentation.INLINE) {
+            RcErrorHub.present(err)
             viewModel.clearError()
         }
     }
@@ -524,7 +527,7 @@ fun AuthScreen(
                                                                         }
                                                                     }
                                                                     is ServerTestState.Failed -> {
-                                                                        RabbitToast.error(res.message)
+                                                                        RcErrorHub.present(res.error)
                                                                     }
                                                                     ServerTestState.Testing -> Unit
                                                                 }
@@ -616,6 +619,14 @@ fun AuthScreen(
                                     color = palette.muted,
                                 )
                                 Spacer(modifier = Modifier.height(28.dp))
+                                val inlineErr = state.uiError?.takeIf { it.presentation == RcErrorPresentation.INLINE }
+                                if (inlineErr != null) {
+                                    RcInlineError(
+                                        error = inlineErr,
+                                        onDismiss = viewModel::clearError,
+                                    )
+                                    Spacer(modifier = Modifier.height(14.dp))
+                                }
                                 ServerFormContent(
                                     serverAddress = state.serverAddress,
                                     onAddressChange = viewModel::updateServerAddress,
@@ -745,6 +756,15 @@ fun AuthScreen(
                             )
                             Spacer(modifier = Modifier.height(28.dp))
 
+                            val inlineErr = state.uiError?.takeIf { it.presentation == RcErrorPresentation.INLINE }
+                            if (inlineErr != null) {
+                                RcInlineError(
+                                    error = inlineErr,
+                                    onDismiss = viewModel::clearError,
+                                )
+                                Spacer(modifier = Modifier.height(14.dp))
+                            }
+
                             if (isLogin) {
                                 RabbitTextField(
                                     value = state.email,
@@ -852,6 +872,14 @@ fun AuthScreen(
 
                     AuthStep.Password -> {
                         RabbitCard(modifier = Modifier.fillMaxWidth()) {
+                            val inlineErr = state.uiError?.takeIf { it.presentation == RcErrorPresentation.INLINE }
+                            if (inlineErr != null) {
+                                RcInlineError(
+                                    error = inlineErr,
+                                    onDismiss = viewModel::clearError,
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+                            }
                             RabbitTextField(
                                 value = state.currentPassword,
                                 onValueChange = viewModel::updateCurrentPassword,
@@ -940,6 +968,13 @@ fun AuthScreen(
                     }
 
                     val updatedToast = stringResource(R.string.auth_server_updated_toast)
+                    val sheetInlineErr = state.uiError?.takeIf { it.presentation == RcErrorPresentation.INLINE }
+                    if (sheetInlineErr != null) {
+                        RcInlineError(
+                            error = sheetInlineErr,
+                            onDismiss = viewModel::clearError,
+                        )
+                    }
                     ServerFormContent(
                         serverAddress = state.serverAddress,
                         onAddressChange = viewModel::updateServerAddress,

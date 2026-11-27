@@ -11,18 +11,29 @@ import android.view.KeyEvent
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.WindowManager
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.rabbitcontrol.android.error.RcErrorAction
 import io.rabbitcontrol.android.MainActivity
+import io.rabbitcontrol.android.R
 import io.rabbitcontrol.android.core.data.DeviceToolKind
 import io.rabbitcontrol.android.core.data.OrientationPreference
 import io.rabbitcontrol.android.core.i18n.AppLocaleManager
+import io.rabbitcontrol.android.core.i18n.AppStrings
 import io.rabbitcontrol.android.core.input.ScancodeMapper
 import io.rabbitcontrol.android.core.session.SessionStatus
 import io.rabbitcontrol.android.session.Core
+import io.rabbitcontrol.android.ui.components.RabbitToast
+import io.rabbitcontrol.android.ui.components.RabbitToastHost
+import io.rabbitcontrol.android.ui.components.RcErrorHost
 import io.rabbitcontrol.android.ui.theme.RabbitTheme
 import org.koin.androidx.viewmodel.ext.android.viewModel
 
@@ -53,23 +64,51 @@ class SessionActivity : ComponentActivity() {
                 }
             }
             RabbitTheme(darkTheme = true) {
-                DesktopSessionScreen(
-                    viewModel = viewModel,
-                    onOpenTool = { kind ->
-                        val route = when (kind) {
-                            DeviceToolKind.FileTransfer -> "transfer"
-                            DeviceToolKind.Terminal -> "terminal"
-                            DeviceToolKind.PortMap -> "portmap"
-                            DeviceToolKind.WatchMode -> return@DesktopSessionScreen
-                        }
-                        startActivity(
-                            Intent(this, MainActivity::class.java)
-                                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                                .putExtra(MainActivity.EXTRA_NAV_TOOL, route),
-                        )
-                    },
-                    onExitSession = { finish() },
-                )
+                Box(modifier = Modifier.fillMaxSize()) {
+                    DesktopSessionScreen(
+                        viewModel = viewModel,
+                        onOpenTool = { kind ->
+                            val route = when (kind) {
+                                DeviceToolKind.FileTransfer -> "transfer"
+                                DeviceToolKind.Terminal -> "terminal"
+                                DeviceToolKind.PortMap -> "portmap"
+                                DeviceToolKind.WatchMode -> return@DesktopSessionScreen
+                            }
+                            startActivity(
+                                Intent(this@SessionActivity, MainActivity::class.java)
+                                    .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                                    .putExtra(MainActivity.EXTRA_NAV_TOOL, route),
+                            )
+                        },
+                        onExitSession = { finish() },
+                    )
+                    RabbitToastHost(modifier = Modifier.align(Alignment.TopCenter))
+                    RcErrorHost(
+                        onAction = { action, err, onRetry ->
+                            when (action) {
+                                RcErrorAction.RETRY -> onRetry?.invoke()
+                                RcErrorAction.OPEN_PERMISSIONS -> {
+                                    runCatching {
+                                        startActivity(
+                                            Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                                        )
+                                    }
+                                }
+                                RcErrorAction.CONTACT_ADMIN -> {
+                                    RabbitToast.info(
+                                        AppStrings.get(
+                                            R.string.err_contact_admin_code,
+                                            "请联系管理员并附上错误码：${err.code}",
+                                            err.code,
+                                        ),
+                                    )
+                                }
+                                else -> Unit
+                            }
+                        },
+                    )
+                }
             }
         }
 

@@ -101,6 +101,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.rabbitcontrol.android.error.RcErrorCodes
 import io.rabbitcontrol.android.R
 import io.rabbitcontrol.android.core.data.DeviceToolKind
 import io.rabbitcontrol.android.core.data.OrientationPreference
@@ -115,6 +116,7 @@ import io.rabbitcontrol.android.core.session.SessionStatus
 import io.rabbitcontrol.android.core.video.NativeVideoStageView
 import io.rabbitcontrol.android.session.Core
 import io.rabbitcontrol.android.ui.components.RabbitDialog
+import io.rabbitcontrol.android.ui.components.RcErrorHub
 import io.rabbitcontrol.android.ui.theme.RabbitElevation
 import io.rabbitcontrol.android.ui.theme.RabbitRadius
 import io.rabbitcontrol.android.ui.theme.SessionPalette
@@ -789,10 +791,15 @@ fun DesktopSessionScreen(
             )
         }
 
-        // Connection / Auth / Switching Overlay
+        // Connection / Auth / Switching / Reconnecting Overlay
         when (val st = state.status) {
-            is SessionStatus.Connecting, is SessionStatus.Switching -> {
-                val msg = if (st is SessionStatus.Connecting) st.label else (st as SessionStatus.Switching).reason
+            is SessionStatus.Connecting, is SessionStatus.Switching, is SessionStatus.Reconnecting -> {
+                val msg = when (st) {
+                    is SessionStatus.Connecting -> st.label
+                    is SessionStatus.Switching -> st.reason
+                    is SessionStatus.Reconnecting -> st.reason
+                    else -> ""
+                }
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -834,9 +841,19 @@ fun DesktopSessionScreen(
             }
 
             is SessionStatus.Error, is SessionStatus.Ended -> {
-                val reason = if (st is SessionStatus.Error) st.message else (st as SessionStatus.Ended).reason
+                val uiErr = when (st) {
+                    is SessionStatus.Error -> st.uiError
+                    is SessionStatus.Ended -> st.uiError
+                    else -> null
+                }
+                val title = uiErr?.title?.takeIf { it.isNotBlank() }
+                    ?: stringResource(R.string.session_not_ready)
+                val reason = uiErr?.message?.takeIf { it.isNotBlank() }
+                    ?: if (st is SessionStatus.Error) st.message else (st as SessionStatus.Ended).reason
+                val suggestion = uiErr?.suggestion?.takeIf { it.isNotBlank() && it != reason }
                 val lowerReason = reason.lowercase()
-                val needsPassword = lowerReason.contains("password") ||
+                val needsPassword = uiErr?.code == RcErrorCodes.SESSION_AUTH_REJECTED ||
+                    lowerReason.contains("password") ||
                     lowerReason.contains("auth") ||
                     lowerReason.contains("denied") ||
                     lowerReason.contains("unauthorized") ||
@@ -864,9 +881,13 @@ fun DesktopSessionScreen(
                             modifier = Modifier.padding(22.dp),
                             horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
-                            Text(stringResource(R.string.session_not_ready), color = SessionPalette.text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                            Text(title, color = SessionPalette.text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(reason, color = SessionPalette.muted, fontSize = 13.sp)
+                            if (suggestion != null) {
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(suggestion, color = SessionPalette.muted.copy(alpha = 0.85f), fontSize = 12.sp)
+                            }
                             if (needsPassword) {
                                 var passwordVisible by remember { mutableStateOf(false) }
                                 Spacer(modifier = Modifier.height(14.dp))

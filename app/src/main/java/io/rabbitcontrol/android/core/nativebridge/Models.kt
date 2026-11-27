@@ -63,6 +63,14 @@ data class RemoteDevice(
     val busy: Boolean,
     val disabled: Boolean,
     val allowRemoteAssist: Boolean = false,
+    val wolCapable: Boolean = false,
+)
+
+@Immutable
+data class ToolPermissionsModel(
+    val allowFileTransfer: Boolean = true,
+    val allowTerminal: Boolean = true,
+    val allowPortMap: Boolean = true,
 )
 
 @Immutable

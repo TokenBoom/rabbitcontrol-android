@@ -9,6 +9,7 @@ use rc_client_core::auth_client::{
 use rc_client_core::server_config::{
     parse_server_input, ServerConfig, DEFAULT_API_PORT, DEFAULT_RELAY_PORT, DEFAULT_SIGNAL_PORT,
 };
+use rc_client_core::ui_error::{ErrorPlatform, IntoUiError};
 use serde_json::{json, Value};
 use std::ptr;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -456,7 +457,8 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_account(
             } else {
                 "java/lang/IllegalStateException"
             };
-            let _ = env.throw_new(class, error.to_string());
+            let ui_err = error.to_ui_error(ErrorPlatform::Android);
+            crate::throw_ui_error(&mut env, class, &ui_err);
             ptr::null_mut()
         }
     }

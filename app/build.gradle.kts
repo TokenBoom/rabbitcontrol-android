@@ -51,11 +51,11 @@ fun readPublicKeyB64(): String {
 fun escapeBuildConfigString(value: String): String =
     value.replace("\\", "\\\\").replace("\"", "\\\"")
 
-val coreAbiVersion = 1
+val coreAbiVersion = 2
 val bundledCoreVersion = ((project.findProperty("coreVersion") as String?)?.takeIf { it.isNotBlank() }
     ?: System.getenv("RC_CORE_VERSION")?.takeIf { it.isNotBlank() }
     ?: runGitInCore("describe", "--tags", "--abbrev=0")
-    ?: "0.1.0")
+    ?: "0.2.2")
     .trim()
     .removePrefix("v")
     .removePrefix("V")
@@ -63,8 +63,11 @@ val bundledCoreGitSha = (project.findProperty("coreGitSha") as String?)?.takeIf 
     ?: System.getenv("RC_CORE_GIT_SHA")?.takeIf { it.isNotBlank() }
     ?: runGitInCore("rev-parse", "--short", "HEAD")
     ?: "unknown"
-val coreBuiltAt = System.getenv("RC_CORE_BUILT_AT")?.takeIf { it.isNotBlank() }
-    ?: Instant.now().toString()
+val explicitCoreVersion = ((project.findProperty("coreVersion") as String?)?.takeIf { it.isNotBlank() }
+    ?: System.getenv("RC_CORE_VERSION")?.takeIf { it.isNotBlank() })
+    ?.trim()
+    ?.removePrefix("v")
+    ?.removePrefix("V")
 val coreSigningPublicKeyB64 = readPublicKeyB64()
 
 android {
@@ -76,8 +79,8 @@ android {
         applicationId = "io.rabbitcontrol.android"
         minSdk = 29
         targetSdk = 36
-        versionCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 3
-        versionName = (project.findProperty("versionName") as String?)?.takeIf { it.isNotBlank() } ?: "0.2.1"
+        versionCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 4
+        versionName = (project.findProperty("versionName") as String?)?.takeIf { it.isNotBlank() } ?: "0.2.2"
         ndk.abiFilters += "arm64-v8a"
         buildConfigField("int", "CORE_ABI_VERSION", coreAbiVersion.toString())
         buildConfigField("String", "BUNDLED_CORE_VERSION", "\"${escapeBuildConfigString(bundledCoreVersion)}\"")
@@ -193,10 +196,12 @@ val buildRust by tasks.registering(Exec::class) {
     outputs.dir(nativeLibs)
     doFirst {
         environment("ANDROID_NDK_HOME", ndkDir.get().asFile.absolutePath)
-        environment("RC_CORE_ABI_VERSION", coreAbiVersion.toString())
-        environment("RC_CORE_VERSION", bundledCoreVersion)
-        environment("RC_CORE_GIT_SHA", bundledCoreGitSha)
-        environment("RC_CORE_BUILT_AT", coreBuiltAt)
+        if (!explicitCoreVersion.isNullOrBlank()) {
+            environment("RC_CORE_VERSION", explicitCoreVersion)
+        }
+        val sourceDateEpoch = System.getenv("SOURCE_DATE_EPOCH")?.takeIf { it.isNotBlank() }
+            ?: (Instant.now().epochSecond.toString())
+        environment("SOURCE_DATE_EPOCH", sourceDateEpoch)
     }
     commandLine("cargo", "ndk", "-t", "arm64-v8a", "--platform", "29",
         "-o", nativeLibs.get().asFile.absolutePath, "build", "--locked", "--release")

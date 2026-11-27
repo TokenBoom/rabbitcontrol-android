@@ -2,6 +2,7 @@ package io.rabbitcontrol.android.di
 
 import io.rabbitcontrol.android.core.data.AccountRepository
 import io.rabbitcontrol.android.core.data.InteractionPrefsStore
+import io.rabbitcontrol.android.core.data.ProxyConfigStore
 import io.rabbitcontrol.android.core.data.SessionLayoutStore
 import io.rabbitcontrol.android.core.data.TargetHistoryStore
 import io.rabbitcontrol.android.core.data.ToolOrderStore
@@ -28,6 +29,7 @@ val dataModule = module {
     single { ToolOrderStore(androidContext()) }
     single { WallpaperCache(androidContext()) }
     single { InteractionPrefsStore(androidContext()) }
+    single { ProxyConfigStore(androidContext()) }
     single { SessionLayoutStore(androidContext()) }
     single { AppUpdateManager(androidContext()) }
     single { CoreUpdateManager(androidContext()) }
@@ -41,7 +43,7 @@ val sessionModule = module {
 
 val viewModelModule = module {
     viewModel { AuthViewModel(get()) }
-    viewModel { HomeViewModel(get(), get(), get(), get(), get(), get()) }
+    viewModel { HomeViewModel(get(), get(), get(), get(), get(), get(), get()) }
     viewModel { DeviceDetailViewModel(get(), get(), get(), get(), get()) }
     viewModel { SessionViewModel(get(), get(), get(), get()) }
     viewModel { FileTransferViewModel(androidContext(), get()) }

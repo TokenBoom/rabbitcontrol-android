@@ -37,6 +37,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
@@ -49,6 +50,8 @@ import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.ScreenShare
 import androidx.compose.material.icons.rounded.SystemUpdate
+import androidx.compose.material.icons.rounded.Visibility
+import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -68,6 +71,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -81,6 +85,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -91,12 +96,21 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.rabbitcontrol.android.error.RcErrorAction
+import com.rabbitcontrol.android.error.RcErrorCodes
+import com.rabbitcontrol.android.error.RcErrorPresentation
+import com.rabbitcontrol.android.error.RcUiError
 import io.rabbitcontrol.android.R
 import io.rabbitcontrol.android.core.data.AccountRepository
 import io.rabbitcontrol.android.core.data.InteractionPrefsStore
 import io.rabbitcontrol.android.core.data.OrientationPreference
 import io.rabbitcontrol.android.core.data.PortraitLayoutMode
+import io.rabbitcontrol.android.core.data.ProxyConfigModel
+import io.rabbitcontrol.android.core.data.ProxyConfigStore
+import io.rabbitcontrol.android.core.data.ProxyModeOption
+import io.rabbitcontrol.android.core.data.ProxyProtocolOption
 import io.rabbitcontrol.android.core.data.TouchInputMode
+import io.rabbitcontrol.android.core.error.RcUiErrorCodec
 import io.rabbitcontrol.android.core.host.HostManager
 import io.rabbitcontrol.android.core.i18n.AppStrings
 import io.rabbitcontrol.android.core.i18n.NativeErrorLocalizer
@@ -112,17 +126,24 @@ import io.rabbitcontrol.android.core.update.ReleaseInfo
 import io.rabbitcontrol.android.core.update.UpdateCheckStatus
 import io.rabbitcontrol.android.core.update.UpdateDownloadState
 import io.rabbitcontrol.android.ui.components.RabbitCard
+import io.rabbitcontrol.android.ui.components.RabbitPrimaryButton
 import io.rabbitcontrol.android.ui.components.RabbitSegmentedControl
 import io.rabbitcontrol.android.ui.components.RabbitStatusPill
 import io.rabbitcontrol.android.ui.components.RabbitSwitchRow
+import io.rabbitcontrol.android.ui.components.RabbitTextField
 import io.rabbitcontrol.android.ui.components.RabbitToast
 import io.rabbitcontrol.android.ui.components.RabbitTopBar
+import io.rabbitcontrol.android.ui.components.RcErrorHub
+import io.rabbitcontrol.android.ui.components.RcInlineError
 import io.rabbitcontrol.android.ui.components.StatusTone
 import io.rabbitcontrol.android.ui.screens.auth.AuthStep
 import io.rabbitcontrol.android.ui.theme.LocalRabbitPalette
 import io.rabbitcontrol.android.ui.theme.RabbitElevation
 import io.rabbitcontrol.android.ui.theme.RabbitRadius
 import io.rabbitcontrol.android.ui.theme.RabbitSpacing
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.koin.compose.koinInject
 
 fun getAppVersionName(context: Context): String {
@@ -149,10 +170,15 @@ fun HostSettingsScreen(
     val signal by accountRepo.signalStatus.collectAsStateWithLifecycle()
     val hostState by hostManager.state.collectAsStateWithLifecycle()
 
-    LaunchedEffect(hostState.lastError) {
+    LaunchedEffect(hostState.lastUiError, hostState.lastError) {
+        val uiErr = hostState.lastUiError
         val err = hostState.lastError
-        if (!err.isNullOrBlank()) {
+        if (uiErr != null) {
+            RcErrorHub.present(uiErr)
+            hostManager.clearLastError()
+        } else if (!err.isNullOrBlank()) {
             RabbitToast.error(err)
+            hostManager.clearLastError()
         }
     }
 
@@ -171,6 +197,10 @@ fun HostSettingsScreen(
     ) { res ->
         if (res.resultCode == Activity.RESULT_OK && res.data != null) {
             hostManager.enableHostWithProjection(res.resultCode, res.data!!)
+        } else {
+            RcErrorHub.present(
+                RcUiErrorCodec.resolvePlatformError(RcErrorCodes.PLATFORM_ANDROID_MEDIA_PROJECTION_DENIED),
+            )
         }
     }
 
@@ -297,6 +327,14 @@ fun HostSettingsScreen(
                     onCheckedChange = hostManager::setAllowRemoteAssist,
                 )
 
+                HorizontalDivider(color = palette.line, thickness = 1.dp)
+                RabbitSwitchRow(
+                    title = stringResource(R.string.host_allow_assist_file_transfer),
+                    subtitle = stringResource(R.string.host_allow_assist_file_transfer_sub),
+                    checked = hostState.allowAssistFileTransfer,
+                    onCheckedChange = hostManager::setAllowAssistFileTransfer,
+                )
+
                 if (hostState.enabled && hostState.allowRemoteAssist && !hostState.tempCode.isNullOrBlank()) {
                     val code = hostState.tempCode!!
                     val copiedCodeMsg = stringResource(R.string.host_temp_code_copied)
@@ -366,6 +404,24 @@ fun HostSettingsScreen(
                         )
                     }
                     Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, tint = palette.muted)
+                }
+
+                if (hostState.enabled && !hostState.accessibilityEnabled) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    val accessibilityError = remember {
+                        RcUiErrorCodec.resolvePlatformError(
+                            code = RcErrorCodes.PLATFORM_ANDROID_ACCESSIBILITY_DENIED,
+                            presentationOverride = RcErrorPresentation.INLINE,
+                        )
+                    }
+                    RcInlineError(
+                        error = accessibilityError,
+                        onAction = { action ->
+                            if (action == RcErrorAction.OPEN_PERMISSIONS || action == RcErrorAction.OPEN_SETTINGS) {
+                                context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                            }
+                        },
+                    )
                 }
             }
         }
@@ -575,6 +631,10 @@ fun AboutScreen(
                         append("v${loadedCore.version} · ")
                         append(coreStatusTag)
                         append(" · ABI v${loadedCore.abiVersion}")
+                        val shortCommit = loadedCore.coreGitSha.trim()
+                        if (shortCommit.isNotEmpty() && !shortCommit.equals("unknown", ignoreCase = true)) {
+                            append(" (${shortCommit.take(7)})")
+                        }
                         if (loadedCore.pendingRestartVersion != null) {
                             append(" · $pendingTag")
                         }
@@ -1601,6 +1661,208 @@ private fun IncompatibleCoreBanner(
             color = palette.primaryText,
             modifier = Modifier.weight(1f),
         )
+    }
+}
+
+@Composable
+fun ProxySettingsScreen(
+    onBack: () -> Unit,
+) {
+    val palette = LocalRabbitPalette.current
+    val proxyStore: ProxyConfigStore = koinInject()
+    val saved by proxyStore.state.collectAsStateWithLifecycle()
+    val scope = rememberCoroutineScope()
+
+    var mode by remember(saved) { mutableStateOf(saved.mode) }
+    var protocol by remember(saved) { mutableStateOf(saved.protocol) }
+    var host by remember(saved) { mutableStateOf(saved.host) }
+    var portText by remember(saved) { mutableStateOf(saved.port.toString()) }
+    var username by remember(saved) { mutableStateOf(saved.username) }
+    var password by remember(saved) { mutableStateOf(saved.password) }
+    var showPassword by remember { mutableStateOf(false) }
+    var inlineError by remember { mutableStateOf<RcUiError?>(null) }
+    var saving by remember { mutableStateOf(false) }
+
+    val savedToast = stringResource(R.string.proxy_saved)
+    val invalidHostMsg = stringResource(R.string.proxy_err_host_required)
+    val invalidPortMsg = stringResource(R.string.proxy_err_port_range)
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(palette.canvas)
+            .systemBarsPadding(),
+    ) {
+        RabbitTopBar(
+            title = stringResource(R.string.proxy_settings_title),
+            onBack = onBack,
+        )
+
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = RabbitSpacing.Lg, vertical = RabbitSpacing.Md),
+            verticalArrangement = Arrangement.spacedBy(RabbitSpacing.Md),
+        ) {
+            RabbitCard(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = stringResource(R.string.proxy_mode_label),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = palette.text,
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = stringResource(R.string.proxy_mode_desc),
+                    fontSize = 12.sp,
+                    color = palette.muted,
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                val modes = ProxyModeOption.entries
+                val modeLabels = listOf(
+                    stringResource(R.string.proxy_mode_none_short),
+                    stringResource(R.string.proxy_mode_system_short),
+                    stringResource(R.string.proxy_mode_manual_short),
+                )
+                RabbitSegmentedControl(
+                    options = modes,
+                    selected = mode,
+                    labelProvider = { option -> modeLabels[modes.indexOf(option)] },
+                    onSelect = {
+                        mode = it
+                        inlineError = null
+                    },
+                )
+            }
+
+            if (mode == ProxyModeOption.Manual) {
+                RabbitCard(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = stringResource(R.string.proxy_protocol_label),
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = palette.text,
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    val protocols = ProxyProtocolOption.entries
+                    RabbitSegmentedControl(
+                        options = protocols,
+                        selected = protocol,
+                        labelProvider = { it.wireValue.uppercase() },
+                        onSelect = {
+                            protocol = it
+                            inlineError = null
+                        },
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    RabbitTextField(
+                        value = host,
+                        onValueChange = {
+                            host = it
+                            inlineError = null
+                        },
+                        label = stringResource(R.string.proxy_host_label),
+                        placeholder = stringResource(R.string.proxy_host_hint),
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+                    RabbitTextField(
+                        value = portText,
+                        onValueChange = { next ->
+                            if (next.length <= 5 && next.all { it.isDigit() }) {
+                                portText = next
+                                inlineError = null
+                            }
+                        },
+                        label = stringResource(R.string.proxy_port_label),
+                        placeholder = "7890",
+                        keyboardType = KeyboardType.Number,
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+                    RabbitTextField(
+                        value = username,
+                        onValueChange = { username = it },
+                        label = stringResource(R.string.proxy_username_label),
+                        placeholder = stringResource(R.string.proxy_optional_hint),
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+                    RabbitTextField(
+                        value = password,
+                        onValueChange = { password = it },
+                        label = stringResource(R.string.proxy_password_label),
+                        placeholder = stringResource(R.string.proxy_optional_hint),
+                        isPassword = !showPassword,
+                        trailingIcon = {
+                            IconButton(onClick = { showPassword = !showPassword }) {
+                                Icon(
+                                    imageVector = if (showPassword) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
+                                    contentDescription = null,
+                                    tint = palette.muted,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                        },
+                    )
+                }
+            }
+
+            inlineError?.let { uiErr ->
+                RcInlineError(
+                    error = uiErr,
+                    onDismiss = { inlineError = null },
+                )
+            }
+
+            RabbitPrimaryButton(
+                label = stringResource(R.string.common_save),
+                busy = saving,
+                modifier = Modifier.fillMaxWidth(),
+                onClick = {
+                    if (mode == ProxyModeOption.Manual) {
+                        val trimmedHost = host.trim()
+                        if (trimmedHost.isEmpty()) {
+                            inlineError = RcUiErrorCodec.inlineValidation(invalidHostMsg)
+                            return@RabbitPrimaryButton
+                        }
+                        val parsedPort = portText.trim().toIntOrNull()
+                        if (parsedPort == null || parsedPort !in 1..65535) {
+                            inlineError = RcUiErrorCodec.inlineValidation(invalidPortMsg)
+                            return@RabbitPrimaryButton
+                        }
+                    }
+                    val targetPort = portText.trim().toIntOrNull()?.coerceIn(1, 65535) ?: saved.port
+                    val model = ProxyConfigModel(
+                        mode = mode,
+                        protocol = protocol,
+                        host = host.trim(),
+                        port = targetPort,
+                        username = username.trim(),
+                        password = password,
+                    )
+                    saving = true
+                    inlineError = null
+                    scope.launch {
+                        val res = withContext(Dispatchers.IO) {
+                            proxyStore.saveAndApply(model)
+                        }
+                        saving = false
+                        res.onSuccess {
+                            RabbitToast.success(savedToast)
+                            onBack()
+                        }.onFailure { err ->
+                            inlineError = RcUiErrorCodec.fromThrowable(
+                                err,
+                                fallbackCode = RcErrorCodes.PROXY_CONFIG_CONFLICT,
+                            )
+                        }
+                    }
+                },
+            )
+        }
     }
 }
 

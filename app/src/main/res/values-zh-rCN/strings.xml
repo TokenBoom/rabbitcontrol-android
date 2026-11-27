@@ -797,4 +797,49 @@
     <string name="preview_err_missing_sps">样片缺少 H.264 参数集</string>
     <string name="preview_player_stats">%1$s\n1280 × 720 · 送显 %2$d fps</string>
     <string name="preview_player_failed">画面校验失败 · %1$s</string>
+
+    <!-- 结构化错误、出站代理、网络唤醒与工具权限 -->
+    <string name="err_action_relogin">重新登录</string>
+    <string name="err_action_change_password">修改密码</string>
+    <string name="err_action_open_settings">前往设置</string>
+    <string name="err_action_open_permissions">开启权限</string>
+    <string name="err_action_contact_admin">联系管理员</string>
+    <string name="err_contact_admin_code">请联系管理员并附上错误码：%1$s</string>
+    <string name="err_show_detail">查看详情</string>
+    <string name="err_hide_detail">收起详情</string>
+
+    <string name="session_reconnecting_generic">连接中断，正在重连…</string>
+
+    <string name="home_menu_proxy">出站代理</string>
+    <string name="home_wol_ready">支持唤醒</string>
+
+    <string name="host_allow_assist_file_transfer">允许协助传输文件</string>
+    <string name="host_allow_assist_file_transfer_sub">允许远程协助方在本机受控期间传输文件</string>
+
+    <string name="proxy_settings_title">出站代理</string>
+    <string name="proxy_mode_label">代理模式</string>
+    <string name="proxy_mode_desc">用于控制信令连接与远控会话流量</string>
+    <string name="proxy_mode_none">直连（无代理）</string>
+    <string name="proxy_mode_system">跟随系统代理</string>
+    <string name="proxy_mode_none_short">直连</string>
+    <string name="proxy_mode_system_short">系统代理</string>
+    <string name="proxy_mode_manual_short">手动</string>
+    <string name="proxy_protocol_label">代理协议</string>
+    <string name="proxy_host_label">代理地址</string>
+    <string name="proxy_host_hint">127.0.0.1 或 proxy.example.com</string>
+    <string name="proxy_port_label">端口 (1-65535)</string>
+    <string name="proxy_username_label">用户名（可选）</string>
+    <string name="proxy_password_label">密码（可选）</string>
+    <string name="proxy_optional_hint">不需要认证可留空</string>
+    <string name="proxy_saved">代理设置已保存并生效</string>
+    <string name="proxy_err_host_required">请输入有效的代理服务器地址</string>
+    <string name="proxy_err_port_range">代理端口需在 1 到 65535 之间</string>
+
+    <string name="wol_button">远程开机 (WoL)</string>
+    <string name="wol_sending">正在发送唤醒指令…</string>
+    <string name="wol_sent_success">已发送远程开机指令</string>
+
+    <string name="tool_permission_disabled_ft">远端主机当前已禁止文件传输权限</string>
+    <string name="tool_permission_disabled_term">远端主机当前已禁止远程终端权限</string>
+    <string name="tool_permission_disabled_pm">远端主机当前已禁止端口映射权限</string>
 </resources>

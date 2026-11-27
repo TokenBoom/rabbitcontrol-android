@@ -70,6 +70,7 @@ data class InteractionPrefs(
     val clipboardEnabledDefault: Boolean = true,
     val themeMode: AppThemeMode = AppThemeMode.System,
     val hostAllowRemoteAssist: Boolean = false,
+    val hostAllowAssistFileTransfer: Boolean = true,
 )
 
 class InteractionPrefsStore(context: Context) {
@@ -101,6 +102,7 @@ class InteractionPrefsStore(context: Context) {
             clipboardEnabledDefault = prefs.getBoolean("clipboard_default", true),
             themeMode = themeMode,
             hostAllowRemoteAssist = prefs.getBoolean("host_allow_remote_assist", false),
+            hostAllowAssistFileTransfer = prefs.getBoolean("host_allow_assist_file_transfer", true),
         )
     }
 
@@ -120,6 +122,7 @@ class InteractionPrefsStore(context: Context) {
             .putBoolean("clipboard_default", next.clipboardEnabledDefault)
             .putInt("theme_mode", next.themeMode.ordinal)
             .putBoolean("host_allow_remote_assist", next.hostAllowRemoteAssist)
+            .putBoolean("host_allow_assist_file_transfer", next.hostAllowAssistFileTransfer)
             .apply()
     }
 }

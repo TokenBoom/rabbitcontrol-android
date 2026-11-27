@@ -10,7 +10,9 @@ import android.provider.OpenableColumns
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.rabbitcontrol.android.error.RcErrorCodes
 import io.rabbitcontrol.android.R
+import io.rabbitcontrol.android.core.error.RcUiErrorCodec
 import io.rabbitcontrol.android.core.i18n.AppStrings
 import io.rabbitcontrol.android.core.i18n.NativeErrorLocalizer
 import io.rabbitcontrol.android.core.nativebridge.FileTransferItem
@@ -20,6 +22,7 @@ import io.rabbitcontrol.android.core.session.ActiveSessionState
 import io.rabbitcontrol.android.core.session.FileToolEvent
 import io.rabbitcontrol.android.core.session.SessionManager
 import io.rabbitcontrol.android.core.session.SessionStatus
+import io.rabbitcontrol.android.ui.components.RcErrorHub
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -91,6 +94,15 @@ class FileTransferViewModel(
         }
     }
 
+    private fun reportToolFailure(err: Throwable) {
+        val uiErr = RcUiErrorCodec.fromThrowable(err, fallbackCode = RcErrorCodes.TOOL_FILE_TRANSFER_FAILED)
+        if (uiErr.code == RcErrorCodes.TOOL_FORBIDDEN) {
+            RcErrorHub.present(uiErr)
+        } else {
+            _notice.value = Notice(uiErr.message.ifBlank { uiErr.title }, isError = true)
+        }
+    }
+
     fun listRemoteDir(path: String?) {
         _loading.value = true
         viewModelScope.launch {
@@ -98,7 +110,7 @@ class FileTransferViewModel(
             if (!path.isNullOrBlank()) req.put("path", path)
             sessionManager.callTool(req).onFailure {
                 _loading.value = false
-                it.message?.let { m -> _notice.value = Notice(NativeErrorLocalizer.localize(m), isError = true) }
+                reportToolFailure(it)
             }
         }
     }
@@ -124,9 +136,7 @@ class FileTransferViewModel(
                     .put("action", "file_mkdir_remote")
                     .put("parent", _currentPath.value)
                     .put("name", clean),
-            ).onFailure {
-                it.message?.let { m -> _notice.value = Notice(NativeErrorLocalizer.localize(m), isError = true) }
-            }
+            ).onFailure(::reportToolFailure)
         }
     }
 
@@ -145,9 +155,7 @@ class FileTransferViewModel(
                     isSuccess = true,
                 )
                 refreshTransfers()
-            }.onFailure {
-                it.message?.let { m -> _notice.value = Notice(NativeErrorLocalizer.localize(m), isError = true) }
-            }
+            }.onFailure(::reportToolFailure)
         }
     }
 
@@ -171,9 +179,7 @@ class FileTransferViewModel(
                             .put("localPath", staged.absolutePath)
                             .put("remoteDir", remoteDir),
                     ).onSuccess { count++ }
-                        .onFailure {
-                            it.message?.let { m -> _notice.value = Notice(NativeErrorLocalizer.localize(m), isError = true) }
-                        }
+                        .onFailure(::reportToolFailure)
                 }
             }
             if (count > 0) {

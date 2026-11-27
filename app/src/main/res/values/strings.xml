@@ -797,4 +797,49 @@
     <string name="preview_err_missing_sps">Sample clip is missing H.264 parameter sets</string>
     <string name="preview_player_stats">%1$s\n1280 × 720 · %2$d fps rendered</string>
     <string name="preview_player_failed">Video check failed · %1$s</string>
+
+    <!-- Structured Errors, Proxy, Wake-on-LAN & Tool Permissions -->
+    <string name="err_action_relogin">Sign In Again</string>
+    <string name="err_action_change_password">Change Password</string>
+    <string name="err_action_open_settings">Open Settings</string>
+    <string name="err_action_open_permissions">Grant Permissions</string>
+    <string name="err_action_contact_admin">Contact Admin</string>
+    <string name="err_contact_admin_code">Please contact your administrator with error code: %1$s</string>
+    <string name="err_show_detail">Technical Details</string>
+    <string name="err_hide_detail">Hide Details</string>
+
+    <string name="session_reconnecting_generic">Connection interrupted, reconnecting…</string>
+
+    <string name="home_menu_proxy">Outbound Proxy</string>
+    <string name="home_wol_ready">WoL Ready</string>
+
+    <string name="host_allow_assist_file_transfer">Allow Assist File Transfer</string>
+    <string name="host_allow_assist_file_transfer_sub">Permit helpers to send or receive files during remote assistance</string>
+
+    <string name="proxy_settings_title">Outbound Proxy</string>
+    <string name="proxy_mode_label">Proxy Mode</string>
+    <string name="proxy_mode_desc">Applied to control signaling and remote session traffic</string>
+    <string name="proxy_mode_none">Direct (No Proxy)</string>
+    <string name="proxy_mode_system">Follow System</string>
+    <string name="proxy_mode_none_short">Direct</string>
+    <string name="proxy_mode_system_short">System</string>
+    <string name="proxy_mode_manual_short">Manual</string>
+    <string name="proxy_protocol_label">Protocol</string>
+    <string name="proxy_host_label">Proxy Host</string>
+    <string name="proxy_host_hint">127.0.0.1 or proxy.example.com</string>
+    <string name="proxy_port_label">Port (1–65535)</string>
+    <string name="proxy_username_label">Username (Optional)</string>
+    <string name="proxy_password_label">Password (Optional)</string>
+    <string name="proxy_optional_hint">Leave blank if not required</string>
+    <string name="proxy_saved">Proxy settings saved and applied</string>
+    <string name="proxy_err_host_required">Please enter a valid proxy host</string>
+    <string name="proxy_err_port_range">Proxy port must be between 1 and 65535</string>
+
+    <string name="wol_button">Wake Device</string>
+    <string name="wol_sending">Sending Wake-on-LAN…</string>
+    <string name="wol_sent_success">Wake-on-LAN packet sent</string>
+
+    <string name="tool_permission_disabled_ft">Remote device has disabled file transfer for this session</string>
+    <string name="tool_permission_disabled_term">Remote device has disabled remote terminal for this session</string>
+    <string name="tool_permission_disabled_pm">Remote device has disabled port mapping for this session</string>
 </resources>

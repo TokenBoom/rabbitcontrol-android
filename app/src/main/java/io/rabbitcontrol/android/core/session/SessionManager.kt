@@ -5,10 +5,14 @@ import android.net.wifi.WifiManager
 import android.util.Log
 import android.view.Surface
 import androidx.compose.runtime.Immutable
+import com.rabbitcontrol.android.error.RcErrorCodes
+import com.rabbitcontrol.android.error.RcUiError
 import io.rabbitcontrol.android.R
 import io.rabbitcontrol.android.core.data.InteractionPrefsStore
 import io.rabbitcontrol.android.core.data.TargetHistoryStore
 import io.rabbitcontrol.android.core.data.WallpaperCache
+import io.rabbitcontrol.android.core.error.RcUiErrorCodec
+import io.rabbitcontrol.android.core.error.RcUiErrorException
 import io.rabbitcontrol.android.core.i18n.AppStrings
 import io.rabbitcontrol.android.core.i18n.NativeErrorLocalizer
 import io.rabbitcontrol.android.core.nativebridge.DisplayConfigModel
@@ -21,10 +25,12 @@ import io.rabbitcontrol.android.core.nativebridge.NegotiatedStreamInfo
 import io.rabbitcontrol.android.core.nativebridge.PortMapRule
 import io.rabbitcontrol.android.core.nativebridge.RemoteFileEntry
 import io.rabbitcontrol.android.core.nativebridge.TerminalSessionSummary
+import io.rabbitcontrol.android.core.nativebridge.ToolPermissionsModel
 import io.rabbitcontrol.android.core.nativebridge.toFileEntries
 import io.rabbitcontrol.android.core.nativebridge.toFileTransferItem
 import io.rabbitcontrol.android.core.nativebridge.toPortMapRule
 import io.rabbitcontrol.android.session.Core
+import io.rabbitcontrol.android.ui.components.RcErrorHub
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -46,8 +52,13 @@ sealed interface SessionStatus {
     data class Connecting(val phase: String, val label: String) : SessionStatus
     data object Streaming : SessionStatus
     data class Switching(val reason: String) : SessionStatus
-    data class Error(val message: String) : SessionStatus
-    data class Ended(val reason: String) : SessionStatus
+    data class Reconnecting(val attempt: Int, val maxAttempts: Int, val reason: String) : SessionStatus
+    data class Error(val message: String, val uiError: RcUiError? = null) : SessionStatus
+    data class Ended(
+        val reason: String,
+        val recoverable: Boolean = false,
+        val uiError: RcUiError? = null,
+    ) : SessionStatus
 }
 
 @Immutable
@@ -63,6 +74,8 @@ data class ActiveSessionState(
     val targetBitrateBps: Int? = null,
     val displayConfig: DisplayConfigModel? = null,
     val firstFrameSeen: Boolean = false,
+    val toolPermissions: ToolPermissionsModel = ToolPermissionsModel(),
+    val mediaPaused: Boolean = false,
 )
 
 sealed interface FileToolEvent {
@@ -219,10 +232,13 @@ class SessionManager(
         }.onFailure { err ->
             Log.w("RC_DIAG", "openSession failed: ${err.message}", err)
             releaseMulticastLock()
-            val errMsg = err.message?.let { NativeErrorLocalizer.localize(it) }
-                ?: AppStrings.get(R.string.session_err_connect_failed, "连接建立失败")
+            val uiErr = RcUiErrorCodec.fromThrowable(
+                err,
+                fallbackCode = RcErrorCodes.SESSION_DISCONNECTED,
+                fallbackMessage = AppStrings.get(R.string.session_err_connect_failed, "连接建立失败"),
+            )
             _state.value = _state.value.copy(
-                status = SessionStatus.Error(errMsg),
+                status = SessionStatus.Error(uiErr.message.ifBlank { uiErr.title }, uiErr),
             )
             SessionForegroundService.stop(context)
         }
@@ -317,6 +333,21 @@ class SessionManager(
         Core.sendSessionCommand(JSONObject().put("type", "request_idr").toString())
     }
 
+    fun setMediaPaused(paused: Boolean) {
+        Core.sendSessionCommand(JSONObject().put("type", "set_media_paused").put("paused", paused).toString())
+        _state.value = _state.value.copy(mediaPaused = paused)
+    }
+
+    fun probeNow() {
+        Core.sendSessionCommand(JSONObject().put("type", "probe_now").toString())
+    }
+
+    fun setStillRefinementEnabled(enabled: Boolean) {
+        Core.sendSessionCommand(
+            JSONObject().put("type", "set_still_refinement_enabled").put("enabled", enabled).toString(),
+        )
+    }
+
     fun disconnect(lockRemote: Boolean = false) {
         pollJob?.cancel()
         pollJob = null
@@ -337,6 +368,8 @@ class SessionManager(
             targetBitrateBps = null,
             displayConfig = null,
             firstFrameSeen = false,
+            toolPermissions = ToolPermissionsModel(),
+            mediaPaused = false,
         )
     }
 
@@ -526,19 +559,65 @@ class SessionManager(
                     }
                 }
             }
-            "ended" -> if (data != null) {
-                if (_state.value.status is SessionStatus.Switching) return
+            "reconnecting" -> if (data != null) {
+                val attempt = data.optInt("attempt", 1)
+                val maxAttempts = data.optInt("max_attempts", 3)
                 val rawReason = data.optString("reason")
                 val reason = if (rawReason.isBlank()) {
-                    AppStrings.get(R.string.session_ended_default, "会话已结束")
+                    AppStrings.get(R.string.session_reconnecting_generic, "网络波动，正在尝试第 $attempt/$maxAttempts 次重连…", attempt, maxAttempts)
                 } else {
                     NativeErrorLocalizer.localize(rawReason)
                 }
-                Log.i("RC_DIAG", "sessionUpdate ended reason=$reason")
+                _state.value = _state.value.copy(
+                    status = SessionStatus.Reconnecting(attempt, maxAttempts, reason),
+                )
+            }
+            "media_state" -> if (data != null) {
+                _state.value = _state.value.copy(mediaPaused = data.optBoolean("paused", false))
+            }
+            "media_resumed" -> if (data != null) {
+                val cur = _state.value
+                val nextNeg = cur.negotiated?.copy(
+                    backend = data.optString("backend").ifBlank { cur.negotiated.backend },
+                    width = data.optInt("width").takeIf { it > 0 } ?: cur.negotiated.width,
+                    height = data.optInt("height").takeIf { it > 0 } ?: cur.negotiated.height,
+                    fps = data.optInt("fps").takeIf { it > 0 } ?: cur.negotiated.fps,
+                )
+                _state.value = cur.copy(
+                    mediaPaused = false,
+                    negotiated = nextNeg,
+                )
+            }
+            "tool_permissions_updated" -> if (data != null) {
+                _state.value = _state.value.copy(
+                    toolPermissions = ToolPermissionsModel(
+                        allowFileTransfer = data.optBoolean("allow_file_transfer", true),
+                        allowTerminal = data.optBoolean("allow_terminal", true),
+                        allowPortMap = data.optBoolean("allow_port_map", true),
+                    ),
+                )
+            }
+            "tool_permission_denied" -> if (data != null) {
+                val uiErr = RcUiErrorCodec.fromJsonObject(data.optJSONObject("ui_error"))
+                    ?: RcUiErrorCodec.resolvePlatformError(RcErrorCodes.TOOL_FORBIDDEN)
+                RcErrorHub.present(uiErr)
+            }
+            "ended" -> if (data != null) {
+                if (_state.value.status is SessionStatus.Switching) return
+                val uiErr = RcUiErrorCodec.fromJsonObject(data.optJSONObject("ui_error"))
+                val recoverable = data.optBoolean("recoverable", false)
+                val rawReason = data.optString("reason")
+                val reason = uiErr?.message?.takeIf { it.isNotBlank() }
+                    ?: if (rawReason.isBlank()) {
+                        AppStrings.get(R.string.session_ended_default, "会话已结束")
+                    } else {
+                        NativeErrorLocalizer.localize(rawReason)
+                    }
+                Log.i("RC_DIAG", "sessionUpdate ended reason=$reason recoverable=$recoverable code=${uiErr?.code}")
                 clipboardBridge.stop()
                 releaseMulticastLock()
                 SessionForegroundService.stop(context)
-                _state.value = _state.value.copy(status = SessionStatus.Ended(reason))
+                _state.value = _state.value.copy(status = SessionStatus.Ended(reason, recoverable, uiErr))
                 pollJob?.cancel()
             }
         }
@@ -546,6 +625,9 @@ class SessionManager(
 
     suspend fun callTool(request: JSONObject): Result<JSONObject> = withContext(Dispatchers.IO) {
         runCatching { JSONObject(Core.toolCall(request.toString())) }
+            .recoverCatching { err ->
+                throw RcUiErrorException(RcUiErrorCodec.fromThrowable(err), err)
+            }
     }
 
     fun updatePortMapRules(rules: List<PortMapRule>) {

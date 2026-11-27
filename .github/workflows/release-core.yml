@@ -17,11 +17,11 @@ on:
       abi_version:
         description: "Android JNI/JSON ABI version"
         required: false
-        default: "1"
+        default: "2"
       min_app_version:
         description: "Minimum compatible Android app version"
         required: false
-        default: "0.2.0"
+        default: "0.2.2"
       release_notes:
         description: "Release notes for this core update"
         required: false
@@ -51,29 +51,32 @@ jobs:
             MIN_APP="${{ inputs.min_app_version }}"
             NOTES="${{ inputs.release_notes }}"
           elif [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
-            CORE_REF="${{ github.event.client_payload.core_ref }}"
-            CORE_VER="${{ github.event.client_payload.core_version }}"
-            ABI_VER="${{ github.event.client_payload.abi_version }}"
-            MIN_APP="${{ github.event.client_payload.min_app_version }}"
+            CORE_REF="${{ github.event.client_payload.tag || github.event.client_payload.core_ref }}"
+            CORE_VER="${{ github.event.client_payload.version || github.event.client_payload.core_version }}"
+            ABI_VER="${{ github.event.client_payload.abi_version || '2' }}"
+            MIN_APP="${{ github.event.client_payload.min_app_version || '0.2.2' }}"
             NOTES="${{ github.event.client_payload.release_notes }}"
           else
             TAG_VER="${GITHUB_REF_NAME#core-v}"
             CORE_REF="v${TAG_VER%%-*}"
             CORE_VER="$TAG_VER"
-            ABI_VER="1"
-            MIN_APP="0.2.0"
+            ABI_VER="2"
+            MIN_APP="0.2.2"
             NOTES=""
           fi
 
           CORE_REF="${CORE_REF:-main}"
-          ABI_VER="${ABI_VER:-1}"
-          MIN_APP="${MIN_APP:-0.2.0}"
+          ABI_VER="${ABI_VER:-2}"
+          MIN_APP="${MIN_APP:-0.2.2}"
+          CORE_REPO="${{ github.event.client_payload.core_repo }}"
+          CORE_REPO="${CORE_REPO:-TokenBoom/rabbitcontrol-core}"
 
           {
             echo "core_ref=$CORE_REF"
             echo "core_version=$CORE_VER"
             echo "abi_version=$ABI_VER"
             echo "min_app_version=$MIN_APP"
+            echo "core_repo=$CORE_REPO"
           } >> "$GITHUB_OUTPUT"
 
           printf '%s' "$NOTES" > "${{ runner.temp }}/manual_release_notes.txt"
@@ -81,7 +84,7 @@ jobs:
       - name: Checkout rabbitcontrol-core
         uses: actions/checkout@v4
         with:
-          repository: TokenBoom/rabbitcontrol-core
+          repository: ${{ steps.meta.outputs.core_repo }}
           fetch-depth: 0
           path: rabbitcontrol-core
 
@@ -185,9 +188,10 @@ jobs:
           RC_CORE_GIT_SHA: ${{ steps.core_git.outputs.core_git_sha }}
           RC_CORE_ABI_VERSION: ${{ steps.meta.outputs.abi_version }}
         run: |
+          export SOURCE_DATE_EPOCH="$(date -u +%s)"
           export RC_CORE_BUILT_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
           mkdir -p build-jni
-          cargo ndk --manifest-path native/Cargo.toml -t arm64-v8a --platform 29 -o build-jni build --locked --release
+          (cd native && cargo ndk -t arm64-v8a --platform 29 -o ../build-jni build --locked --release)
 
       - name: Verify 16 KB ELF alignment
         run: |
@@ -260,3 +264,17 @@ jobs:
             core-release-assets/core-manifest.json
             core-release-assets/core-manifest.json.sig
             core-release-assets/SHA256SUMS.txt
+
+      - name: Upload Android artifacts to upstream core release (optional)
+        if: github.event_name == 'repository_dispatch' && env.CROSS_REPO_RELEASE_TOKEN != ''
+        env:
+          GH_TOKEN: ${{ secrets.CROSS_REPO_RELEASE_TOKEN }}
+          CROSS_REPO_RELEASE_TOKEN: ${{ secrets.CROSS_REPO_RELEASE_TOKEN }}
+          CORE_REPO: ${{ steps.meta.outputs.core_repo }}
+          CORE_TAG: ${{ steps.meta.outputs.core_ref }}
+        run: |
+          gh release upload "$CORE_TAG" --repo "$CORE_REPO" --clobber \
+            core-release-assets/librabbitcontrol_android-arm64-v8a.so \
+            core-release-assets/core-manifest.json \
+            core-release-assets/core-manifest.json.sig \
+            core-release-assets/SHA256SUMS.txt || echo "::warning::Skipped upstream core release upload"

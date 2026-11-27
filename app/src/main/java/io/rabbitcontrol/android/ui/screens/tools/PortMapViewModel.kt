@@ -2,10 +2,14 @@ package io.rabbitcontrol.android.ui.screens.tools
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.rabbitcontrol.android.error.RcErrorCodes
+import io.rabbitcontrol.android.core.error.RcUiErrorCodec
 import io.rabbitcontrol.android.core.nativebridge.PortMapRule
 import io.rabbitcontrol.android.core.nativebridge.toPortMapRule
+import io.rabbitcontrol.android.core.session.ActiveSessionState
 import io.rabbitcontrol.android.core.session.SessionManager
 import io.rabbitcontrol.android.core.session.SessionStatus
+import io.rabbitcontrol.android.ui.components.RcErrorHub
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -16,6 +20,7 @@ class PortMapViewModel(
     private val sessionManager: SessionManager,
 ) : ViewModel() {
 
+    val sessionState: StateFlow<ActiveSessionState> = sessionManager.state
     val rules: StateFlow<List<PortMapRule>> = sessionManager.portMapRules
 
     private val _error = MutableStateFlow<String?>(null)
@@ -42,11 +47,20 @@ class PortMapViewModel(
         }
     }
 
+    private fun handleToolFailure(err: Throwable) {
+        val uiErr = RcUiErrorCodec.fromThrowable(err, fallbackCode = RcErrorCodes.TOOL_PORTMAP_BIND_FAILED)
+        if (uiErr.code == RcErrorCodes.TOOL_FORBIDDEN) {
+            RcErrorHub.present(uiErr)
+        } else {
+            _error.value = uiErr.message.ifBlank { uiErr.title }
+        }
+    }
+
     fun refresh() {
         viewModelScope.launch {
             sessionManager.callTool(JSONObject().put("action", "portmap_list"))
                 .onSuccess { applyRulesFromResponse(it) }
-                .onFailure { _error.value = it.message }
+                .onFailure(::handleToolFailure)
         }
     }
 
@@ -60,7 +74,7 @@ class PortMapViewModel(
                     .put("targetAddr", targetAddr.ifBlank { "127.0.0.1" })
                     .put("targetPort", targetPort),
             ).onSuccess { applyRulesFromResponse(it) }
-                .onFailure { _error.value = it.message }
+                .onFailure(::handleToolFailure)
         }
     }
 
@@ -69,7 +83,7 @@ class PortMapViewModel(
             sessionManager.callTool(
                 JSONObject().put("action", "portmap_toggle").put("id", id).put("enabled", enabled),
             ).onSuccess { applyRulesFromResponse(it) }
-                .onFailure { _error.value = it.message }
+                .onFailure(::handleToolFailure)
         }
     }
 
@@ -77,7 +91,7 @@ class PortMapViewModel(
         viewModelScope.launch {
             sessionManager.callTool(JSONObject().put("action", "portmap_delete").put("id", id))
                 .onSuccess { applyRulesFromResponse(it) }
-                .onFailure { _error.value = it.message }
+                .onFailure(::handleToolFailure)
         }
     }
 

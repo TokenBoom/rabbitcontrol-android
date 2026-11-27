@@ -4,7 +4,9 @@ import android.util.Base64
 import androidx.compose.ui.text.AnnotatedString
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.rabbitcontrol.android.error.RcErrorCodes
 import io.rabbitcontrol.android.R
+import io.rabbitcontrol.android.core.error.RcUiErrorCodec
 import io.rabbitcontrol.android.core.i18n.AppStrings
 import io.rabbitcontrol.android.core.i18n.NativeErrorLocalizer
 import io.rabbitcontrol.android.core.nativebridge.TerminalSessionSummary
@@ -12,6 +14,7 @@ import io.rabbitcontrol.android.core.session.ActiveSessionState
 import io.rabbitcontrol.android.core.session.SessionManager
 import io.rabbitcontrol.android.core.session.SessionStatus
 import io.rabbitcontrol.android.core.session.TerminalToolEvent
+import io.rabbitcontrol.android.ui.components.RcErrorHub
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -78,10 +81,19 @@ class TerminalViewModel(
         }
     }
 
+    private fun handleToolFailure(err: Throwable) {
+        val uiErr = RcUiErrorCodec.fromThrowable(err, fallbackCode = RcErrorCodes.TOOL_TERMINAL_FAILED)
+        if (uiErr.code == RcErrorCodes.TOOL_FORBIDDEN) {
+            RcErrorHub.present(uiErr)
+        } else {
+            _error.value = uiErr.message.ifBlank { uiErr.title }
+        }
+    }
+
     fun refreshSessions() {
         viewModelScope.launch {
             sessionManager.callTool(JSONObject().put("action", "terminal_list"))
-                .onFailure { _error.value = it.message }
+                .onFailure(::handleToolFailure)
         }
     }
 
@@ -93,7 +105,7 @@ class TerminalViewModel(
                     .put("cols", cols)
                     .put("rows", rows)
                     .put("attach", true),
-            ).onFailure { _error.value = it.message }
+            ).onFailure(::handleToolFailure)
         }
     }
 

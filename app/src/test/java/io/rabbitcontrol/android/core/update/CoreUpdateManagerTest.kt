@@ -107,4 +107,58 @@ class CoreUpdateManagerTest {
             ),
         )
     }
+
+    @Test
+    fun selectCoreUpdateFromManifests_picksAbiV2CandidateOverCurrent() {
+        val releases = listOf(
+            entry("0.3.0", abiVersion = 3),
+            entry("0.2.3", abiVersion = 2),
+            entry("0.2.2", abiVersion = 2),
+        )
+
+        val selection = selectCoreUpdateFromManifests(
+            releases = releases,
+            effectiveCurrentVersion = "0.2.2",
+            supportedAbiVersion = 2,
+            supportedAbis = listOf("arm64-v8a"),
+            blacklistedVersions = emptySet(),
+        )
+
+        assertEquals("0.2.3", selection.bestCompatible?.manifest?.coreVersion)
+        assertEquals(3, selection.incompatibleNotice?.requiredAbiVersion)
+    }
+
+    @Test
+    fun coreReleaseManifest_parsesCoreV022ReleaseManifestSchema() {
+        val json = """
+            {
+              "schemaVersion": "1.0.0",
+              "coreVersion": "0.2.2",
+              "tag": "v0.2.2",
+              "gitCommit": "bb41388abc1234",
+              "abiVersion": 2,
+              "specVersion": "1.0.0",
+              "minClientVersions": {
+                "android": "0.2.2",
+                "apple": "0.2.2"
+              },
+              "protocolVersions": {
+                "session": 1,
+                "punch": 1,
+                "beacon": 1
+              }
+            }
+        """.trimIndent()
+
+        val parsed = CoreReleaseManifest.parse(json)
+        assertEquals("0.2.2", parsed.coreVersion)
+        assertEquals("v0.2.2", parsed.tag)
+        assertEquals("bb41388abc1234", parsed.gitCommit)
+        assertEquals(2, parsed.abiVersion)
+        assertEquals("1.0.0", parsed.specVersion)
+        assertEquals("0.2.2", parsed.minClientAndroidVersion)
+        assertEquals(1, parsed.protocolSession)
+        assertEquals(1, parsed.protocolPunch)
+        assertEquals(1, parsed.protocolBeacon)
+    }
 }

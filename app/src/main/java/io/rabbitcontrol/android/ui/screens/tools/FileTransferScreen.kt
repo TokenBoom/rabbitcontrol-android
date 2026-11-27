@@ -193,9 +193,24 @@ fun FileTransferScreen(
                             .padding(horizontal = 12.dp, vertical = 6.dp),
                     )
                 }
-                is SessionStatus.Error -> {
+                is SessionStatus.Reconnecting -> {
                     Text(
-                        text = stringResource(R.string.ft_session_error, NativeErrorLocalizer.localize(st.message)),
+                        text = st.reason.ifBlank { stringResource(R.string.session_reconnecting_generic) },
+                        fontSize = 12.sp,
+                        color = palette.warning,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = RabbitSpacing.Lg, vertical = 4.dp)
+                            .clip(RoundedCornerShape(RabbitRadius.Sm))
+                            .background(palette.warningSoft)
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                    )
+                }
+                is SessionStatus.Error -> {
+                    val errText = st.uiError?.let { it.message.ifBlank { it.title } }
+                        ?: NativeErrorLocalizer.localize(st.message)
+                    Text(
+                        text = stringResource(R.string.ft_session_error, errText),
                         fontSize = 12.sp,
                         color = palette.danger,
                         modifier = Modifier
@@ -207,8 +222,10 @@ fun FileTransferScreen(
                     )
                 }
                 is SessionStatus.Ended -> {
+                    val reasonText = st.uiError?.let { it.message.ifBlank { it.title } }
+                        ?: NativeErrorLocalizer.localize(st.reason)
                     Text(
-                        text = stringResource(R.string.ft_session_disconnected, NativeErrorLocalizer.localize(st.reason)),
+                        text = stringResource(R.string.ft_session_disconnected, reasonText),
                         fontSize = 12.sp,
                         color = palette.danger,
                         modifier = Modifier
@@ -220,6 +237,20 @@ fun FileTransferScreen(
                     )
                 }
                 else -> Unit
+            }
+
+            if (!sessionState.toolPermissions.allowFileTransfer) {
+                Text(
+                    text = stringResource(R.string.tool_permission_disabled_ft),
+                    fontSize = 12.sp,
+                    color = palette.warning,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = RabbitSpacing.Lg, vertical = 4.dp)
+                        .clip(RoundedCornerShape(RabbitRadius.Sm))
+                        .background(palette.warningSoft)
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                )
             }
 
             if (selectedTab == FileTransferTab.Remote) {

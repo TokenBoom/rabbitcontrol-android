@@ -18,6 +18,10 @@ data class LoadedCoreInfo(
     val version: String = BuildConfig.BUNDLED_CORE_VERSION,
     val abiVersion: Int = BuildConfig.CORE_ABI_VERSION,
     val coreGitSha: String = BuildConfig.BUNDLED_CORE_GIT_SHA,
+    val buildTimestamp: String = "",
+    val sessionProtocolVersion: Int = 1,
+    val punchVersion: Int = 1,
+    val beaconVersion: Int = 1,
     val isDynamic: Boolean = false,
     val builtInVersion: String = BuildConfig.BUNDLED_CORE_VERSION,
     val lastFallbackReason: String? = null,
@@ -185,7 +189,13 @@ internal object NativeLibraryLoader {
         }
         val nativeVer = parsed?.optString("coreVersion", "")?.trim()?.takeIf { it.isNotBlank() }
         val nativeAbi = parsed?.optInt("abiVersion", -1) ?: -1
-        val nativeSha = parsed?.optString("coreGitSha", "")?.trim()?.takeIf { it.isNotBlank() }
+        val nativeSha = parsed?.optString("gitCommit", "")?.trim()?.takeIf { it.isNotBlank() }
+            ?: parsed?.optString("coreGitSha", "")?.trim()?.takeIf { it.isNotBlank() }
+        val nativeBuiltAt = parsed?.optString("buildTimestamp", "")?.trim()?.takeIf { it.isNotBlank() && it != "unknown" }
+            ?: parsed?.optString("builtAt", "")?.trim()?.takeIf { it.isNotBlank() }.orEmpty()
+        val sessionProto = parsed?.optInt("sessionProtocolVersion", 1)?.takeIf { it > 0 } ?: 1
+        val punchProto = parsed?.optInt("punchVersion", 1)?.takeIf { it > 0 } ?: 1
+        val beaconProto = parsed?.optInt("beaconVersion", 1)?.takeIf { it > 0 } ?: 1
 
         val dynamic = loadedDynamicEntry
         val s = store
@@ -219,6 +229,10 @@ internal object NativeLibraryLoader {
             version = currentVer,
             abiVersion = if (nativeAbi > 0) nativeAbi else BuildConfig.CORE_ABI_VERSION,
             coreGitSha = dynamic?.coreGitSha ?: nativeSha ?: BuildConfig.BUNDLED_CORE_GIT_SHA,
+            buildTimestamp = nativeBuiltAt,
+            sessionProtocolVersion = sessionProto,
+            punchVersion = punchProto,
+            beaconVersion = beaconProto,
             isDynamic = dynamic != null,
             builtInVersion = BuildConfig.BUNDLED_CORE_VERSION,
             lastFallbackReason = runtimeState?.lastFallbackReason,

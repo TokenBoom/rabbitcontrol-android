@@ -52,6 +52,8 @@ import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PhoneAndroid
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.PowerSettingsNew
+import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.ScreenShare
 import androidx.compose.material.icons.rounded.Sensors
 import androidx.compose.material.icons.rounded.SettingsRemote
@@ -108,6 +110,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.rabbitcontrol.android.error.RcErrorAction
+import com.rabbitcontrol.android.error.RcUiError
 import io.rabbitcontrol.android.R
 import io.rabbitcontrol.android.core.data.AppThemeMode
 import io.rabbitcontrol.android.core.data.rememberWallpaperImage
@@ -127,6 +131,7 @@ import io.rabbitcontrol.android.ui.components.RabbitDialog
 import io.rabbitcontrol.android.ui.components.RabbitEmptyState
 import io.rabbitcontrol.android.ui.components.RabbitPrimaryButton
 import io.rabbitcontrol.android.ui.components.RabbitSecondaryButton
+import io.rabbitcontrol.android.ui.components.RcInlineError
 import io.rabbitcontrol.android.ui.components.RabbitSectionHeader
 import io.rabbitcontrol.android.ui.components.RabbitSegmentedControl
 import io.rabbitcontrol.android.ui.components.RabbitStatusPill
@@ -524,77 +529,28 @@ private fun DevicesTab(
                 }
             } else {
                 item {
-                    var lastErrorText by remember { mutableStateOf("") }
-                    if (!error.isNullOrBlank()) {
-                        lastErrorText = error.orEmpty()
+                    var lastUiError by remember { mutableStateOf<RcUiError?>(null) }
+                    if (error != null) {
+                        lastUiError = error
                     }
                     AnimatedVisibility(
-                        visible = !error.isNullOrBlank(),
+                        visible = error != null,
                         enter = fadeIn() + expandVertically(),
                         exit = fadeOut() + shrinkVertically(),
                     ) {
-                        val currentConfig = LocalConfiguration.current
-                        val (errTitle, errSub) = remember(lastErrorText, currentConfig) {
-                            formatConnectionError(lastErrorText)
-                        }
-                        RabbitCard(
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Row(
+                        lastUiError?.let { uiErr ->
+                            RcInlineError(
+                                error = uiErr,
                                 modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(32.dp)
-                                        .clip(RoundedCornerShape(9.dp))
-                                        .background(palette.dangerSoft),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.WifiOff,
-                                        contentDescription = null,
-                                        tint = palette.danger,
-                                        modifier = Modifier.size(17.dp),
-                                    )
-                                }
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = errTitle,
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = palette.text,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                    Text(
-                                        text = errSub,
-                                        fontSize = 11.sp,
-                                        color = palette.muted,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                }
-                                Box(
-                                    modifier = Modifier
-                                        .height(30.dp)
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(palette.field)
-                                        .border(1.dp, palette.line, RoundedCornerShape(8.dp))
-                                        .clickable(enabled = !refreshing, onClick = viewModel::refreshDevices)
-                                        .padding(horizontal = 10.dp),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    Text(
-                                        text = stringResource(R.string.common_retry),
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        color = palette.text,
-                                    )
-                                }
-                            }
+                                onAction = { action ->
+                                    when (action) {
+                                        RcErrorAction.RELOGIN -> onOpenAuth(AuthStep.Login, false)
+                                        RcErrorAction.CHANGE_PASSWORD -> onOpenAuth(AuthStep.Password, false)
+                                        RcErrorAction.OPEN_SETTINGS -> onOpenAuth(AuthStep.Server, true)
+                                        else -> if (!refreshing) viewModel.refreshDevices()
+                                    }
+                                },
+                            )
                         }
                     }
                 }
@@ -724,24 +680,6 @@ private fun DeviceFilterChip(
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
             color = if (selected) palette.text else palette.muted,
         )
-    }
-}
-
-private fun formatConnectionError(raw: String): Pair<String, String> {
-    val lower = raw.lowercase()
-    return if (
-        lower.contains("tls") ||
-        lower.contains("https") ||
-        lower.contains("unexpected end of file") ||
-        lower.contains("reset") ||
-        lower.contains("timed out") ||
-        lower.contains("timeout") ||
-        lower.contains("connect")
-    ) {
-        AppStrings.get(R.string.home_err_cannot_connect, "无法连接服务器") to
-            AppStrings.get(R.string.home_err_network_hint, "网络波动或代理异常，连接恢复后将自动消失")
-    } else {
-        AppStrings.get(R.string.home_err_refresh_failed, "刷新设备失败") to raw.trim()
     }
 }
 
@@ -929,14 +867,45 @@ private fun DeviceCard(device: RemoteDevice, thumbnail: ImageBitmap?, onClick: (
                             )
                         }
                     } else {
-                        Text(
-                            text = if (device.disabled) stringResource(R.string.home_status_disabled) else stringResource(R.string.home_btn_offline),
-                            fontSize = 11.sp,
-                            lineHeight = 14.sp,
-                            color = palette.muted.copy(alpha = 0.8f),
-                            maxLines = 1,
-                            style = CompactCenteredTextStyle,
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Text(
+                                text = if (device.disabled) stringResource(R.string.home_status_disabled) else stringResource(R.string.home_btn_offline),
+                                fontSize = 11.sp,
+                                lineHeight = 14.sp,
+                                color = palette.muted.copy(alpha = 0.8f),
+                                maxLines = 1,
+                                style = CompactCenteredTextStyle,
+                            )
+                            if (!device.disabled && device.wolCapable) {
+                                Row(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(palette.primarySoft)
+                                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.PowerSettingsNew,
+                                        contentDescription = null,
+                                        tint = palette.primaryText,
+                                        modifier = Modifier.size(11.dp),
+                                    )
+                                    Text(
+                                        text = stringResource(R.string.home_wol_ready),
+                                        fontSize = 10.sp,
+                                        lineHeight = 12.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = palette.primaryText,
+                                        maxLines = 1,
+                                        style = CompactCenteredTextStyle,
+                                    )
+                                }
+                            }
+                        }
                     }
                     Spacer(modifier = Modifier.weight(1f))
                     Box(
@@ -1207,6 +1176,7 @@ private fun ProfileTab(
     val server by viewModel.server.collectAsStateWithLifecycle()
     val signal by viewModel.signalStatus.collectAsStateWithLifecycle()
     val prefs by viewModel.prefs.collectAsStateWithLifecycle()
+    val proxyConfig by viewModel.proxyConfig.collectAsStateWithLifecycle()
     val hostState by viewModel.hostState.collectAsStateWithLifecycle()
     val languageMode by AppLocaleManager.mode.collectAsStateWithLifecycle()
 
@@ -1325,6 +1295,14 @@ private fun ProfileTab(
                 title = stringResource(R.string.home_menu_host_mode),
                 trailingContent = { RabbitStatusPill(label = hostLabel, tone = hostTone) },
                 onClick = { onOpenProfileRoute("settings/host") },
+            )
+            HorizontalDivider(color = palette.line, thickness = 1.dp)
+
+            ProfileMenuRow(
+                icon = Icons.Rounded.Public,
+                title = stringResource(R.string.home_menu_proxy),
+                trailingText = proxyConfig.summaryLabel(),
+                onClick = { onOpenProfileRoute("settings/proxy") },
             )
             HorizontalDivider(color = palette.line, thickness = 1.dp)
 

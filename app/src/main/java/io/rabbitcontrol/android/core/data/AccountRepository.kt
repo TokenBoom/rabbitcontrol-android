@@ -4,7 +4,10 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import com.rabbitcontrol.android.error.RcErrorCodes
 import io.rabbitcontrol.android.R
+import io.rabbitcontrol.android.core.error.RcUiErrorCodec
+import io.rabbitcontrol.android.core.error.RcUiErrorException
 import io.rabbitcontrol.android.core.i18n.AppStrings
 import io.rabbitcontrol.android.core.nativebridge.NativeRuntimeBootstrap
 import io.rabbitcontrol.android.core.nativebridge.RemoteDevice
@@ -170,12 +173,34 @@ class AccountRepository(context: Context) {
                                             }
                                         }
                                     }
+                                    "device_wol_status" -> {
+                                        val did = ev.optString("device_id")
+                                        val online = ev.optBoolean("online")
+                                        val wolCapable = ev.optBoolean("wol_capable")
+                                        _devices.value = _devices.value.map { d ->
+                                            if (d.id == did) {
+                                                d.copy(online = online, wolCapable = wolCapable)
+                                            } else {
+                                                d
+                                            }
+                                        }
+                                    }
                                     "kicked" -> {
                                         val reason = ev.optString("reason")
                                         if (reason.isNotBlank()) {
                                             _kickedNotice.value = reason
                                         }
                                     }
+                                }
+                            }
+                        }
+                        val wolMap = raw.optJSONObject("wolCapableMap")
+                        if (wolMap != null) {
+                            _devices.value = _devices.value.map { d ->
+                                if (wolMap.has(d.id)) {
+                                    d.copy(wolCapable = wolMap.optBoolean(d.id, d.wolCapable))
+                                } else {
+                                    d
                                 }
                             }
                         }
@@ -598,10 +623,35 @@ class AccountRepository(context: Context) {
                 busy = item.optBoolean("in_session"),
                 disabled = item.optBoolean("disabled"),
                 allowRemoteAssist = item.optBoolean("allow_remote_assist"),
+                wolCapable = item.optBoolean("wol_capable", false),
             )
         }.filter { it.id != selfId }
         _devices.value = list
         list
+    }
+
+    suspend fun requestWol(deviceId: String): Result<String> = withContext(Dispatchers.IO) {
+        NativeRuntimeBootstrap.ensureReady(appContext)
+        runCatching {
+            val resp = JSONObject(Core.requestWol(deviceId))
+            if (resp.optBoolean("ok", false)) {
+                resp.optString("message").takeIf { it.isNotBlank() }
+                    ?: AppStrings.get(R.string.wol_sent_success, "已发送远程开机指令")
+            } else {
+                val uiErr = RcUiErrorCodec.fromJsonObject(resp.optJSONObject("ui_error"))
+                    ?: RcUiErrorCodec.resolvePlatformError(
+                        code = resp.optString("code").ifBlank { RcErrorCodes.WOL_SEND_FAILED },
+                        detail = resp.optString("message").takeIf { it.isNotBlank() },
+                    )
+                throw RcUiErrorException(uiErr)
+            }
+        }.recoverCatching { err ->
+            if (err is RcUiErrorException) throw err
+            throw RcUiErrorException(
+                RcUiErrorCodec.fromThrowable(err, fallbackCode = RcErrorCodes.WOL_SEND_FAILED),
+                err,
+            )
+        }
     }
 
     suspend fun removeDevice(deviceId: String): Unit = withContext(Dispatchers.IO) {

@@ -4,6 +4,9 @@ use jni::objects::{JObject, JString};
 use jni::sys::{jboolean, jbyteArray, jint, jstring};
 use jni::JNIEnv;
 use rc_client_core::input_bridge::normalize_pointer;
+use rc_client_core::proxy::ProxyConfig;
+use rc_client_core::ui_error::{codes, resolve_ui_error, ErrorPlatform, IntoUiError, UiError};
+use rc_client_core::version::core_build_info;
 use rc_input::{encode_events, InputEvent, MouseButton};
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -17,37 +20,38 @@ mod ndk_media;
 mod platform_android;
 mod runtime;
 
-pub const CORE_ABI_VERSION: u32 = 1;
+pub const CORE_ABI_VERSION: u32 = rc_client_core::version::CORE_ABI_VERSION;
 
 pub fn core_info_json() -> Value {
-    let abi_version = option_env!("RC_CORE_ABI_VERSION")
-        .and_then(|raw| raw.trim().parse::<u32>().ok())
-        .filter(|&v| v > 0)
-        .unwrap_or(CORE_ABI_VERSION);
-    let core_version = option_env!("RC_CORE_VERSION")
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .unwrap_or("0.1.0");
-    let core_git_sha = option_env!("RC_CORE_GIT_SHA")
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .unwrap_or("unknown");
-    let built_at = option_env!("RC_CORE_BUILT_AT")
-        .map(str::trim)
-        .unwrap_or("");
+    let info = core_build_info();
     json!({
-        "coreVersion": core_version,
-        "abiVersion": abi_version,
-        "coreGitSha": core_git_sha,
-        "builtAt": built_at,
+        "coreVersion": info.core_version,
+        "gitCommit": info.git_commit,
+        "buildTimestamp": info.build_timestamp,
+        "sessionProtocolVersion": info.session_protocol_version,
+        "punchVersion": info.punch_version,
+        "beaconVersion": info.beacon_version,
+        "abiVersion": info.abi_version,
+        // Backward-compatible aliases
+        "coreGitSha": info.git_commit,
+        "builtAt": info.build_timestamp,
     })
 }
 
-fn throw_illegal_state(env: &mut JNIEnv, msg: &str) {
-    let _ = env.throw_new("java/lang/IllegalStateException", msg);
+pub(crate) fn throw_ui_error(env: &mut JNIEnv, class: &str, err: &UiError) {
+    let payload = serde_json::to_string(err).unwrap_or_else(|_| err.message.clone());
+    let _ = env.throw_new(class, payload);
+}
+
+pub(crate) fn throw_resolved_ui_error(env: &mut JNIEnv, code: &str, detail: Option<String>) {
+    let err = resolve_ui_error(code, ErrorPlatform::Android, &[], None, detail);
+    throw_ui_error(env, "java/lang/IllegalStateException", &err);
 }
 
 fn jstr_to_string(env: &mut JNIEnv, s: &JString) -> Option<String> {
+    if s.is_null() {
+        return None;
+    }
     env.get_string(s).ok().map(Into::into)
 }
 
@@ -65,6 +69,20 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_coreInfo(
 }
 
 #[no_mangle]
+pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_resolveUiError(
+    mut env: JNIEnv,
+    _: JObject,
+    code: JString,
+    detail: JString,
+) -> jstring {
+    let raw_code = jstr_to_string(&mut env, &code).unwrap_or_else(|| codes::COMMON_UNKNOWN.to_string());
+    let raw_detail = jstr_to_string(&mut env, &detail).filter(|s| !s.trim().is_empty());
+    let ui_err = resolve_ui_error(&raw_code, ErrorPlatform::Android, &[], None, raw_detail);
+    let json_str = serde_json::to_string(&ui_err).unwrap_or_else(|_| "{}".to_string());
+    string_to_jstr(&mut env, &json_str)
+}
+
+#[no_mangle]
 pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_initRuntime(
     mut env: JNIEnv,
     _: JObject,
@@ -74,7 +92,11 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_initRuntime(
     codecs_json: JString,
 ) -> jstring {
     let Some(dir) = jstr_to_string(&mut env, &files_dir) else {
-        throw_illegal_state(&mut env, "无效的 filesDir");
+        throw_resolved_ui_error(
+            &mut env,
+            codes::VALIDATION_INVALID_INPUT,
+            Some("无效的 filesDir".to_string()),
+        );
         return ptr::null_mut();
     };
     let name = jstr_to_string(&mut env, &device_name).unwrap_or_else(|| "Android".to_string());
@@ -93,7 +115,7 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_initRuntime(
             .to_string(),
         ),
         Err(err) => {
-            throw_illegal_state(&mut env, &err);
+            throw_ui_error(&mut env, "java/lang/IllegalStateException", &err);
             ptr::null_mut()
         }
     }
@@ -222,24 +244,32 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_openSession(
     request_json: JString,
 ) -> jstring {
     let Some(rt) = runtime::global_runtime() else {
-        throw_illegal_state(&mut env, "运行时尚未初始化");
+        throw_resolved_ui_error(&mut env, codes::SERVICE_RUNTIME_NOT_INITIALIZED, None);
         return ptr::null_mut();
     };
     let Some(raw) = jstr_to_string(&mut env, &request_json) else {
-        throw_illegal_state(&mut env, "无效的会话请求");
+        throw_resolved_ui_error(
+            &mut env,
+            codes::VALIDATION_INVALID_INPUT,
+            Some("无效的会话请求".to_string()),
+        );
         return ptr::null_mut();
     };
     let req: runtime::OpenSessionRequest = match serde_json::from_str(&raw) {
         Ok(r) => r,
         Err(e) => {
-            throw_illegal_state(&mut env, &format!("解析会话请求失败: {e}"));
+            throw_resolved_ui_error(
+                &mut env,
+                codes::VALIDATION_INVALID_JSON,
+                Some(format!("解析会话请求失败: {e}")),
+            );
             return ptr::null_mut();
         }
     };
     match rt.open_session(req) {
         Ok(val) => string_to_jstr(&mut env, &val.to_string()),
         Err(err) => {
-            throw_illegal_state(&mut env, &err);
+            throw_ui_error(&mut env, "java/lang/IllegalStateException", &err);
             ptr::null_mut()
         }
     }
@@ -390,24 +420,32 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_toolCall(
     request_json: JString,
 ) -> jstring {
     let Some(rt) = runtime::global_runtime() else {
-        throw_illegal_state(&mut env, "运行时尚未初始化");
+        throw_resolved_ui_error(&mut env, codes::SERVICE_RUNTIME_NOT_INITIALIZED, None);
         return ptr::null_mut();
     };
     let Some(raw) = jstr_to_string(&mut env, &request_json) else {
-        throw_illegal_state(&mut env, "无效的工具请求");
+        throw_resolved_ui_error(
+            &mut env,
+            codes::VALIDATION_INVALID_INPUT,
+            Some("无效的工具请求".to_string()),
+        );
         return ptr::null_mut();
     };
     let req: Value = match serde_json::from_str(&raw) {
         Ok(v) => v,
         Err(e) => {
-            throw_illegal_state(&mut env, &format!("解析工具请求失败: {e}"));
+            throw_resolved_ui_error(
+                &mut env,
+                codes::VALIDATION_INVALID_JSON,
+                Some(format!("解析工具请求失败: {e}")),
+            );
             return ptr::null_mut();
         }
     };
     match rt.tool_call(&req) {
         Ok(val) => string_to_jstr(&mut env, &val.to_string()),
         Err(err) => {
-            throw_illegal_state(&mut env, &err);
+            throw_ui_error(&mut env, "java/lang/IllegalStateException", &err);
             ptr::null_mut()
         }
     }
@@ -432,7 +470,7 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_startHost(
     config_json: JString,
 ) -> jstring {
     let Some(rt) = runtime::global_runtime() else {
-        throw_illegal_state(&mut env, "运行时尚未初始化");
+        throw_resolved_ui_error(&mut env, codes::SERVICE_RUNTIME_NOT_INITIALIZED, None);
         return ptr::null_mut();
     };
     let raw = jstr_to_string(&mut env, &config_json).unwrap_or_else(|| "{}".to_string());
@@ -440,7 +478,7 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_startHost(
     match rt.start_host(req) {
         Ok(val) => string_to_jstr(&mut env, &val.to_string()),
         Err(err) => {
-            throw_illegal_state(&mut env, &err);
+            throw_ui_error(&mut env, "java/lang/IllegalStateException", &err);
             ptr::null_mut()
         }
     }
@@ -463,24 +501,32 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_hostCommand(
     command_json: JString,
 ) -> jstring {
     let Some(rt) = runtime::global_runtime() else {
-        throw_illegal_state(&mut env, "运行时尚未初始化");
+        throw_resolved_ui_error(&mut env, codes::SERVICE_RUNTIME_NOT_INITIALIZED, None);
         return ptr::null_mut();
     };
     let Some(raw) = jstr_to_string(&mut env, &command_json) else {
-        throw_illegal_state(&mut env, "无效被控端指令");
+        throw_resolved_ui_error(
+            &mut env,
+            codes::VALIDATION_INVALID_INPUT,
+            Some("无效被控端指令".to_string()),
+        );
         return ptr::null_mut();
     };
     let cmd: Value = match serde_json::from_str(&raw) {
         Ok(v) => v,
         Err(e) => {
-            throw_illegal_state(&mut env, &format!("解析被控端指令失败: {e}"));
+            throw_resolved_ui_error(
+                &mut env,
+                codes::VALIDATION_INVALID_JSON,
+                Some(format!("解析被控端指令失败: {e}")),
+            );
             return ptr::null_mut();
         }
     };
     match rt.host_command(&cmd) {
         Ok(val) => string_to_jstr(&mut env, &val.to_string()),
         Err(err) => {
-            throw_illegal_state(&mut env, &err);
+            throw_ui_error(&mut env, "java/lang/IllegalStateException", &err);
             ptr::null_mut()
         }
     }
@@ -515,6 +561,78 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_pushHostEncode
     }
 }
 
+#[no_mangle]
+pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_setProxyConfig(
+    mut env: JNIEnv,
+    _: JObject,
+    config_json: JString,
+) -> jstring {
+    let Some(raw) = jstr_to_string(&mut env, &config_json) else {
+        throw_resolved_ui_error(
+            &mut env,
+            codes::VALIDATION_INVALID_INPUT,
+            Some("无效代理配置".to_string()),
+        );
+        return ptr::null_mut();
+    };
+    let cfg: ProxyConfig = match serde_json::from_str(&raw) {
+        Ok(c) => c,
+        Err(e) => {
+            throw_resolved_ui_error(
+                &mut env,
+                codes::VALIDATION_INVALID_JSON,
+                Some(format!("解析代理配置失败: {e}")),
+            );
+            return ptr::null_mut();
+        }
+    };
+    if let Err(err) = cfg.validate() {
+        let ui_err = err.to_ui_error(ErrorPlatform::Android);
+        throw_ui_error(&mut env, "java/lang/IllegalStateException", &ui_err);
+        return ptr::null_mut();
+    }
+    let result = if let Some(rt) = runtime::global_runtime() {
+        rt.set_proxy_config(cfg)
+    } else {
+        rc_client_core::proxy::set_global_proxy_config(cfg);
+        Ok(json!({ "ok": true }))
+    };
+    match result {
+        Ok(val) => string_to_jstr(&mut env, &val.to_string()),
+        Err(err) => {
+            throw_ui_error(&mut env, "java/lang/IllegalStateException", &err);
+            ptr::null_mut()
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_requestWol(
+    mut env: JNIEnv,
+    _: JObject,
+    device_id: JString,
+) -> jstring {
+    let Some(rt) = runtime::global_runtime() else {
+        throw_resolved_ui_error(&mut env, codes::SERVICE_RUNTIME_NOT_INITIALIZED, None);
+        return ptr::null_mut();
+    };
+    let Some(did) = jstr_to_string(&mut env, &device_id) else {
+        throw_resolved_ui_error(
+            &mut env,
+            codes::VALIDATION_INVALID_INPUT,
+            Some("无效目标设备码".to_string()),
+        );
+        return ptr::null_mut();
+    };
+    match rt.request_wol(&did) {
+        Ok(val) => string_to_jstr(&mut env, &val.to_string()),
+        Err(err) => {
+            throw_ui_error(&mut env, "java/lang/IllegalStateException", &err);
+            ptr::null_mut()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -541,10 +659,40 @@ mod tests {
     }
 
     #[test]
-    fn core_info_json_exposes_abi_and_version() {
+    fn core_info_json_exposes_real_core_build_info_and_abi_v2() {
         let info = core_info_json();
-        assert_eq!(info["abiVersion"].as_u64(), Some(u64::from(CORE_ABI_VERSION)));
-        assert!(!info["coreVersion"].as_str().unwrap_or_default().is_empty());
-        assert!(!info["coreGitSha"].as_str().unwrap_or_default().is_empty());
+        assert_eq!(CORE_ABI_VERSION, 2);
+        assert_eq!(info["abiVersion"].as_u64(), Some(2));
+        assert_eq!(info["coreVersion"].as_str(), Some("0.2.2"));
+        assert!(!info["gitCommit"].as_str().unwrap_or_default().is_empty());
+        assert!(!info["buildTimestamp"].as_str().unwrap_or_default().is_empty());
+        assert!(info["sessionProtocolVersion"].as_u64().is_some());
+        assert!(info["punchVersion"].as_u64().is_some());
+        assert!(info["beaconVersion"].as_u64().is_some());
+    }
+
+    #[test]
+    fn resolve_ui_error_uses_android_platform_overrides() {
+        let mp = resolve_ui_error(
+            codes::PLATFORM_ANDROID_MEDIA_PROJECTION_DENIED,
+            ErrorPlatform::Android,
+            &[],
+            None,
+            Some("user cancelled".to_string()),
+        );
+        assert_eq!(mp.code, "platform.android.media_projection_denied");
+        assert!(!mp.title.is_empty());
+        assert!(!mp.suggestion.is_empty());
+        assert_eq!(mp.detail.as_deref(), Some("user cancelled"));
+
+        let acc = resolve_ui_error(
+            codes::PLATFORM_ANDROID_ACCESSIBILITY_DENIED,
+            ErrorPlatform::Android,
+            &[],
+            None,
+            None,
+        );
+        assert_eq!(acc.code, "platform.android.accessibility_denied");
+        assert!(!acc.message.is_empty());
     }
 }

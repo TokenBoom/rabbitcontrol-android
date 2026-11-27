@@ -13,6 +13,9 @@ internal object Core {
     }
 
     external fun coreInfo(): String
+    external fun resolveUiError(code: String, detail: String? = null): String
+    external fun setProxyConfig(configJson: String): String
+    external fun requestWol(deviceId: String): String
 
     external fun initRuntime(
         filesDir: String,

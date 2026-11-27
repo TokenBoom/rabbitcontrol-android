@@ -7,9 +7,12 @@ import android.os.Build
 import android.util.DisplayMetrics
 import android.util.Log
 import android.view.WindowManager
+import com.rabbitcontrol.android.error.RcErrorCodes
+import com.rabbitcontrol.android.error.RcUiError
 import io.rabbitcontrol.android.R
 import io.rabbitcontrol.android.core.data.AccountRepository
 import io.rabbitcontrol.android.core.data.InteractionPrefsStore
+import io.rabbitcontrol.android.core.error.RcUiErrorCodec
 import io.rabbitcontrol.android.core.i18n.AppStrings
 import io.rabbitcontrol.android.core.i18n.NativeErrorLocalizer
 import io.rabbitcontrol.android.core.nativebridge.NativeRuntimeBootstrap
@@ -47,9 +50,11 @@ data class HostUiState(
     val pendingApproval: HostApprovalPromptModel? = null,
     val tempCode: String? = null,
     val allowRemoteAssist: Boolean = false,
+    val allowAssistFileTransfer: Boolean = true,
     val ownerSelfControlReady: Boolean = false,
     val accessibilityEnabled: Boolean = false,
     val lastError: String? = null,
+    val lastUiError: RcUiError? = null,
 )
 
 class HostManager(
@@ -64,6 +69,7 @@ class HostManager(
     private val _state = MutableStateFlow(
         HostUiState(
             allowRemoteAssist = prefsStore.state.value.hostAllowRemoteAssist,
+            allowAssistFileTransfer = prefsStore.state.value.hostAllowAssistFileTransfer,
             accessibilityEnabled = RabbitAccessibilityService.isEnabled(context),
         ),
     )
@@ -94,10 +100,13 @@ class HostManager(
 
     fun enableHostWithProjection(resultCode: Int, data: Intent) {
         val allowAssist = prefsStore.state.value.hostAllowRemoteAssist
+        val allowAssistFiles = prefsStore.state.value.hostAllowAssistFileTransfer
         _state.value = _state.value.copy(
             starting = true,
             allowRemoteAssist = allowAssist,
+            allowAssistFileTransfer = allowAssistFiles,
             lastError = null,
+            lastUiError = null,
             accessibilityEnabled = RabbitAccessibilityService.isEnabled(context),
         )
         scope.launch {
@@ -107,6 +116,7 @@ class HostManager(
 
             val req = JSONObject()
                 .put("allowRemoteAssist", allowAssist)
+                .put("allowAssistFileTransfer", allowAssistFiles)
                 .put("requireApproval", true)
 
             val res = runCatching { JSONObject(Core.startHost(req.toString())) }
@@ -122,22 +132,29 @@ class HostManager(
                     listenAddr = listenAddr,
                     tempCode = pw,
                     allowRemoteAssist = obj.optBoolean("allowRemoteAssist", allowAssist),
+                    allowAssistFileTransfer = obj.optBoolean("allowAssistFileTransfer", allowAssistFiles),
                     ownerSelfControlReady = ownerReady,
                     lastError = null,
+                    lastUiError = null,
                 )
-                Log.i("RC_DIAG", "startHost ok addr=$listenAddr ownerReady=$ownerReady allowAssist=$allowAssist")
+                Log.i("RC_DIAG", "startHost ok addr=$listenAddr ownerReady=$ownerReady allowAssist=$allowAssist allowAssistFiles=$allowAssistFiles")
                 withContext(Dispatchers.Main) {
                     HostForegroundService.start(context, resultCode, data)
                 }
                 startPolling()
             }.onFailure { err ->
                 Log.e("RC_DIAG", "startHost failed", err)
+                val uiErr = RcUiErrorCodec.fromThrowable(
+                    err,
+                    fallbackCode = RcErrorCodes.SESSION_HOST_NOT_READY,
+                    fallbackMessage = AppStrings.get(R.string.host_err_start_failed, "启动被控服务失败"),
+                )
                 _state.value = _state.value.copy(
                     enabled = false,
                     starting = false,
                     listening = false,
-                    lastError = err.message?.let { NativeErrorLocalizer.localize(it) }
-                        ?: AppStrings.get(R.string.host_err_start_failed, "启动被控服务失败"),
+                    lastError = uiErr.message.ifBlank { uiErr.title },
+                    lastUiError = uiErr,
                 )
             }
         }
@@ -151,7 +168,15 @@ class HostManager(
     }
 
     fun onProjectionFailed(message: String) {
-        _state.value = _state.value.copy(lastError = message)
+        val uiErr = RcUiErrorCodec.resolvePlatformError(
+            code = RcErrorCodes.PLATFORM_ANDROID_MEDIA_PROJECTION_DENIED,
+            detail = message,
+            fallbackMessage = message,
+        )
+        _state.value = _state.value.copy(
+            lastError = uiErr.message.ifBlank { message },
+            lastUiError = uiErr,
+        )
         stopHost()
     }
 
@@ -203,9 +228,38 @@ class HostManager(
                     tempCode = if (allow) pw else null,
                 )
             }.onFailure { err ->
-                _state.value = _state.value.copy(lastError = err.message)
+                val uiErr = RcUiErrorCodec.fromThrowable(err, fallbackCode = RcErrorCodes.SESSION_HOST_NOT_READY)
+                _state.value = _state.value.copy(
+                    lastError = uiErr.message,
+                    lastUiError = uiErr,
+                )
             }
         }
+    }
+
+    fun setAllowAssistFileTransfer(allowed: Boolean) {
+        prefsStore.update { it.copy(hostAllowAssistFileTransfer = allowed) }
+        _state.value = _state.value.copy(allowAssistFileTransfer = allowed)
+        if (!_state.value.enabled) return
+        scope.launch {
+            runCatching {
+                JSONObject(
+                    Core.hostCommand(
+                        JSONObject().put("type", "set_allow_assist_file_transfer").put("allowed", allowed).toString(),
+                    ),
+                )
+            }.onFailure { err ->
+                val uiErr = RcUiErrorCodec.fromThrowable(err, fallbackCode = RcErrorCodes.SESSION_HOST_NOT_READY)
+                _state.value = _state.value.copy(
+                    lastError = uiErr.message,
+                    lastUiError = uiErr,
+                )
+            }
+        }
+    }
+
+    fun clearLastError() {
+        _state.value = _state.value.copy(lastError = null, lastUiError = null)
     }
 
     fun respondApproval(generation: Long, accepted: Boolean) {
@@ -340,7 +394,15 @@ class HostManager(
                 )
             }
             "error" -> {
-                _state.value = _state.value.copy(lastError = u.optString("message"))
+                val uiErr = RcUiErrorCodec.fromJsonObject(u.optJSONObject("ui_error"))
+                    ?: RcUiErrorCodec.resolvePlatformError(
+                        code = RcErrorCodes.SESSION_HOST_NOT_READY,
+                        detail = u.optString("message"),
+                    )
+                _state.value = _state.value.copy(
+                    lastError = uiErr.message.ifBlank { u.optString("message") },
+                    lastUiError = uiErr,
+                )
             }
         }
     }

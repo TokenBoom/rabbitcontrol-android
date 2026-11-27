@@ -2,8 +2,11 @@ package io.rabbitcontrol.android.ui.screens.auth
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.rabbitcontrol.android.error.RcErrorCodes
+import com.rabbitcontrol.android.error.RcUiError
 import io.rabbitcontrol.android.R
 import io.rabbitcontrol.android.core.data.AccountRepository
+import io.rabbitcontrol.android.core.error.RcUiErrorCodec
 import io.rabbitcontrol.android.core.i18n.AppStrings
 import io.rabbitcontrol.android.core.nativebridge.ServerConfigModel
 import kotlinx.coroutines.async
@@ -18,7 +21,7 @@ enum class AuthStep { Server, Trust, Login, Register, Password }
 sealed interface ServerTestState {
     data object Testing : ServerTestState
     data class Reachable(val latencyMs: Long, val healthy: Boolean) : ServerTestState
-    data class Failed(val message: String) : ServerTestState
+    data class Failed(val error: RcUiError) : ServerTestState
 }
 
 data class AuthUiState(
@@ -41,7 +44,7 @@ data class AuthUiState(
     val confirmPassword: String = "",
     val allowRegistration: Boolean = true,
     val busy: Boolean = false,
-    val error: String? = null,
+    val uiError: RcUiError? = null,
     val savedServerAddress: String? = null,
     val serverTests: Map<String, ServerTestState> = emptyMap(),
 )
@@ -76,25 +79,25 @@ class AuthViewModel(
             editingServer = null,
             savedServerAddress = srv?.displayName,
             allowRegistration = srv?.allowRegistration ?: true,
-            error = null,
+            uiError = null,
         )
         if ((step == AuthStep.Login || step == AuthStep.Register) && srv != null) {
             refreshAuthConfig(srv)
         }
     }
 
-    fun updateServerName(v: String) { _ui.value = _ui.value.copy(serverName = v, error = null) }
-    fun updateServerAddress(v: String) { _ui.value = _ui.value.copy(serverAddress = v, error = null) }
+    fun updateServerName(v: String) { _ui.value = _ui.value.copy(serverName = v, uiError = null) }
+    fun updateServerAddress(v: String) { _ui.value = _ui.value.copy(serverAddress = v, uiError = null) }
     fun updateApiPort(v: String) {
-        _ui.value = _ui.value.copy(apiPort = v.filter(Char::isDigit).take(5), error = null)
+        _ui.value = _ui.value.copy(apiPort = v.filter(Char::isDigit).take(5), uiError = null)
     }
     fun updateSignalPort(v: String) {
-        _ui.value = _ui.value.copy(signalPort = v.filter(Char::isDigit).take(5), error = null)
+        _ui.value = _ui.value.copy(signalPort = v.filter(Char::isDigit).take(5), uiError = null)
     }
     fun updateRelayPort(v: String) {
-        _ui.value = _ui.value.copy(relayPort = v.filter(Char::isDigit).take(5), error = null)
+        _ui.value = _ui.value.copy(relayPort = v.filter(Char::isDigit).take(5), uiError = null)
     }
-    fun updateCaPin(v: String) { _ui.value = _ui.value.copy(caPin = v, error = null) }
+    fun updateCaPin(v: String) { _ui.value = _ui.value.copy(caPin = v, uiError = null) }
 
     fun startAddServer() {
         _ui.value = _ui.value.copy(
@@ -105,7 +108,7 @@ class AuthViewModel(
             relayPort = "",
             caPin = "",
             editingServer = null,
-            error = null,
+            uiError = null,
         )
     }
 
@@ -118,25 +121,25 @@ class AuthViewModel(
             relayPort = if (target.relayPort == ServerConfigModel.DEFAULT_RELAY_PORT) "" else target.relayPort.toString(),
             caPin = "",
             editingServer = target,
-            error = null,
+            uiError = null,
         )
     }
-    fun updateEmail(v: String) { _ui.value = _ui.value.copy(email = v, error = null) }
-    fun updateDisplayName(v: String) { _ui.value = _ui.value.copy(displayName = v, error = null) }
-    fun updatePassword(v: String) { _ui.value = _ui.value.copy(password = v, error = null) }
-    fun updateRegisterConfirmPassword(v: String) { _ui.value = _ui.value.copy(registerConfirmPassword = v, error = null) }
-    fun updateCurrentPassword(v: String) { _ui.value = _ui.value.copy(currentPassword = v, error = null) }
-    fun updateNewPassword(v: String) { _ui.value = _ui.value.copy(newPassword = v, error = null) }
-    fun updateConfirmPassword(v: String) { _ui.value = _ui.value.copy(confirmPassword = v, error = null) }
+    fun updateEmail(v: String) { _ui.value = _ui.value.copy(email = v, uiError = null) }
+    fun updateDisplayName(v: String) { _ui.value = _ui.value.copy(displayName = v, uiError = null) }
+    fun updatePassword(v: String) { _ui.value = _ui.value.copy(password = v, uiError = null) }
+    fun updateRegisterConfirmPassword(v: String) { _ui.value = _ui.value.copy(registerConfirmPassword = v, uiError = null) }
+    fun updateCurrentPassword(v: String) { _ui.value = _ui.value.copy(currentPassword = v, uiError = null) }
+    fun updateNewPassword(v: String) { _ui.value = _ui.value.copy(newPassword = v, uiError = null) }
+    fun updateConfirmPassword(v: String) { _ui.value = _ui.value.copy(confirmPassword = v, uiError = null) }
 
-    fun clearError() { _ui.value = _ui.value.copy(error = null) }
+    fun clearError() { _ui.value = _ui.value.copy(uiError = null) }
 
     fun goToServerEdit() {
-        _ui.value = _ui.value.copy(step = AuthStep.Server, error = null)
+        _ui.value = _ui.value.copy(step = AuthStep.Server, uiError = null)
     }
 
     fun backFromTrust() {
-        _ui.value = _ui.value.copy(step = AuthStep.Server, error = null)
+        _ui.value = _ui.value.copy(step = AuthStep.Server, uiError = null)
     }
 
     fun switchAuthMode(register: Boolean) {
@@ -145,7 +148,7 @@ class AuthViewModel(
         _ui.value = _ui.value.copy(
             step = nextStep,
             allowRegistration = srv?.allowRegistration ?: true,
-            error = null,
+            uiError = null,
         )
         if (srv != null) {
             refreshAuthConfig(srv)
@@ -193,7 +196,11 @@ class AuthViewModel(
         val host = _ui.value.serverAddress.trim()
         val name = _ui.value.serverName.trim()
         if (host.isEmpty()) {
-            _ui.value = _ui.value.copy(error = AppStrings.get(R.string.auth_err_enter_address, "请输入服务器地址"))
+            _ui.value = _ui.value.copy(
+                uiError = RcUiErrorCodec.inlineValidation(
+                    AppStrings.get(R.string.auth_err_enter_address, "请输入服务器地址"),
+                ),
+            )
             return
         }
         val apiPort = parseOptionalPort(
@@ -201,22 +208,37 @@ class AuthViewModel(
             ServerConfigModel.DEFAULT_API_PORT,
             AppStrings.get(R.string.auth_api_port_label, "API 端口"),
         )
-            .getOrElse { _ui.value = _ui.value.copy(error = it.message); return }
+            .getOrElse {
+                _ui.value = _ui.value.copy(
+                    uiError = RcUiErrorCodec.inlineValidation(it.message.orEmpty()),
+                )
+                return
+            }
         val signalPort = parseOptionalPort(
             _ui.value.signalPort,
             ServerConfigModel.DEFAULT_SIGNAL_PORT,
             AppStrings.get(R.string.auth_signal_port_label, "信令端口"),
         )
-            .getOrElse { _ui.value = _ui.value.copy(error = it.message); return }
+            .getOrElse {
+                _ui.value = _ui.value.copy(
+                    uiError = RcUiErrorCodec.inlineValidation(it.message.orEmpty()),
+                )
+                return
+            }
         val relayPort = parseOptionalPort(
             _ui.value.relayPort,
             ServerConfigModel.DEFAULT_RELAY_PORT,
             AppStrings.get(R.string.auth_relay_port_label, "中继端口"),
         )
-            .getOrElse { _ui.value = _ui.value.copy(error = it.message); return }
+            .getOrElse {
+                _ui.value = _ui.value.copy(
+                    uiError = RcUiErrorCodec.inlineValidation(it.message.orEmpty()),
+                )
+                return
+            }
 
         if (editing != null && !needsReprobeForEdit(editing)) {
-            _ui.value = _ui.value.copy(busy = true, error = null)
+            _ui.value = _ui.value.copy(busy = true, uiError = null)
             viewModelScope.launch {
                 runCatching { accountRepo.updateServerMetadata(editing, name, signalPort, relayPort) }
                     .onSuccess {
@@ -231,7 +253,11 @@ class AuthViewModel(
                     .onFailure { err ->
                         _ui.value = _ui.value.copy(
                             busy = false,
-                            error = AuthErrorFormatter.format(err.message, AuthAction.SwitchServer),
+                            uiError = RcUiErrorCodec.fromThrowable(
+                                err,
+                                fallbackCode = RcErrorCodes.SERVER_UNAVAILABLE,
+                                fallbackMessage = AppStrings.get(R.string.err_auth_switch_server_failed, "切换服务器失败，请重试"),
+                            ),
                         )
                     }
             }
@@ -246,7 +272,11 @@ class AuthViewModel(
         val host = _ui.value.serverAddress.trim()
         val name = _ui.value.serverName.trim()
         if (host.isEmpty()) {
-            _ui.value = _ui.value.copy(error = AppStrings.get(R.string.auth_err_enter_address, "请输入服务器地址"))
+            _ui.value = _ui.value.copy(
+                uiError = RcUiErrorCodec.inlineValidation(
+                    AppStrings.get(R.string.auth_err_enter_address, "请输入服务器地址"),
+                ),
+            )
             return
         }
         val apiPort = parseOptionalPort(
@@ -254,19 +284,28 @@ class AuthViewModel(
             ServerConfigModel.DEFAULT_API_PORT,
             AppStrings.get(R.string.auth_api_port_label, "API 端口"),
         )
-            .getOrElse { _ui.value = _ui.value.copy(error = it.message); return }
+            .getOrElse {
+                _ui.value = _ui.value.copy(uiError = RcUiErrorCodec.inlineValidation(it.message.orEmpty()))
+                return
+            }
         val signalPort = parseOptionalPort(
             _ui.value.signalPort,
             ServerConfigModel.DEFAULT_SIGNAL_PORT,
             AppStrings.get(R.string.auth_signal_port_label, "信令端口"),
         )
-            .getOrElse { _ui.value = _ui.value.copy(error = it.message); return }
+            .getOrElse {
+                _ui.value = _ui.value.copy(uiError = RcUiErrorCodec.inlineValidation(it.message.orEmpty()))
+                return
+            }
         val relayPort = parseOptionalPort(
             _ui.value.relayPort,
             ServerConfigModel.DEFAULT_RELAY_PORT,
             AppStrings.get(R.string.auth_relay_port_label, "中继端口"),
         )
-            .getOrElse { _ui.value = _ui.value.copy(error = it.message); return }
+            .getOrElse {
+                _ui.value = _ui.value.copy(uiError = RcUiErrorCodec.inlineValidation(it.message.orEmpty()))
+                return
+            }
         val apiPortOverride = if (_ui.value.apiPort.isNotBlank()) apiPort else null
         probeServerInternal(host = host, name = name, apiPortOverride = apiPortOverride, signalPort = signalPort, relayPort = relayPort)
     }
@@ -279,7 +318,7 @@ class AuthViewModel(
         relayPort: Int,
     ) {
         val pin = _ui.value.caPin.replace("\\s".toRegex(), "")
-        _ui.value = _ui.value.copy(busy = true, error = null)
+        _ui.value = _ui.value.copy(busy = true, uiError = null)
         viewModelScope.launch {
             runCatching {
                 accountRepo.probeServer(
@@ -303,7 +342,11 @@ class AuthViewModel(
                 .onFailure { err ->
                     _ui.value = _ui.value.copy(
                         busy = false,
-                        error = AuthErrorFormatter.format(err.message, AuthAction.ProbeServer),
+                        uiError = RcUiErrorCodec.fromThrowable(
+                            err,
+                            fallbackCode = RcErrorCodes.NETWORK_UNREACHABLE,
+                            fallbackMessage = AppStrings.get(R.string.err_auth_probe_failed, "无法连接到服务器，请检查地址和端口"),
+                        ),
                     )
                 }
         }
@@ -312,7 +355,7 @@ class AuthViewModel(
     fun trustAndContinue(onlyServer: Boolean, onDone: () -> Unit) {
         val candidate = _ui.value.candidateServer ?: return
         val replaceTargetId = _ui.value.editingServer?.id
-        _ui.value = _ui.value.copy(busy = true, error = null)
+        _ui.value = _ui.value.copy(busy = true, uiError = null)
         viewModelScope.launch {
             runCatching { accountRepo.saveServer(candidate, replaceTargetId = replaceTargetId) }
                 .onSuccess { restored ->
@@ -341,14 +384,18 @@ class AuthViewModel(
                 .onFailure { err ->
                     _ui.value = _ui.value.copy(
                         busy = false,
-                        error = AuthErrorFormatter.format(err.message, AuthAction.SwitchServer),
+                        uiError = RcUiErrorCodec.fromThrowable(
+                            err,
+                            fallbackCode = RcErrorCodes.SERVER_UNAVAILABLE,
+                            fallbackMessage = AppStrings.get(R.string.err_auth_switch_server_failed, "切换服务器失败，请重试"),
+                        ),
                     )
                 }
         }
     }
 
     fun selectSavedServer(target: ServerConfigModel, onDone: () -> Unit) {
-        _ui.value = _ui.value.copy(busy = true, error = null)
+        _ui.value = _ui.value.copy(busy = true, uiError = null)
         viewModelScope.launch {
             runCatching { accountRepo.switchServer(target) }
                 .onSuccess { restored ->
@@ -379,7 +426,11 @@ class AuthViewModel(
                 .onFailure { err ->
                     _ui.value = _ui.value.copy(
                         busy = false,
-                        error = AuthErrorFormatter.format(err.message, AuthAction.SwitchServer),
+                        uiError = RcUiErrorCodec.fromThrowable(
+                            err,
+                            fallbackCode = RcErrorCodes.SERVER_UNAVAILABLE,
+                            fallbackMessage = AppStrings.get(R.string.err_auth_switch_server_failed, "切换服务器失败，请重试"),
+                        ),
                     )
                 }
         }
@@ -404,7 +455,11 @@ class AuthViewModel(
                     },
                     onFailure = { err ->
                         ServerTestState.Failed(
-                            AuthErrorFormatter.format(err.message, AuthAction.ProbeServer),
+                            RcUiErrorCodec.fromThrowable(
+                                err,
+                                fallbackCode = RcErrorCodes.NETWORK_UNREACHABLE,
+                                fallbackMessage = AppStrings.get(R.string.err_auth_probe_failed, "无法连接到服务器，请检查地址和端口"),
+                            ),
                         )
                     },
                 )
@@ -435,7 +490,11 @@ class AuthViewModel(
                             },
                             onFailure = { err ->
                                 ServerTestState.Failed(
-                                    AuthErrorFormatter.format(err.message, AuthAction.ProbeServer),
+                                    RcUiErrorCodec.fromThrowable(
+                                        err,
+                                        fallbackCode = RcErrorCodes.NETWORK_UNREACHABLE,
+                                        fallbackMessage = AppStrings.get(R.string.err_auth_probe_failed, "无法连接到服务器，请检查地址和端口"),
+                                    ),
                                 )
                             },
                         )
@@ -457,12 +516,16 @@ class AuthViewModel(
                     _ui.value = _ui.value.copy(
                         savedServerAddress = accountRepo.server.value?.displayName,
                         serverTests = _ui.value.serverTests - target.id,
-                        error = null,
+                        uiError = null,
                     )
                 }
                 .onFailure { err ->
                     _ui.value = _ui.value.copy(
-                        error = AuthErrorFormatter.format(err.message, AuthAction.RemoveServer),
+                        uiError = RcUiErrorCodec.fromThrowable(
+                            err,
+                            fallbackCode = RcErrorCodes.COMMON_UNKNOWN,
+                            fallbackMessage = AppStrings.get(R.string.err_auth_remove_server_failed, "删除服务器失败，请重试"),
+                        ),
                     )
                 }
         }
@@ -472,14 +535,22 @@ class AuthViewModel(
         val email = _ui.value.email.trim()
         val pwd = _ui.value.password
         if (email.isEmpty()) {
-            _ui.value = _ui.value.copy(error = AppStrings.get(R.string.auth_err_enter_email, "请输入邮箱"))
+            _ui.value = _ui.value.copy(
+                uiError = RcUiErrorCodec.inlineValidation(
+                    AppStrings.get(R.string.auth_err_enter_email, "请输入邮箱"),
+                ),
+            )
             return
         }
         if (pwd.isEmpty()) {
-            _ui.value = _ui.value.copy(error = AppStrings.get(R.string.auth_err_enter_password, "请输入密码"))
+            _ui.value = _ui.value.copy(
+                uiError = RcUiErrorCodec.inlineValidation(
+                    AppStrings.get(R.string.auth_err_enter_password, "请输入密码"),
+                ),
+            )
             return
         }
-        _ui.value = _ui.value.copy(busy = true, error = null)
+        _ui.value = _ui.value.copy(busy = true, uiError = null)
         viewModelScope.launch {
             runCatching { accountRepo.login(email, pwd) }
                 .onSuccess { profile ->
@@ -493,7 +564,11 @@ class AuthViewModel(
                 .onFailure { err ->
                     _ui.value = _ui.value.copy(
                         busy = false,
-                        error = AuthErrorFormatter.format(err.message, AuthAction.Login),
+                        uiError = RcUiErrorCodec.fromThrowable(
+                            err,
+                            fallbackCode = RcErrorCodes.AUTH_INVALID_CREDENTIALS,
+                            fallbackMessage = AppStrings.get(R.string.err_auth_login_failed, "登录失败，请检查邮箱和密码"),
+                        ),
                     )
                 }
         }
@@ -502,7 +577,10 @@ class AuthViewModel(
     fun register(onCompleted: () -> Unit) {
         if (!_ui.value.allowRegistration) {
             _ui.value = _ui.value.copy(
-                error = AppStrings.get(R.string.err_auth_reg_disabled, "管理员已关闭自助注册，请联系管理员开通"),
+                uiError = RcUiErrorCodec.resolvePlatformError(
+                    code = RcErrorCodes.AUTH_REGISTRATION_DISABLED,
+                    fallbackMessage = AppStrings.get(R.string.err_auth_reg_disabled, "管理员已关闭自助注册，请联系管理员开通"),
+                ),
             )
             return
         }
@@ -512,23 +590,29 @@ class AuthViewModel(
         val confirm = _ui.value.registerConfirmPassword
         if (email.isEmpty() || !email.contains('@')) {
             _ui.value = _ui.value.copy(
-                error = AppStrings.get(R.string.auth_err_invalid_email, "请输入有效的邮箱地址"),
+                uiError = RcUiErrorCodec.inlineValidation(
+                    AppStrings.get(R.string.auth_err_invalid_email, "请输入有效的邮箱地址"),
+                ),
             )
             return
         }
         if (pwd.length < 8) {
             _ui.value = _ui.value.copy(
-                error = AppStrings.get(R.string.err_auth_password_min_len, "密码长度至少 8 位"),
+                uiError = RcUiErrorCodec.inlineValidation(
+                    AppStrings.get(R.string.err_auth_password_min_len, "密码长度至少 8 位"),
+                ),
             )
             return
         }
         if (pwd != confirm) {
             _ui.value = _ui.value.copy(
-                error = AppStrings.get(R.string.auth_err_pw_mismatch, "两次输入的密码不一致"),
+                uiError = RcUiErrorCodec.inlineValidation(
+                    AppStrings.get(R.string.auth_err_pw_mismatch, "两次输入的密码不一致"),
+                ),
             )
             return
         }
-        _ui.value = _ui.value.copy(busy = true, error = null)
+        _ui.value = _ui.value.copy(busy = true, uiError = null)
         viewModelScope.launch {
             runCatching { accountRepo.register(email, name, pwd) }
                 .onSuccess { profile ->
@@ -542,7 +626,11 @@ class AuthViewModel(
                 .onFailure { err ->
                     _ui.value = _ui.value.copy(
                         busy = false,
-                        error = AuthErrorFormatter.format(err.message, AuthAction.Register),
+                        uiError = RcUiErrorCodec.fromThrowable(
+                            err,
+                            fallbackCode = RcErrorCodes.VALIDATION_INVALID_INPUT,
+                            fallbackMessage = AppStrings.get(R.string.err_auth_register_failed, "注册失败，请检查填写信息后重试"),
+                        ),
                     )
                 }
         }
@@ -554,17 +642,21 @@ class AuthViewModel(
         val confirm = _ui.value.confirmPassword
         if (cur.isEmpty() || next.isEmpty()) {
             _ui.value = _ui.value.copy(
-                error = AppStrings.get(R.string.auth_err_enter_both_pws, "请输入当前密码和新密码"),
+                uiError = RcUiErrorCodec.inlineValidation(
+                    AppStrings.get(R.string.auth_err_enter_both_pws, "请输入当前密码和新密码"),
+                ),
             )
             return
         }
         if (next != confirm) {
             _ui.value = _ui.value.copy(
-                error = AppStrings.get(R.string.auth_err_new_pw_mismatch, "两次输入的新密码不一致"),
+                uiError = RcUiErrorCodec.inlineValidation(
+                    AppStrings.get(R.string.auth_err_new_pw_mismatch, "两次输入的新密码不一致"),
+                ),
             )
             return
         }
-        _ui.value = _ui.value.copy(busy = true, error = null)
+        _ui.value = _ui.value.copy(busy = true, uiError = null)
         viewModelScope.launch {
             runCatching { accountRepo.changePassword(cur, next) }
                 .onSuccess {
@@ -574,7 +666,11 @@ class AuthViewModel(
                 .onFailure { err ->
                     _ui.value = _ui.value.copy(
                         busy = false,
-                        error = AuthErrorFormatter.format(err.message, AuthAction.ChangePassword),
+                        uiError = RcUiErrorCodec.fromThrowable(
+                            err,
+                            fallbackCode = RcErrorCodes.AUTH_INVALID_CURRENT_PASSWORD,
+                            fallbackMessage = AppStrings.get(R.string.err_auth_change_pw_failed, "修改密码失败，请重试"),
+                        ),
                     )
                 }
         }

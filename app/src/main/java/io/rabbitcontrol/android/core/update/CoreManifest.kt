@@ -104,3 +104,48 @@ data class CoreManifest(
         }
     }
 }
+
+data class CoreReleaseManifest(
+    val schemaVersion: String,
+    val coreVersion: String,
+    val tag: String,
+    val gitCommit: String,
+    val abiVersion: Int,
+    val specVersion: String,
+    val minClientAndroidVersion: String,
+    val protocolSession: Int,
+    val protocolPunch: Int,
+    val protocolBeacon: Int,
+) {
+    companion object {
+        fun parse(rawJson: String): CoreReleaseManifest {
+            val obj = JSONObject(rawJson)
+            val schemaVersion = obj.optString("schemaVersion", "1.0.0").trim().ifBlank { "1.0.0" }
+            val coreVersion = obj.optString("coreVersion", "").trim()
+                .removePrefix("v")
+                .removePrefix("V")
+            require(coreVersion.isNotBlank()) { "coreVersion is missing" }
+            val tag = obj.optString("tag", "v$coreVersion").trim().ifBlank { "v$coreVersion" }
+            val gitCommit = obj.optString("gitCommit", "unknown").trim().ifBlank { "unknown" }
+            val abiVersion = obj.optInt("abiVersion", 0)
+            require(abiVersion > 0) { "Invalid abiVersion: $abiVersion" }
+            val specVersion = obj.optString("specVersion", "1.0.0").trim().ifBlank { "1.0.0" }
+            val minClients = obj.optJSONObject("minClientVersions")
+            val minClientAndroid = minClients?.optString("android", "0.2.2")?.trim()
+                ?.takeIf { it.isNotBlank() } ?: "0.2.2"
+            val protos = obj.optJSONObject("protocolVersions")
+            return CoreReleaseManifest(
+                schemaVersion = schemaVersion,
+                coreVersion = coreVersion,
+                tag = tag,
+                gitCommit = gitCommit,
+                abiVersion = abiVersion,
+                specVersion = specVersion,
+                minClientAndroidVersion = minClientAndroid,
+                protocolSession = protos?.optInt("session", 1) ?: 1,
+                protocolPunch = protos?.optInt("punch", 1) ?: 1,
+                protocolBeacon = protos?.optInt("beacon", 1) ?: 1,
+            )
+        }
+    }
+}

@@ -9,19 +9,39 @@ use std::sync::{Mutex, OnceLock};
 
 use rc_capture::FrameTexture;
 use rc_decode::{DecodeOutput, DecodedFrame, Decoder};
+use rc_encode::Codec;
+use rc_pipeline::{ChromaSubsampling, CodecCapability, LatencyTier};
 use rc_render::Renderer;
 #[cfg(target_os = "android")]
 use rc_types::Error;
 use rc_types::{CpuFrame, FrameKind, PixelFormat, Result, Timestamp};
 
 #[cfg(target_os = "android")]
-use crate::annexb::inspect_annexb;
+use crate::annexb::{inspect_annexb, inspect_hevc_annexb};
+
+fn default_h264_codec() -> String {
+    "h264".to_string()
+}
+
+fn default_max_width() -> u32 {
+    3840
+}
+
+fn default_max_height() -> u32 {
+    2160
+}
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CodecCandidate {
+    #[serde(default = "default_h264_codec")]
+    pub codec: String,
     pub name: String,
     pub hardware: bool,
     pub low_latency: bool,
+    #[serde(default = "default_max_width")]
+    pub max_width: u32,
+    #[serde(default = "default_max_height")]
+    pub max_height: u32,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -57,6 +77,82 @@ fn get_codec_candidates() -> Vec<CodecCandidate> {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .clone()
+}
+
+pub fn supports_hardware_hevc() -> bool {
+    get_codec_candidates()
+        .iter()
+        .any(|c| Codec::parse_lossy(&c.codec) == Some(Codec::Hevc) && c.hardware)
+}
+
+pub fn probed_decode_capabilities() -> Vec<CodecCapability> {
+    let candidates = get_codec_candidates();
+    let mut caps = Vec::new();
+
+    for target_codec in [Codec::Av1, Codec::Hevc, Codec::H264] {
+        let best = candidates
+            .iter()
+            .filter(|c| Codec::parse_lossy(&c.codec) == Some(target_codec))
+            .max_by_key(|c| {
+                (
+                    c.hardware,
+                    c.low_latency,
+                    u64::from(c.max_width) * u64::from(c.max_height),
+                )
+            });
+
+        let Some(cand) = best else {
+            continue;
+        };
+
+        // Only advertise AV1 / HEVC to the remote host when hardware acceleration is available.
+        if target_codec != Codec::H264 && !cand.hardware {
+            continue;
+        }
+
+        let max_w = cand.max_width.max(1920);
+        let max_h = cand.max_height.max(1080);
+        let default_rate = match target_codec {
+            Codec::H264 => 280_000_000,
+            Codec::Hevc => 600_000_000,
+            Codec::Av1 => 500_000_000,
+        };
+        let latency_tier = if !cand.hardware {
+            LatencyTier::Normal
+        } else if cand.low_latency && target_codec != Codec::Av1 {
+            LatencyTier::UltraLow
+        } else if cand.low_latency || target_codec == Codec::Av1 {
+            LatencyTier::Low
+        } else {
+            LatencyTier::UltraLow
+        };
+
+        caps.push(CodecCapability {
+            codec: target_codec,
+            hardware: cand.hardware,
+            max_width: max_w,
+            max_height: max_h,
+            max_pixel_rate: default_rate,
+            screen_content_tools: false,
+            chroma: ChromaSubsampling::Yuv420,
+            latency_tier,
+        });
+    }
+
+    if !caps.iter().any(|c| c.codec == Codec::H264) {
+        caps.push(CodecCapability {
+            codec: Codec::H264,
+            hardware: true,
+            max_width: 3840,
+            max_height: 2160,
+            max_pixel_rate: 280_000_000,
+            screen_content_tools: false,
+            chroma: ChromaSubsampling::Yuv420,
+            latency_tier: LatencyTier::UltraLow,
+        });
+    }
+
+    caps
 }
 
 pub fn request_keyframe() {
@@ -452,9 +548,11 @@ impl Drop for CodecOutputDrainer {
 pub struct AndroidSurfaceDecoder {
     width: u32,
     height: u32,
+    codec_kind: Codec,
     codec: *mut sys::AMediaCodec,
     drainer: Option<CodecOutputDrainer>,
     active_generation: u64,
+    last_vps: Option<Vec<u8>>,
     last_sps: Option<Vec<u8>>,
     last_pps: Option<Vec<u8>>,
     needs_keyframe: bool,
@@ -466,13 +564,15 @@ unsafe impl Send for AndroidSurfaceDecoder {}
 
 #[cfg(target_os = "android")]
 impl AndroidSurfaceDecoder {
-    pub fn new(width: u32, height: u32) -> Self {
+    pub fn new(width: u32, height: u32, codec_kind: Codec) -> Self {
         Self {
             width: width.max(2),
             height: height.max(2),
+            codec_kind,
             codec: std::ptr::null_mut(),
             drainer: None,
             active_generation: 0,
+            last_vps: None,
             last_sps: None,
             last_pps: None,
             needs_keyframe: true,
@@ -496,23 +596,34 @@ impl AndroidSurfaceDecoder {
     fn configure_codec(
         &mut self,
         window: *mut sys::ANativeWindow,
-        sps: &[u8],
-        pps: &[u8],
+        csd0: Option<&[u8]>,
+        csd1: Option<&[u8]>,
     ) -> std::result::Result<(), String> {
         use std::ffi::{CStr, CString};
 
         self.release_codec();
-        let mime = CString::new("video/avc").unwrap();
-        let mut candidates = get_codec_candidates();
+        let mime_str = match self.codec_kind {
+            Codec::H264 => "video/avc",
+            Codec::Hevc => "video/hevc",
+            Codec::Av1 => "video/av01",
+        };
+        let mime = CString::new(mime_str).unwrap();
+        let mut candidates: Vec<CodecCandidate> = get_codec_candidates()
+            .into_iter()
+            .filter(|c| Codec::parse_lossy(&c.codec) == Some(self.codec_kind))
+            .collect();
         if candidates.is_empty() {
             candidates.push(CodecCandidate {
+                codec: self.codec_kind.as_str().to_string(),
                 name: String::new(),
                 hardware: true,
                 low_latency: true,
+                max_width: 3840,
+                max_height: 2160,
             });
         }
 
-        let mut last_err = "no compatible AVC decoder".to_string();
+        let mut last_err = format!("no compatible {} decoder", self.codec_kind.as_str());
         for cand in candidates {
             let mut try_modes = Vec::new();
             if cand.low_latency {
@@ -546,25 +657,37 @@ impl AndroidSurfaceDecoder {
                     let k_h = CString::new("height").unwrap();
                     let k_max_w = CString::new("max-width").unwrap();
                     let k_max_h = CString::new("max-height").unwrap();
-                    let k_csd0 = CString::new("csd-0").unwrap();
-                    let k_csd1 = CString::new("csd-1").unwrap();
                     sys::AMediaFormat_setString(fmt, k_mime.as_ptr(), mime.as_ptr());
                     sys::AMediaFormat_setInt32(fmt, k_w.as_ptr(), self.width as i32);
                     sys::AMediaFormat_setInt32(fmt, k_h.as_ptr(), self.height as i32);
-                    sys::AMediaFormat_setInt32(fmt, k_max_w.as_ptr(), self.width.max(3840) as i32);
-                    sys::AMediaFormat_setInt32(fmt, k_max_h.as_ptr(), self.height.max(2160) as i32);
-                    sys::AMediaFormat_setBuffer(
+                    sys::AMediaFormat_setInt32(
                         fmt,
-                        k_csd0.as_ptr(),
-                        sps.as_ptr() as *const _,
-                        sps.len(),
+                        k_max_w.as_ptr(),
+                        self.width.max(cand.max_width).max(3840) as i32,
                     );
-                    sys::AMediaFormat_setBuffer(
+                    sys::AMediaFormat_setInt32(
                         fmt,
-                        k_csd1.as_ptr(),
-                        pps.as_ptr() as *const _,
-                        pps.len(),
+                        k_max_h.as_ptr(),
+                        self.height.max(cand.max_height).max(2160) as i32,
                     );
+                    if let Some(c0) = csd0 {
+                        let k_csd0 = CString::new("csd-0").unwrap();
+                        sys::AMediaFormat_setBuffer(
+                            fmt,
+                            k_csd0.as_ptr(),
+                            c0.as_ptr() as *const _,
+                            c0.len(),
+                        );
+                    }
+                    if let Some(c1) = csd1 {
+                        let k_csd1 = CString::new("csd-1").unwrap();
+                        sys::AMediaFormat_setBuffer(
+                            fmt,
+                            k_csd1.as_ptr(),
+                            c1.as_ptr() as *const _,
+                            c1.len(),
+                        );
+                    }
 
                     if low_lat {
                         let k_low = CString::new("low-latency").unwrap();
@@ -680,10 +803,83 @@ impl Decoder for AndroidSurfaceDecoder {
         kind: FrameKind,
         deadline_ts: Timestamp,
     ) -> Result<DecodeOutput> {
-        let info = inspect_annexb(data);
-        if !info.has_vcl && !info.has_csd() {
-            self.needs_keyframe = true;
-            return Ok(DecodeOutput::Nothing);
+        let mut is_idr = kind == FrameKind::Idr;
+        let mut h264_csd: Option<(Vec<u8>, Vec<u8>)> = None;
+        let mut hevc_csd0: Option<Vec<u8>> = None;
+        let mut csd_changed = false;
+
+        match self.codec_kind {
+            Codec::H264 => {
+                let info = inspect_annexb(data);
+                if !info.has_vcl && !info.has_csd() {
+                    self.needs_keyframe = true;
+                    return Ok(DecodeOutput::Nothing);
+                }
+                is_idr = is_idr || info.has_idr;
+                let sps_changed = info
+                    .sps
+                    .as_ref()
+                    .is_some_and(|s| self.last_sps.as_ref() != Some(s));
+                let pps_changed = info
+                    .pps
+                    .as_ref()
+                    .is_some_and(|p| self.last_pps.as_ref() != Some(p));
+                csd_changed = sps_changed || pps_changed;
+                if let Some(sps) = info.sps {
+                    self.last_sps = Some(sps);
+                }
+                if let Some(pps) = info.pps {
+                    self.last_pps = Some(pps);
+                }
+                if let (Some(sps), Some(pps)) = (self.last_sps.clone(), self.last_pps.clone()) {
+                    h264_csd = Some((sps, pps));
+                }
+            }
+            Codec::Hevc => {
+                let info = inspect_hevc_annexb(data);
+                if !info.has_vcl && !info.has_csd() {
+                    self.needs_keyframe = true;
+                    return Ok(DecodeOutput::Nothing);
+                }
+                is_idr = is_idr || info.has_idr;
+                let vps_changed = info
+                    .vps
+                    .as_ref()
+                    .is_some_and(|v| self.last_vps.as_ref() != Some(v));
+                let sps_changed = info
+                    .sps
+                    .as_ref()
+                    .is_some_and(|s| self.last_sps.as_ref() != Some(s));
+                let pps_changed = info
+                    .pps
+                    .as_ref()
+                    .is_some_and(|p| self.last_pps.as_ref() != Some(p));
+                csd_changed = vps_changed || sps_changed || pps_changed;
+                if let Some(vps) = info.vps {
+                    self.last_vps = Some(vps);
+                }
+                if let Some(sps) = info.sps {
+                    self.last_sps = Some(sps);
+                }
+                if let Some(pps) = info.pps {
+                    self.last_pps = Some(pps);
+                }
+                if let (Some(vps), Some(sps), Some(pps)) =
+                    (&self.last_vps, &self.last_sps, &self.last_pps)
+                {
+                    let mut combined = Vec::with_capacity(vps.len() + sps.len() + pps.len());
+                    combined.extend_from_slice(vps);
+                    combined.extend_from_slice(sps);
+                    combined.extend_from_slice(pps);
+                    hevc_csd0 = Some(combined);
+                }
+            }
+            Codec::Av1 => {
+                if data.is_empty() {
+                    self.needs_keyframe = true;
+                    return Ok(DecodeOutput::Nothing);
+                }
+            }
         }
 
         if FORCE_KEYFRAME.swap(false, Ordering::AcqRel) {
@@ -717,33 +913,37 @@ impl Decoder for AndroidSurfaceDecoder {
             self.needs_keyframe = true;
         }
 
-        let sps_changed = info
-            .sps
-            .as_ref()
-            .is_some_and(|s| self.last_sps.as_ref() != Some(s));
-        let pps_changed = info
-            .pps
-            .as_ref()
-            .is_some_and(|p| self.last_pps.as_ref() != Some(p));
-        if let Some(sps) = info.sps.clone() {
-            self.last_sps = Some(sps);
-        }
-        if let Some(pps) = info.pps.clone() {
-            self.last_pps = Some(pps);
-        }
-
-        if self.codec.is_null() || (info.has_idr && (sps_changed || pps_changed)) {
-            if let (Some(sps), Some(pps)) = (self.last_sps.clone(), self.last_pps.clone()) {
-                if let Err(err) = self.configure_codec(window_ptr, &sps, &pps) {
-                    return Err(Error::InvalidConfig(err));
+        if self.codec.is_null() || (is_idr && csd_changed) {
+            match self.codec_kind {
+                Codec::H264 => {
+                    if let Some((sps, pps)) = h264_csd.as_ref() {
+                        if let Err(err) = self.configure_codec(window_ptr, Some(sps), Some(pps)) {
+                            return Err(Error::InvalidConfig(err));
+                        }
+                    } else {
+                        self.needs_keyframe = true;
+                        return Ok(DecodeOutput::NeedKeyframe);
+                    }
                 }
-            } else {
-                self.needs_keyframe = true;
-                return Ok(DecodeOutput::NeedKeyframe);
+                Codec::Hevc => {
+                    if let Some(csd0) = hevc_csd0.as_ref() {
+                        if let Err(err) = self.configure_codec(window_ptr, Some(csd0), None) {
+                            return Err(Error::InvalidConfig(err));
+                        }
+                    } else {
+                        self.needs_keyframe = true;
+                        return Ok(DecodeOutput::NeedKeyframe);
+                    }
+                }
+                Codec::Av1 => {
+                    if let Err(err) = self.configure_codec(window_ptr, None, None) {
+                        return Err(Error::InvalidConfig(err));
+                    }
+                }
             }
         }
 
-        if self.needs_keyframe && kind != FrameKind::Idr && !info.has_idr {
+        if self.needs_keyframe && !is_idr {
             return Ok(DecodeOutput::NeedKeyframe);
         }
 
@@ -774,7 +974,7 @@ impl Decoder for AndroidSurfaceDecoder {
         }
         let pts = self.pts_counter.saturating_mul(8_333);
         self.pts_counter = self.pts_counter.wrapping_add(1);
-        let flags = if kind == FrameKind::Idr || info.has_idr {
+        let flags = if is_idr {
             sys::AMEDIACODEC_BUFFER_FLAG_KEY_FRAME
         } else {
             0
@@ -796,7 +996,7 @@ impl Decoder for AndroidSurfaceDecoder {
             return Ok(DecodeOutput::NeedKeyframe);
         }
 
-        if kind == FrameKind::Idr || info.has_idr {
+        if is_idr {
             self.needs_keyframe = false;
         }
         DIAG_DECODED.fetch_add(1, Ordering::Relaxed);
@@ -834,7 +1034,7 @@ pub struct AndroidSurfaceDecoder {
 
 #[cfg(not(target_os = "android"))]
 impl AndroidSurfaceDecoder {
-    pub fn new(width: u32, height: u32) -> Self {
+    pub fn new(width: u32, height: u32, _codec: Codec) -> Self {
         Self { width, height }
     }
 }

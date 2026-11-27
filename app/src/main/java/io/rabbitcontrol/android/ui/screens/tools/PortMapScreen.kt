@@ -2,6 +2,7 @@ package io.rabbitcontrol.android.ui.screens.tools
 
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -41,6 +43,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -64,6 +67,7 @@ import io.rabbitcontrol.android.ui.components.RabbitTopBar
 import io.rabbitcontrol.android.ui.components.StatusTone
 import io.rabbitcontrol.android.ui.theme.LocalRabbitPalette
 import io.rabbitcontrol.android.ui.theme.RabbitElevation
+import io.rabbitcontrol.android.ui.theme.RabbitRadius
 import io.rabbitcontrol.android.ui.theme.RabbitSpacing
 import org.koin.androidx.compose.koinViewModel
 
@@ -77,6 +81,7 @@ fun PortMapScreen(
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
 
+    val sessionState by viewModel.sessionState.collectAsStateWithLifecycle()
     val rules by viewModel.rules.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
     var showAddDialog by remember { mutableStateOf(false) }
@@ -117,6 +122,20 @@ fun PortMapScreen(
                 subtitle = deviceName,
                 onBack = onBack,
             )
+
+            if (!sessionState.toolPermissions.allowPortMap) {
+                Text(
+                    text = stringResource(R.string.tool_permission_disabled_pm),
+                    fontSize = 12.sp,
+                    color = palette.warning,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = RabbitSpacing.Lg, vertical = 4.dp)
+                        .clip(RoundedCornerShape(RabbitRadius.Sm))
+                        .background(palette.warningSoft)
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                )
+            }
 
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
