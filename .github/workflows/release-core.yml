@@ -30,107 +30,276 @@ on:
     types: [rabbitcontrol-core-release]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release-core:
+  build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      mode: ${{ steps.meta.outputs.mode }}
+      core_repo: ${{ steps.meta.outputs.core_repo }}
+      core_tag: ${{ steps.core_git.outputs.core_tag }}
+      core_commit: ${{ steps.core_git.outputs.core_commit }}
+      core_release_id: ${{ steps.meta.outputs.core_release_id }}
+      expected_platforms: ${{ steps.meta.outputs.expected_platforms }}
+      release_tag: ${{ steps.core_git.outputs.release_tag }}
+      core_version: ${{ steps.core_git.outputs.core_version }}
+      has_notes: ${{ steps.core_notes.outputs.has_notes }}
 
     steps:
       - name: Checkout rabbitcontrol-android
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Resolve release parameters
         id: meta
         shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_CORE_REF: ${{ inputs.core_ref }}
+          INPUT_CORE_VERSION: ${{ inputs.core_version }}
+          INPUT_ABI_VERSION: ${{ inputs.abi_version }}
+          INPUT_MIN_APP_VERSION: ${{ inputs.min_app_version }}
+          INPUT_RELEASE_NOTES: ${{ inputs.release_notes }}
+          PAYLOAD_TAG: ${{ github.event.client_payload.tag }}
+          PAYLOAD_CORE_REF: ${{ github.event.client_payload.core_ref }}
+          PAYLOAD_VERSION: ${{ github.event.client_payload.version }}
+          PAYLOAD_CORE_VERSION: ${{ github.event.client_payload.core_version }}
+          PAYLOAD_COMMIT: ${{ github.event.client_payload.commit }}
+          PAYLOAD_RELEASE_ID: ${{ github.event.client_payload.release_id }}
+          PAYLOAD_ABI_VERSION: ${{ github.event.client_payload.abi_version }}
+          PAYLOAD_MIN_APP_VERSION: ${{ github.event.client_payload.min_app_version }}
+          PAYLOAD_RELEASE_NOTES: ${{ github.event.client_payload.release_notes }}
+          PAYLOAD_CORE_REPO: ${{ github.event.client_payload.core_repo }}
+          PAYLOAD_EXPECTED_PLATFORMS_JSON: ${{ toJSON(github.event.client_payload.expected_platforms) }}
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            CORE_REF="${{ inputs.core_ref }}"
-            CORE_VER="${{ inputs.core_version }}"
-            ABI_VER="${{ inputs.abi_version }}"
-            MIN_APP="${{ inputs.min_app_version }}"
-            NOTES="${{ inputs.release_notes }}"
-          elif [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
-            CORE_REF="${{ github.event.client_payload.tag || github.event.client_payload.core_ref }}"
-            CORE_VER="${{ github.event.client_payload.version || github.event.client_payload.core_version }}"
-            ABI_VER="${{ github.event.client_payload.abi_version || '2' }}"
-            MIN_APP="${{ github.event.client_payload.min_app_version || '0.2.2' }}"
-            NOTES="${{ github.event.client_payload.release_notes }}"
-          else
-            TAG_VER="${GITHUB_REF_NAME#core-v}"
-            CORE_REF="v${TAG_VER%%-*}"
-            CORE_VER="$TAG_VER"
-            ABI_VER="2"
-            MIN_APP="0.2.2"
-            NOTES=""
-          fi
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+          import re
+          import sys
 
-          CORE_REF="${CORE_REF:-main}"
-          ABI_VER="${ABI_VER:-2}"
-          MIN_APP="${MIN_APP:-0.2.2}"
-          CORE_REPO="${{ github.event.client_payload.core_repo }}"
-          CORE_REPO="${CORE_REPO:-TokenBoom/rabbitcontrol-core}"
+          TAG_RE = re.compile(r"^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$")
+          SEMVER_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$")
+          COMMIT_RE = re.compile(r"^[0-9a-fA-F]{40}$")
+          RELEASE_ID_RE = re.compile(r"^[1-9][0-9]*$")
+          CORE_REPO_RE = re.compile(r"^TokenBoom/[A-Za-z0-9_.-]+$")
+          PLATFORM_RE = re.compile(r"^[a-z0-9_-]+$")
+          INT_RE = re.compile(r"^[1-9][0-9]*$")
+          VERSION_STR_RE = re.compile(r"^[0-9A-Za-z._+-]+$")
 
-          {
-            echo "core_ref=$CORE_REF"
-            echo "core_version=$CORE_VER"
-            echo "abi_version=$ABI_VER"
-            echo "min_app_version=$MIN_APP"
-            echo "core_repo=$CORE_REPO"
-          } >> "$GITHUB_OUTPUT"
+          def fail(msg: str) -> None:
+              print(f"::error::{msg}", file=sys.stderr)
+              raise SystemExit(1)
 
-          printf '%s' "$NOTES" > "${{ runner.temp }}/manual_release_notes.txt"
+          def parse_expected_platforms(raw_json: str) -> str:
+              if not raw_json or raw_json == "null":
+                  items = ["ios", "android"]
+              else:
+                  try:
+                      parsed = json.loads(raw_json)
+                  except json.JSONDecodeError as exc:
+                      fail(f"Invalid expected_platforms JSON: {exc}")
+                  if parsed is None:
+                      items = ["ios", "android"]
+                  elif isinstance(parsed, list):
+                      items = [str(x).strip() for x in parsed if str(x).strip()]
+                  elif isinstance(parsed, str):
+                      items = [x.strip() for x in parsed.split(",") if x.strip()]
+                  else:
+                      fail(f"expected_platforms must be an array or comma-separated string, got {type(parsed).__name__}")
+              if not items:
+                  items = ["ios", "android"]
+              seen = []
+              for p in items:
+                  if not PLATFORM_RE.match(p):
+                      fail(f"Invalid platform name in expected_platforms: {p!r}")
+                  if p not in seen:
+                      seen.append(p)
+              return ",".join(seen)
+
+          event_name = os.environ.get("EVENT_NAME", "").strip()
+          ref_name = os.environ.get("REF_NAME", "").strip()
+
+          if event_name == "repository_dispatch":
+              mode = "core-dispatch"
+              core_ref = (os.environ.get("PAYLOAD_TAG") or os.environ.get("PAYLOAD_CORE_REF") or "").strip()
+              if not core_ref or not TAG_RE.match(core_ref):
+                  fail(f"repository_dispatch payload tag/core_ref must match semver tag vX.Y.Z, got {core_ref!r}")
+
+              core_commit = os.environ.get("PAYLOAD_COMMIT", "").strip()
+              if core_commit and not COMMIT_RE.match(core_commit):
+                  fail(f"repository_dispatch payload commit must be 40-hex SHA, got {core_commit!r}")
+
+              core_release_id = os.environ.get("PAYLOAD_RELEASE_ID", "").strip()
+              if core_release_id and not RELEASE_ID_RE.match(core_release_id):
+                  fail(f"repository_dispatch payload release_id must be positive integer, got {core_release_id!r}")
+
+              core_repo = os.environ.get("PAYLOAD_CORE_REPO", "").strip() or "TokenBoom/rabbitcontrol-core"
+              if not CORE_REPO_RE.match(core_repo) or ".." in core_repo:
+                  fail(f"repository_dispatch payload core_repo must match TokenBoom/<repo>, got {core_repo!r}")
+
+              expected_platforms = parse_expected_platforms(os.environ.get("PAYLOAD_EXPECTED_PLATFORMS_JSON", ""))
+              core_ver = (os.environ.get("PAYLOAD_VERSION") or os.environ.get("PAYLOAD_CORE_VERSION") or "").strip()
+              abi_ver = os.environ.get("PAYLOAD_ABI_VERSION", "").strip() or "2"
+              min_app = os.environ.get("PAYLOAD_MIN_APP_VERSION", "").strip() or "0.2.2"
+              notes = os.environ.get("PAYLOAD_RELEASE_NOTES", "")
+          elif event_name == "workflow_dispatch":
+              mode = "local-release"
+              core_ref = os.environ.get("INPUT_CORE_REF", "").strip() or "main"
+              core_ver = os.environ.get("INPUT_CORE_VERSION", "").strip()
+              abi_ver = os.environ.get("INPUT_ABI_VERSION", "").strip() or "2"
+              min_app = os.environ.get("INPUT_MIN_APP_VERSION", "").strip() or "0.2.2"
+              notes = os.environ.get("INPUT_RELEASE_NOTES", "")
+              core_repo = "TokenBoom/rabbitcontrol-core"
+              core_commit = ""
+              core_release_id = ""
+              expected_platforms = "ios,android"
+          else:
+              mode = "local-release"
+              if not ref_name.startswith("core-v"):
+                  fail(f"Unexpected tag ref for push release: {ref_name!r}")
+              tag_ver = ref_name[len("core-v"):]
+              core_ref = "v" + tag_ver.split("-", 1)[0]
+              core_ver = tag_ver
+              abi_ver = "2"
+              min_app = "0.2.2"
+              notes = ""
+              core_repo = "TokenBoom/rabbitcontrol-core"
+              core_commit = ""
+              core_release_id = ""
+              expected_platforms = "ios,android"
+
+          if core_ver.startswith(("v", "V")):
+              core_ver = core_ver[1:]
+          if core_ver and not SEMVER_RE.match(core_ver):
+              fail(f"core_version must match semver X.Y.Z, got {core_ver!r}")
+          if not INT_RE.match(abi_ver):
+              fail(f"abi_version must be a positive integer, got {abi_ver!r}")
+          if not VERSION_STR_RE.match(min_app):
+              fail(f"min_app_version contains invalid characters: {min_app!r}")
+          if any(ch in core_ref for ch in ("\r", "\n", "\x00")):
+              fail("core_ref contains invalid control characters")
+
+          outputs = {
+              "mode": mode,
+              "core_ref": core_ref,
+              "core_version": core_ver,
+              "abi_version": abi_ver,
+              "min_app_version": min_app,
+              "core_repo": core_repo,
+              "core_commit": core_commit.lower(),
+              "core_release_id": core_release_id,
+              "expected_platforms": expected_platforms,
+          }
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              for k, v in outputs.items():
+                  if "\n" in v or "\r" in v:
+                      fail(f"Output {k} contains newline")
+                  fh.write(f"{k}={v}\n")
+
+          notes_path = pathlib.Path(os.environ["RUNNER_TEMP"]) / "manual_release_notes.txt"
+          notes_path.write_text(notes, encoding="utf-8")
+          PY
 
       - name: Checkout rabbitcontrol-core
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: ${{ steps.meta.outputs.core_repo }}
           fetch-depth: 0
           path: rabbitcontrol-core
+          persist-credentials: false
 
       - name: Switch rabbitcontrol-core to resolved ref
         id: core_git
         shell: bash
+        env:
+          MODE: ${{ steps.meta.outputs.mode }}
+          TARGET_REF: ${{ steps.meta.outputs.core_ref }}
+          PAYLOAD_COMMIT: ${{ steps.meta.outputs.core_commit }}
+          META_CORE_VERSION: ${{ steps.meta.outputs.core_version }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
+          set -euo pipefail
           cd rabbitcontrol-core
-          TARGET_REF="${{ steps.meta.outputs.core_ref }}"
-          if git rev-parse --verify --quiet "refs/tags/$TARGET_REF" >/dev/null || \
-             git rev-parse --verify --quiet "refs/remotes/origin/$TARGET_REF" >/dev/null || \
-             git rev-parse --verify --quiet "$TARGET_REF^{commit}" >/dev/null; then
-            git checkout "$TARGET_REF"
+
+          if [[ "$MODE" == "core-dispatch" ]]; then
+            if ! git rev-parse --verify --quiet "refs/tags/$TARGET_REF" >/dev/null; then
+              echo "::error::Required tag refs/tags/$TARGET_REF not found in rabbitcontrol-core" >&2
+              exit 1
+            fi
+            git checkout "refs/tags/$TARGET_REF"
+            FULL_SHA="$(git rev-parse HEAD)"
+            FULL_SHA="${FULL_SHA,,}"
+            if [[ -n "$PAYLOAD_COMMIT" ]]; then
+              EXPECTED_COMMIT="${PAYLOAD_COMMIT,,}"
+              if [[ "$FULL_SHA" != "$EXPECTED_COMMIT" ]]; then
+                echo "::error::Tag $TARGET_REF resolved to $FULL_SHA, expected $EXPECTED_COMMIT" >&2
+                exit 1
+              fi
+            fi
+            CORE_TAG="$TARGET_REF"
           else
-            echo "Ref '$TARGET_REF' not found in rabbitcontrol-core, falling back to main"
-            git checkout main
+            if git rev-parse --verify --quiet "refs/tags/$TARGET_REF" >/dev/null || \
+               git rev-parse --verify --quiet "refs/remotes/origin/$TARGET_REF" >/dev/null || \
+               git rev-parse --verify --quiet "$TARGET_REF^{commit}" >/dev/null; then
+              git checkout "$TARGET_REF"
+            else
+              echo "Ref '$TARGET_REF' not found in rabbitcontrol-core, falling back to main"
+              git checkout main
+            fi
+            FULL_SHA="$(git rev-parse HEAD)"
+            FULL_SHA="${FULL_SHA,,}"
+            CORE_TAG="$TARGET_REF"
           fi
 
-          SHA="$(git rev-parse --short HEAD)"
-          VER="${{ steps.meta.outputs.core_version }}"
+          SHORT_SHA="$(git rev-parse --short HEAD)"
+          VER="$META_CORE_VERSION"
           if [[ -z "$VER" ]]; then
-            RAW_TAG="$(git describe --tags --abbrev=0 2>/dev/null || echo '0.1.0')"
-            VER="${RAW_TAG#v}"
-            VER="${VER#V}"
+            if [[ "$MODE" == "core-dispatch" ]]; then
+              VER="${TARGET_REF#v}"
+            else
+              RAW_TAG="$(git describe --tags --abbrev=0 2>/dev/null || echo '0.1.0')"
+              VER="${RAW_TAG#v}"
+              VER="${VER#V}"
+            fi
           fi
           VER="${VER#v}"
           VER="${VER#V}"
 
-          if [[ "${{ github.event_name }}" == "push" ]]; then
-            RELEASE_TAG="$GITHUB_REF_NAME"
+          if [[ "$EVENT_NAME" == "push" ]]; then
+            RELEASE_TAG="$REF_NAME"
           else
             RELEASE_TAG="core-v${VER}"
           fi
 
-          echo "core_git_sha=$SHA" >> "$GITHUB_OUTPUT"
-          echo "core_version=$VER" >> "$GITHUB_OUTPUT"
-          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          {
+            echo "core_tag=$CORE_TAG"
+            echo "core_commit=$FULL_SHA"
+            echo "core_git_sha=$SHORT_SHA"
+            echo "core_version=$VER"
+            echo "release_tag=$RELEASE_TAG"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Resolve release notes from changelog or fallback
         id: core_notes
         shell: bash
+        env:
+          RELEASE_TAG: ${{ steps.core_git.outputs.release_tag }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          RELEASE_TAG="${{ steps.core_git.outputs.release_tag }}"
-          GH_NOTES_FILE="${{ runner.temp }}/gh_release_notes.md"
-          MANIFEST_NOTES_FILE="${{ runner.temp }}/release_notes.txt"
-          MANUAL_NOTES_FILE="${{ runner.temp }}/manual_release_notes.txt"
+          set -euo pipefail
+          mkdir -p core-release-assets/notes
+          GH_NOTES_FILE="core-release-assets/notes/gh_release_notes.md"
+          MANIFEST_NOTES_FILE="$RUNNER_TEMP/release_notes.txt"
+          MANUAL_NOTES_FILE="$RUNNER_TEMP/manual_release_notes.txt"
 
           python3 scripts/extract-changelog.py \
             --tag "$RELEASE_TAG" \
@@ -141,8 +310,8 @@ jobs:
             if [[ -f "$MANUAL_NOTES_FILE" && -n "$(tr -d '[:space:]' < "$MANUAL_NOTES_FILE")" ]]; then
               cp "$MANUAL_NOTES_FILE" "$GH_NOTES_FILE"
               cp "$MANUAL_NOTES_FILE" "$MANIFEST_NOTES_FILE"
-            elif [[ "${{ github.event_name }}" == "push" ]]; then
-              git tag -l --format='%(contents)' "$GITHUB_REF_NAME" > "$GH_NOTES_FILE"
+            elif [[ "$EVENT_NAME" == "push" ]]; then
+              git tag -l --format='%(contents)' "$REF_NAME" > "$GH_NOTES_FILE"
               cp "$GH_NOTES_FILE" "$MANIFEST_NOTES_FILE"
             fi
           fi
@@ -210,40 +379,143 @@ jobs:
       - name: Build and sign core-manifest.json
         env:
           CORE_SIGNING_PRIVATE_KEY_PEM: ${{ secrets.CORE_SIGNING_PRIVATE_KEY_PEM }}
+          CORE_VERSION: ${{ steps.core_git.outputs.core_version }}
+          RELEASE_TAG: ${{ steps.core_git.outputs.release_tag }}
+          CORE_GIT_SHA: ${{ steps.core_git.outputs.core_git_sha }}
+          ABI_VERSION: ${{ steps.meta.outputs.abi_version }}
+          MIN_APP_VERSION: ${{ steps.meta.outputs.min_app_version }}
+          MANIFEST_NOTES_FILE: ${{ steps.core_notes.outputs.manifest_notes_file }}
         run: |
+          set -euo pipefail
           if [[ -z "$CORE_SIGNING_PRIVATE_KEY_PEM" ]]; then
             echo "Secret CORE_SIGNING_PRIVATE_KEY_PEM is required" >&2
             exit 1
           fi
-          KEY_FILE="${{ runner.temp }}/core-signing-private.pem"
+          KEY_FILE="$RUNNER_TEMP/core-signing-private.pem"
           printf '%s\n' "$CORE_SIGNING_PRIVATE_KEY_PEM" > "$KEY_FILE"
           chmod 600 "$KEY_FILE"
 
           chmod +x scripts/build-core-manifest.sh
           ./scripts/build-core-manifest.sh \
-            --core-version "${{ steps.core_git.outputs.core_version }}" \
-            --tag-name "${{ steps.core_git.outputs.release_tag }}" \
-            --core-git-sha "${{ steps.core_git.outputs.core_git_sha }}" \
-            --abi-version "${{ steps.meta.outputs.abi_version }}" \
-            --min-app-version "${{ steps.meta.outputs.min_app_version }}" \
+            --core-version "$CORE_VERSION" \
+            --tag-name "$RELEASE_TAG" \
+            --core-git-sha "$CORE_GIT_SHA" \
+            --abi-version "$ABI_VERSION" \
+            --min-app-version "$MIN_APP_VERSION" \
             --so-path "build-jni/arm64-v8a/librabbitcontrol_android.so" \
             --abi "arm64-v8a" \
-            --release-notes-file "${{ steps.core_notes.outputs.manifest_notes_file }}" \
+            --release-notes-file "$MANIFEST_NOTES_FILE" \
             --out-dir "core-release-assets" \
             --private-key-file "$KEY_FILE"
 
       - name: Clean up signing key
         if: always()
-        run: rm -f "${{ runner.temp }}/core-signing-private.pem"
+        run: rm -f "$RUNNER_TEMP/core-signing-private.pem"
+
+      - name: Verify release asset checksums
+        run: (cd core-release-assets && sha256sum -c SHA256SUMS.txt)
+
+      - name: Generate platform-android.json
+        if: steps.meta.outputs.mode == 'core-dispatch'
+        env:
+          REPO_NAME: ${{ github.repository }}
+          CORE_VERSION: ${{ steps.core_git.outputs.core_version }}
+          COMMIT_SHA: ${{ github.sha }}
+          CORE_TAG: ${{ steps.core_git.outputs.core_tag }}
+          CORE_COMMIT: ${{ steps.core_git.outputs.core_commit }}
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import pathlib
+
+          assets_dir = pathlib.Path("core-release-assets")
+          specs = [
+              {
+                  "name": "librabbitcontrol_android-arm64-v8a.so",
+                  "extra": {"arch": "arm64-v8a", "format": "so"},
+              },
+              {
+                  "name": "core-manifest.json",
+                  "extra": {"format": "json"},
+              },
+              {
+                  "name": "core-manifest.json.sig",
+                  "extra": {"format": "ecdsa-sha256-b64"},
+              },
+          ]
+
+          artifacts = []
+          for spec in specs:
+              p = assets_dir / spec["name"]
+              data = p.read_bytes()
+              artifacts.append(
+                  {
+                      "name": spec["name"],
+                      "sha256": hashlib.sha256(data).hexdigest(),
+                      "size": len(data),
+                      **spec["extra"],
+                  }
+              )
+
+          payload = {
+              "platform": "android",
+              "repo": os.environ["REPO_NAME"],
+              "version": os.environ["CORE_VERSION"],
+              "commit": os.environ["COMMIT_SHA"],
+              "coreTag": os.environ["CORE_TAG"],
+              "coreCommit": os.environ["CORE_COMMIT"],
+              "artifacts": artifacts,
+          }
+
+          out_path = assets_dir / "platform-android.json"
+          out_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+          PY
+
+      - name: Upload Android core release assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-core-assets
+          if-no-files-found: error
+          path: |
+            core-release-assets/librabbitcontrol_android-arm64-v8a.so
+            core-release-assets/core-manifest.json
+            core-release-assets/core-manifest.json.sig
+            core-release-assets/SHA256SUMS.txt
+            core-release-assets/notes/
+
+      - name: Upload platform-android.json artifact
+        if: steps.meta.outputs.mode == 'core-dispatch'
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-platform-manifest
+          if-no-files-found: error
+          path: core-release-assets/platform-android.json
+
+  publish-local:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download Android core assets
+        uses: actions/download-artifact@v8
+        with:
+          name: android-core-assets
+          path: core-release-assets
+
+      - name: Verify downloaded asset checksums
+        run: (cd core-release-assets && sha256sum -c SHA256SUMS.txt)
 
       - name: Publish Core GitHub Release (with release notes)
-        if: steps.core_notes.outputs.has_notes == 'true'
+        if: needs.build.outputs.has_notes == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.core_git.outputs.release_tag }}
-          name: "Core v${{ steps.core_git.outputs.core_version }}"
+          tag_name: ${{ needs.build.outputs.release_tag }}
+          name: "Core v${{ needs.build.outputs.core_version }}"
           make_latest: "false"
-          body_path: ${{ steps.core_notes.outputs.gh_notes_file }}
+          body_path: core-release-assets/notes/gh_release_notes.md
           generate_release_notes: false
           files: |
             core-release-assets/librabbitcontrol_android-arm64-v8a.so
@@ -252,11 +524,11 @@ jobs:
             core-release-assets/SHA256SUMS.txt
 
       - name: Publish Core GitHub Release (auto-generated notes)
-        if: steps.core_notes.outputs.has_notes != 'true'
+        if: needs.build.outputs.has_notes != 'true'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.core_git.outputs.release_tag }}
-          name: "Core v${{ steps.core_git.outputs.core_version }}"
+          tag_name: ${{ needs.build.outputs.release_tag }}
+          name: "Core v${{ needs.build.outputs.core_version }}"
           make_latest: "false"
           generate_release_notes: true
           files: |
@@ -265,16 +537,259 @@ jobs:
             core-release-assets/core-manifest.json.sig
             core-release-assets/SHA256SUMS.txt
 
-      - name: Upload Android artifacts to upstream core release (optional)
-        if: github.event_name == 'repository_dispatch' && env.CROSS_REPO_RELEASE_TOKEN != ''
+  publish-core:
+    needs: build
+    if: needs.build.outputs.mode == 'core-dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Download Android core assets
+        uses: actions/download-artifact@v8
+        with:
+          name: android-core-assets
+          path: core-release-assets
+
+      - name: Download platform-android.json artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: android-platform-manifest
+          path: core-release-assets
+
+      - name: Verify downloaded checksums and platform-android.json
         env:
-          GH_TOKEN: ${{ secrets.CROSS_REPO_RELEASE_TOKEN }}
-          CROSS_REPO_RELEASE_TOKEN: ${{ secrets.CROSS_REPO_RELEASE_TOKEN }}
-          CORE_REPO: ${{ steps.meta.outputs.core_repo }}
-          CORE_TAG: ${{ steps.meta.outputs.core_ref }}
+          CORE_TAG: ${{ needs.build.outputs.core_tag }}
+          CORE_COMMIT: ${{ needs.build.outputs.core_commit }}
         run: |
-          gh release upload "$CORE_TAG" --repo "$CORE_REPO" --clobber \
-            core-release-assets/librabbitcontrol_android-arm64-v8a.so \
-            core-release-assets/core-manifest.json \
-            core-release-assets/core-manifest.json.sig \
-            core-release-assets/SHA256SUMS.txt || echo "::warning::Skipped upstream core release upload"
+          set -euo pipefail
+          (cd core-release-assets && sha256sum -c SHA256SUMS.txt)
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import pathlib
+
+          assets_dir = pathlib.Path("core-release-assets")
+          manifest = json.loads((assets_dir / "platform-android.json").read_text(encoding="utf-8"))
+
+          expected_tag = os.environ["CORE_TAG"]
+          expected_commit = os.environ["CORE_COMMIT"].lower()
+          if manifest.get("platform") != "android":
+              raise SystemExit(f"Unexpected platform: {manifest.get('platform')!r}")
+          if manifest.get("coreTag") != expected_tag:
+              raise SystemExit(f"coreTag mismatch: {manifest.get('coreTag')!r} != {expected_tag!r}")
+          if manifest.get("coreCommit", "").lower() != expected_commit:
+              raise SystemExit(f"coreCommit mismatch: {manifest.get('coreCommit')!r} != {expected_commit!r}")
+
+          artifacts = manifest.get("artifacts")
+          if not isinstance(artifacts, list) or len(artifacts) != 3:
+              raise SystemExit(f"Unexpected artifacts list: {artifacts!r}")
+
+          expected_names = {
+              "librabbitcontrol_android-arm64-v8a.so",
+              "core-manifest.json",
+              "core-manifest.json.sig",
+          }
+          seen_names = set()
+          for item in artifacts:
+              name = item.get("name")
+              seen_names.add(name)
+              p = assets_dir / str(name)
+              if not p.is_file():
+                  raise SystemExit(f"Missing declared artifact file: {p}")
+              data = p.read_bytes()
+              actual_sha = hashlib.sha256(data).hexdigest()
+              actual_size = len(data)
+              if actual_sha != item.get("sha256"):
+                  raise SystemExit(f"SHA-256 mismatch for {name}: {actual_sha} != {item.get('sha256')}")
+              if actual_size != item.get("size"):
+                  raise SystemExit(f"Size mismatch for {name}: {actual_size} != {item.get('size')}")
+
+          if seen_names != expected_names:
+              raise SystemExit(f"Artifact set mismatch: {seen_names!r} != {expected_names!r}")
+
+          print("Verified SHA256SUMS.txt and platform-android.json against downloaded binaries.")
+          PY
+
+      - name: Generate GitHub App core-release token
+        id: app-token
+        if: ${{ secrets.RELEASE_APP_ID != '' && secrets.RELEASE_APP_PRIVATE_KEY != '' }}
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: TokenBoom
+          repositories: rabbitcontrol-core
+
+      - name: Upload Android artifacts to core release and dispatch finalize
+        env:
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          LEGACY_TOKEN: ${{ secrets.CROSS_REPO_RELEASE_TOKEN }}
+          CORE_REPO: ${{ needs.build.outputs.core_repo }}
+          CORE_TAG: ${{ needs.build.outputs.core_tag }}
+          CORE_COMMIT: ${{ needs.build.outputs.core_commit }}
+          CORE_RELEASE_ID: ${{ needs.build.outputs.core_release_id }}
+          EXPECTED_PLATFORMS: ${{ needs.build.outputs.expected_platforms }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+          import re
+          import sys
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          CORE_REPO_RE = re.compile(r"^TokenBoom/[A-Za-z0-9_.-]+$")
+          RELEASE_ID_RE = re.compile(r"^[1-9][0-9]*$")
+          API_BASE = "https://api.github.com"
+          UPLOADS_BASE = "https://uploads.github.com"
+
+          token = (os.environ.get("APP_TOKEN", "").strip() or os.environ.get("LEGACY_TOKEN", "").strip())
+          if not token:
+              print("::error::Neither GitHub App token nor CROSS_REPO_RELEASE_TOKEN is configured.", file=sys.stderr)
+              raise SystemExit(1)
+
+          core_repo = os.environ["CORE_REPO"].strip()
+          if not CORE_REPO_RE.match(core_repo) or ".." in core_repo:
+              raise SystemExit(f"Invalid CORE_REPO: {core_repo!r}")
+
+          core_tag = os.environ["CORE_TAG"].strip()
+          core_commit = os.environ["CORE_COMMIT"].strip()
+          core_release_id_raw = os.environ.get("CORE_RELEASE_ID", "").strip()
+          expected_list = [p.strip() for p in os.environ.get("EXPECTED_PLATFORMS", "ios,android").split(",") if p.strip()]
+          if not expected_list:
+              expected_list = ["ios", "android"]
+
+          def gh_request(method: str, url: str, body: bytes | None = None, content_type: str | None = None, timeout: int = 60) -> tuple[int, bytes, dict]:
+              headers = {
+                  "Authorization": f"Bearer {token}",
+                  "Accept": "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+                  "User-Agent": "rabbitcontrol-android-release-ci",
+              }
+              if content_type is not None:
+                  headers["Content-Type"] = content_type
+              if body is not None:
+                  headers["Content-Length"] = str(len(body))
+              req = urllib.request.Request(url, data=body, headers=headers, method=method)
+              try:
+                  with urllib.request.urlopen(req, timeout=timeout) as resp:
+                      return resp.status, resp.read(), dict(resp.headers.items())
+              except urllib.error.HTTPError as exc:
+                  err_body = exc.read(2048).decode("utf-8", errors="replace")
+                  raise SystemExit(f"GitHub API {method} {url} failed with HTTP {exc.code}: {err_body}") from exc
+
+          def gh_json(method: str, url: str, payload: dict | None = None) -> tuple[int, object, dict]:
+              body = None if payload is None else json.dumps(payload).encode("utf-8")
+              ct = None if payload is None else "application/json"
+              status, raw, headers = gh_request(method, url, body=body, content_type=ct)
+              parsed = json.loads(raw.decode("utf-8")) if raw else None
+              return status, parsed, headers
+
+          # 1. Resolve release (Draft-safe: works for both Draft and Published)
+          release = None
+          if core_release_id_raw:
+              if not RELEASE_ID_RE.match(core_release_id_raw):
+                  raise SystemExit(f"Invalid CORE_RELEASE_ID: {core_release_id_raw!r}")
+              _, rel_obj, _ = gh_json("GET", f"{API_BASE}/repos/{core_repo}/releases/{core_release_id_raw}")
+              if not isinstance(rel_obj, dict) or rel_obj.get("tag_name") != core_tag:
+                  raise SystemExit(
+                      f"Release id {core_release_id_raw} tag_name mismatch: "
+                      f"got {rel_obj.get('tag_name') if isinstance(rel_obj, dict) else None!r}, expected {core_tag!r}"
+                  )
+              release = rel_obj
+          else:
+              page = 1
+              while True:
+                  _, page_items, _ = gh_json("GET", f"{API_BASE}/repos/{core_repo}/releases?per_page=100&page={page}")
+                  if not isinstance(page_items, list) or not page_items:
+                      break
+                  for rel_obj in page_items:
+                      if isinstance(rel_obj, dict) and rel_obj.get("tag_name") == core_tag:
+                          release = rel_obj
+                          break
+                  if release is not None or len(page_items) < 100:
+                      break
+                  page += 1
+
+          if release is None:
+              raise SystemExit(f"Release for tag {core_tag!r} not found in {core_repo} (including drafts).")
+
+          resolved_release_id = int(release["id"])
+          print(f"Resolved {core_repo} release id={resolved_release_id} tag={core_tag} draft={release.get('draft')}")
+
+          # 2. Fetch existing release assets (paginated) for idempotent delete+upload
+          existing_assets: dict[str, int] = {}
+          page = 1
+          while True:
+              _, asset_items, _ = gh_json(
+                  "GET",
+                  f"{API_BASE}/repos/{core_repo}/releases/{resolved_release_id}/assets?per_page=100&page={page}",
+              )
+              if not isinstance(asset_items, list) or not asset_items:
+                  break
+              for asset in asset_items:
+                  if isinstance(asset, dict) and asset.get("name") and asset.get("id"):
+                      existing_assets[str(asset["name"])] = int(asset["id"])
+              if len(asset_items) < 100:
+                  break
+              page += 1
+
+          # 3. Upload ONLY the 4 Android core release artifacts (never SHA256SUMS.txt)
+          assets_dir = pathlib.Path("core-release-assets")
+          upload_specs = [
+              ("librabbitcontrol_android-arm64-v8a.so", "application/octet-stream"),
+              ("core-manifest.json", "application/json"),
+              ("core-manifest.json.sig", "text/plain"),
+              ("platform-android.json", "application/json"),
+          ]
+
+          for filename, content_type in upload_specs:
+              file_path = assets_dir / filename
+              data = file_path.read_bytes()
+              if filename in existing_assets:
+                  old_id = existing_assets[filename]
+                  del_status, _, _ = gh_request(
+                      "DELETE",
+                      f"{API_BASE}/repos/{core_repo}/releases/assets/{old_id}",
+                  )
+                  if del_status not in (200, 204):
+                      raise SystemExit(f"Unexpected DELETE asset status {del_status} for {filename}")
+                  print(f"Deleted existing asset {filename} (id={old_id})")
+
+              encoded_name = urllib.parse.quote(filename, safe="")
+              upload_url = f"{UPLOADS_BASE}/repos/{core_repo}/releases/{resolved_release_id}/assets?name={encoded_name}"
+              up_status, up_raw, _ = gh_request("POST", upload_url, body=data, content_type=content_type, timeout=180)
+              if not (200 <= up_status < 300):
+                  raise SystemExit(f"Upload failed for {filename} with HTTP {up_status}")
+              up_obj = json.loads(up_raw.decode("utf-8"))
+              if up_obj.get("name") != filename or up_obj.get("size") != len(data):
+                  raise SystemExit(
+                      f"Uploaded asset metadata mismatch for {filename}: "
+                      f"name={up_obj.get('name')!r}, size={up_obj.get('size')!r} (expected {len(data)})"
+                  )
+              print(f"Uploaded {filename} ({len(data)} bytes) to release {resolved_release_id}")
+
+          # 4. Dispatch rabbitcontrol-core-platform-ready (assert HTTP 204)
+          dispatch_payload = {
+              "event_type": "rabbitcontrol-core-platform-ready",
+              "client_payload": {
+                  "tag": core_tag,
+                  "platform": "android",
+                  "commit": core_commit,
+                  "release_id": resolved_release_id,
+                  "expected_platforms": expected_list,
+              },
+          }
+          disp_status, _, _ = gh_request(
+              "POST",
+              f"{API_BASE}/repos/{core_repo}/dispatches",
+              body=json.dumps(dispatch_payload).encode("utf-8"),
+              content_type="application/json",
+          )
+          if disp_status != 204:
+              raise SystemExit(f"Expected HTTP 204 from repository_dispatch, got {disp_status}")
+          print(f"Dispatched rabbitcontrol-core-platform-ready to {core_repo} for {core_tag} (release_id={resolved_release_id}).")
+          PY
