@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Process
+import android.util.Log
 import io.rabbitcontrol.android.BuildConfig
 import io.rabbitcontrol.android.R
 import io.rabbitcontrol.android.core.i18n.AppStrings
@@ -120,6 +121,59 @@ internal fun applyMirrorPrefix(url: String, mirrorPrefix: String): String {
     if (normalized.isEmpty()) return url
     if (url.startsWith(normalized)) return url
     return normalized + url
+}
+
+internal fun buildVerifiedEntryFromUnifiedManifest(
+    unified: CoreReleaseManifest,
+    manifestBytes: ByteArray,
+    sigBytes: ByteArray,
+    publicKeyBase64: String,
+    coreRepoUrl: String = CoreUpdateManager.CORE_REPO_URL,
+): VerifiedCoreReleaseEntry? {
+    val manifestMeta = unified.androidManifestArtifact ?: return null
+    val sigMeta = unified.androidSigArtifact ?: return null
+
+    if (CoreManifestVerifier.sha256Hex(manifestBytes) != manifestMeta.sha256) return null
+    if (CoreManifestVerifier.sha256Hex(sigBytes) != sigMeta.sha256) return null
+
+    val sigText = sigBytes.toString(Charsets.UTF_8)
+    if (!CoreManifestVerifier.verifyManifestSignature(
+            manifestBytes = manifestBytes,
+            signatureBase64 = sigText,
+            publicKeyBase64 = publicKeyBase64,
+        )
+    ) {
+        return null
+    }
+
+    val manifest = runCatching {
+        CoreManifest.parse(manifestBytes.toString(Charsets.UTF_8))
+    }.getOrNull() ?: return null
+
+    if (manifest.coreVersion != unified.coreVersion || manifest.abiVersion != unified.abiVersion) {
+        return null
+    }
+
+    val unifiedSoMap = unified.androidSoArtifacts
+    val assetUrlOverrides = LinkedHashMap<String, String>()
+    for ((abi, artifact) in manifest.abis) {
+        val unifiedSo = unifiedSoMap[abi]
+        if (unifiedSo != null) {
+            if (unifiedSo.name != artifact.fileName ||
+                unifiedSo.sha256 != artifact.sha256 ||
+                unifiedSo.sizeBytes != artifact.sizeBytes
+            ) {
+                return null
+            }
+        }
+        assetUrlOverrides[artifact.fileName] = "$coreRepoUrl/releases/download/${unified.tag}/${artifact.fileName}"
+    }
+
+    return VerifiedCoreReleaseEntry(
+        manifest = manifest,
+        htmlUrl = "$coreRepoUrl/releases/tag/${unified.tag}",
+        assetUrlOverrides = assetUrlOverrides,
+    )
 }
 
 internal fun selectCoreUpdateFromManifests(
@@ -320,6 +374,7 @@ class CoreUpdateManager(
             var conn: HttpURLConnection? = null
             try {
                 val downloadUrl = applyMirrorPrefix(candidate.soDownloadUrl, _state.value.mirrorPrefix)
+                Log.i("RC_CORE_UPDATE", "Downloading core v${candidate.manifest.coreVersion} from $downloadUrl")
                 conn = openFollowingRedirects(downloadUrl, accept = "application/octet-stream")
                 val code = conn.responseCode
                 if (code !in 200..299) {
@@ -385,6 +440,7 @@ class CoreUpdateManager(
                     artifact = candidate.artifact,
                     stagedFile = partFile,
                 )
+                Log.i("RC_CORE_UPDATE", "Verified & installed core v${candidate.manifest.coreVersion}")
                 _state.value = _state.value.copy(
                     downloadState = CoreDownloadState.ReadyToRestart(
                         targetVersion = candidate.manifest.coreVersion,
@@ -461,39 +517,92 @@ class CoreUpdateManager(
     }
 
     private fun fetchAndSelectCoreUpdate(): CoreReleaseSelection {
-        val verifiedReleases = fetchVerifiedCoreReleases()
         val storeState = NativeLibraryLoader.runtimeStore()?.loadState()
         val blacklist = storeState?.blacklistedVersions ?: emptySet()
-        val selection = selectCoreUpdateFromManifests(
-            releases = verifiedReleases,
-            effectiveCurrentVersion = effectiveCurrentVersion(),
-            supportedAbiVersion = BuildConfig.CORE_ABI_VERSION,
-            supportedAbis = Build.SUPPORTED_ABIS.toList(),
-            blacklistedVersions = blacklist,
-        )
-        if (selection.bestCompatible == null && selection.incompatibleNotice == null) {
-            val upstreamNotice = runCatching { fetchUpstreamIncompatibleHint() }.getOrNull()
-            if (upstreamNotice != null) {
-                return selection.copy(incompatibleNotice = upstreamNotice)
+        val effectiveVer = effectiveCurrentVersion()
+        val supportedAbis = Build.SUPPORTED_ABIS.toList()
+        val supportedAbiVersion = BuildConfig.CORE_ABI_VERSION
+
+        var upstreamIncompatible: CoreIncompatibleNotice? = null
+        val mirror = _state.value.mirrorPrefix
+        val unifiedRaw = runCatching {
+            downloadBytes(applyMirrorPrefix(CORE_REPO_LATEST_MANIFEST_URL, mirror), maxBytes = 256 * 1024)
+                .toString(Charsets.UTF_8)
+        }.getOrNull()
+        val unified = unifiedRaw?.let { raw -> runCatching { CoreReleaseManifest.parse(raw) }.getOrNull() }
+
+        if (unified != null) {
+            if (unified.abiVersion > supportedAbiVersion) {
+                upstreamIncompatible = CoreIncompatibleNotice(
+                    coreVersion = unified.coreVersion,
+                    requiredAbiVersion = unified.abiVersion,
+                    minAppVersion = unified.minClientAndroidVersion,
+                    htmlUrl = "$CORE_REPO_URL/releases/tag/${unified.tag}",
+                )
+            } else if (unified.abiVersion == supportedAbiVersion) {
+                val manifestArtifact = unified.androidManifestArtifact
+                val sigArtifact = unified.androidSigArtifact
+                if (manifestArtifact != null && sigArtifact != null) {
+                    val baseDownload = "$CORE_REPO_URL/releases/download/${unified.tag}"
+                    val manifestBytes = runCatching {
+                        downloadBytes(
+                            applyMirrorPrefix("$baseDownload/${manifestArtifact.name}", mirror),
+                            maxBytes = 512 * 1024,
+                        )
+                    }.getOrNull()
+                    val sigBytes = runCatching {
+                        downloadBytes(
+                            applyMirrorPrefix("$baseDownload/${sigArtifact.name}", mirror),
+                            maxBytes = 16 * 1024,
+                        )
+                    }.getOrNull()
+                    val verifiedEntry = if (manifestBytes != null && sigBytes != null) {
+                        buildVerifiedEntryFromUnifiedManifest(
+                            unified = unified,
+                            manifestBytes = manifestBytes,
+                            sigBytes = sigBytes,
+                            publicKeyBase64 = BuildConfig.CORE_SIGNING_PUBLIC_KEY_B64,
+                            coreRepoUrl = CORE_REPO_URL,
+                        )
+                    } else {
+                        null
+                    }
+                    if (verifiedEntry != null) {
+                        Log.i(
+                            "RC_CORE_UPDATE",
+                            "Verified unified core manifest v${verifiedEntry.manifest.coreVersion} from $CORE_REPO_URL/releases/tag/${unified.tag}",
+                        )
+                        val primarySelection = selectCoreUpdateFromManifests(
+                            releases = listOf(verifiedEntry),
+                            effectiveCurrentVersion = effectiveVer,
+                            supportedAbiVersion = supportedAbiVersion,
+                            supportedAbis = supportedAbis,
+                            blacklistedVersions = blacklist,
+                        )
+                        val alreadyUpToDate = compareSemVer(verifiedEntry.manifest.coreVersion, effectiveVer) <= 0
+                        if (primarySelection.bestCompatible != null ||
+                            (alreadyUpToDate && verifiedEntry.manifest.coreVersion !in blacklist)
+                        ) {
+                            return primarySelection
+                        }
+                    }
+                }
             }
         }
-        return selection
-    }
 
-    private fun fetchUpstreamIncompatibleHint(): CoreIncompatibleNotice? {
-        val mirror = _state.value.mirrorPrefix
-        val raw = runCatching {
-            downloadBytes(applyMirrorPrefix(CORE_REPO_LATEST_MANIFEST_URL, mirror), maxBytes = 128 * 1024)
-                .toString(Charsets.UTF_8)
-        }.getOrNull() ?: return null
-        val manifest = runCatching { CoreReleaseManifest.parse(raw) }.getOrNull() ?: return null
-        if (manifest.abiVersion <= BuildConfig.CORE_ABI_VERSION) return null
-        return CoreIncompatibleNotice(
-            coreVersion = manifest.coreVersion,
-            requiredAbiVersion = manifest.abiVersion,
-            minAppVersion = manifest.minClientAndroidVersion,
-            htmlUrl = "$CORE_REPO_URL/releases/tag/${manifest.tag}",
+        Log.i("RC_CORE_UPDATE", "Falling back to legacy android core-v* releases")
+        val verifiedReleases = fetchVerifiedCoreReleases()
+        val selection = selectCoreUpdateFromManifests(
+            releases = verifiedReleases,
+            effectiveCurrentVersion = effectiveVer,
+            supportedAbiVersion = supportedAbiVersion,
+            supportedAbis = supportedAbis,
+            blacklistedVersions = blacklist,
         )
+        if (selection.incompatibleNotice == null && upstreamIncompatible != null) {
+            return selection.copy(incompatibleNotice = upstreamIncompatible)
+        }
+        return selection
     }
 
     private fun fetchVerifiedCoreReleases(): List<VerifiedCoreReleaseEntry> {

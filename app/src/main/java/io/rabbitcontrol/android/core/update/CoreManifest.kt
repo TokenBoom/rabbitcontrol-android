@@ -105,6 +105,14 @@ data class CoreManifest(
     }
 }
 
+data class CoreReleasePlatformArtifact(
+    val name: String,
+    val format: String,
+    val arch: String,
+    val sha256: String,
+    val sizeBytes: Long,
+)
+
 data class CoreReleaseManifest(
     val schemaVersion: String,
     val coreVersion: String,
@@ -116,16 +124,35 @@ data class CoreReleaseManifest(
     val protocolSession: Int,
     val protocolPunch: Int,
     val protocolBeacon: Int,
+    val androidArtifacts: List<CoreReleasePlatformArtifact> = emptyList(),
 ) {
+    val androidManifestArtifact: CoreReleasePlatformArtifact?
+        get() = androidArtifacts.firstOrNull { it.name == CoreUpdateManager.MANIFEST_FILENAME }
+            ?: androidArtifacts.firstOrNull { it.format.equals("json", ignoreCase = true) }
+
+    val androidSigArtifact: CoreReleasePlatformArtifact?
+        get() = androidArtifacts.firstOrNull { it.name == CoreUpdateManager.MANIFEST_SIG_FILENAME }
+            ?: androidArtifacts.firstOrNull { it.format.equals("ecdsa-sha256-b64", ignoreCase = true) }
+
+    val androidSoArtifacts: Map<String, CoreReleasePlatformArtifact>
+        get() = androidArtifacts
+            .filter { it.format.equals("so", ignoreCase = true) && it.arch.isNotBlank() }
+            .associateBy { it.arch }
+
     companion object {
+        private val SHA256_REGEX = Regex("^[0-9a-f]{64}$")
+
         fun parse(rawJson: String): CoreReleaseManifest {
             val obj = JSONObject(rawJson)
             val schemaVersion = obj.optString("schemaVersion", "1.0.0").trim().ifBlank { "1.0.0" }
             val coreVersion = obj.optString("coreVersion", "").trim()
                 .removePrefix("v")
                 .removePrefix("V")
-            require(coreVersion.isNotBlank()) { "coreVersion is missing" }
+            require(coreVersion.isNotBlank() && CoreManifest.isSafeSegment(coreVersion)) {
+                "coreVersion is missing or invalid"
+            }
             val tag = obj.optString("tag", "v$coreVersion").trim().ifBlank { "v$coreVersion" }
+            require(CoreManifest.isSafeSegment(tag)) { "Invalid tag: $tag" }
             val gitCommit = obj.optString("gitCommit", "unknown").trim().ifBlank { "unknown" }
             val abiVersion = obj.optInt("abiVersion", 0)
             require(abiVersion > 0) { "Invalid abiVersion: $abiVersion" }
@@ -134,6 +161,35 @@ data class CoreReleaseManifest(
             val minClientAndroid = minClients?.optString("android", "0.2.2")?.trim()
                 ?.takeIf { it.isNotBlank() } ?: "0.2.2"
             val protos = obj.optJSONObject("protocolVersions")
+
+            val artifacts = buildList {
+                val arr = obj.optJSONObject("platforms")
+                    ?.optJSONObject("android")
+                    ?.optJSONArray("artifacts")
+                if (arr != null) {
+                    for (i in 0 until arr.length()) {
+                        val item = arr.optJSONObject(i) ?: continue
+                        val name = item.optString("name", "").trim()
+                        val format = item.optString("format", "").trim()
+                        val arch = item.optString("arch", "").trim()
+                        val sha256 = item.optString("sha256", "").trim().lowercase()
+                        val size = item.optLong("size", item.optLong("sizeBytes", 0L))
+                        if (!CoreManifest.isSafeSingleFileName(name)) continue
+                        if (!SHA256_REGEX.matches(sha256)) continue
+                        if (size <= 0L) continue
+                        add(
+                            CoreReleasePlatformArtifact(
+                                name = name,
+                                format = format,
+                                arch = arch,
+                                sha256 = sha256,
+                                sizeBytes = size,
+                            ),
+                        )
+                    }
+                }
+            }
+
             return CoreReleaseManifest(
                 schemaVersion = schemaVersion,
                 coreVersion = coreVersion,
@@ -145,6 +201,7 @@ data class CoreReleaseManifest(
                 protocolSession = protos?.optInt("session", 1) ?: 1,
                 protocolPunch = protos?.optInt("punch", 1) ?: 1,
                 protocolBeacon = protos?.optInt("beacon", 1) ?: 1,
+                androidArtifacts = artifacts,
             )
         }
     }
