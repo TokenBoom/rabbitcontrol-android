@@ -14,6 +14,25 @@ All notable user-facing changes to **RabbitControl Android** are documented in t
 
 ---
 
+## [v0.2.4] - 2026-11-27
+
+This release introduces full layered adaptive support for Android tablets, foldables, and multi-window/split-screen layouts while keeping phone layouts unchanged, refines tablet modal dialogs and remote session ergonomics, and resolves the Port Mapping dialog crash.
+
+### Added
+- **Adaptive Tablet & Large-Screen UI**:
+  - Added window-size breakpoints (`Compact < 600dp`, `Medium 600–839dp`, `Expanded >= 840dp`) in `AdaptiveLayout.kt` and enabled `resizeableActivity="true"` on `MainActivity` for split-screen and freeform windows.
+  - Replaced bottom navigation with an `80dp` left `NavigationRail` on `>= 600dp` screens, and introduced persistent List-Detail two-pane layouts for **Devices** and **Me / Settings** alongside a two-column **Remote Assistance** layout on `Expanded` screens.
+  - Added split-pane tablet layouts for Remote Tools: 60/40 side-by-side directory browser & transfer queue in **File Transfer**, collapsible `280dp` session sidebar in **Remote Terminal**, and a 2-column rule grid in **Port Mapping**.
+- **Tablet Modals & Remote Session Polish**:
+  - Added `RabbitAdaptiveSheet` (`>= 600dp` centered rounded dialog, `< 600dp` bottom sheet) for Server Add/Edit and Device Detail tool ordering / power management, plus an anchored server switcher Popover on tablets.
+  - Unlocked tablet orientation (`SCREEN_ORIENTATION_UNSPECIFIED`) in `SessionActivity`, defaulted tablet portrait sessions to fullscreen video, unified the Control Panel as a right-side drawer (`360–420dp`), and scaled up the tablet virtual keyboard and shortcut bar.
+
+### Fixed & Docs
+- **Port Mapping Dialog Crash & Large-Screen Polish**: Fixed nested `verticalScroll` crash when opening the Add Port Mapping Rule dialog, fixed reversed `fillMaxWidth().widthIn(...)` modifier order across auth/assist/session overlays, and centered tablet empty states (`420dp`) to avoid duplicate or over-stretched cards.
+- **Documentation & Version Bump**: Added privacy-redacted bilingual Android tablet screenshots to `README.md` / `README_zh.md` and bumped APK version to `0.2.4` (`versionCode = 6`).
+
+---
+
 ## [v0.2.3] - 2026-11-27
 
 This release upgrades the bundled core baseline to `rabbitcontrol-core v0.2.3`, aligns desktop-class security, host policy, device management, and in-session controls, adds unified `rabbitcontrol-core` release-manifest core OTA updates, streamlines the **Me** settings menu, and resolves UPnP discovery state sync.
