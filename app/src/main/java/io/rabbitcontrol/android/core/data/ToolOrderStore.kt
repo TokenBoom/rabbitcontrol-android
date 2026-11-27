@@ -1,16 +1,26 @@
 package io.rabbitcontrol.android.core.data
 
 import android.content.Context
+import androidx.annotation.StringRes
+import io.rabbitcontrol.android.R
+import io.rabbitcontrol.android.core.i18n.AppStrings
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONArray
 
-enum class DeviceToolKind(val key: String, val label: String) {
-    FileTransfer("file_transfer", "文件传输"),
-    WatchMode("watch", "观看模式"),
-    Terminal("terminal", "终端"),
-    PortMap("portmap", "端口映射"),
+enum class DeviceToolKind(
+    val key: String,
+    @StringRes val labelRes: Int,
+    private val defaultLabel: String,
+) {
+    FileTransfer("file_transfer", R.string.tool_file_transfer, "文件传输"),
+    WatchMode("watch", R.string.tool_watch_mode, "观看模式"),
+    Terminal("terminal", R.string.tool_terminal, "终端"),
+    PortMap("portmap", R.string.tool_port_map, "端口映射");
+
+    val label: String
+        get() = AppStrings.get(labelRes, defaultLabel)
 }
 
 class ToolOrderStore(context: Context) {

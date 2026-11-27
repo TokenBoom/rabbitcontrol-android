@@ -5,9 +5,12 @@ import android.net.wifi.WifiManager
 import android.util.Log
 import android.view.Surface
 import androidx.compose.runtime.Immutable
+import io.rabbitcontrol.android.R
 import io.rabbitcontrol.android.core.data.InteractionPrefsStore
 import io.rabbitcontrol.android.core.data.TargetHistoryStore
 import io.rabbitcontrol.android.core.data.WallpaperCache
+import io.rabbitcontrol.android.core.i18n.AppStrings
+import io.rabbitcontrol.android.core.i18n.NativeErrorLocalizer
 import io.rabbitcontrol.android.core.nativebridge.DisplayConfigModel
 import io.rabbitcontrol.android.core.nativebridge.DisplayPresetModel
 import io.rabbitcontrol.android.core.nativebridge.FileTransferItem
@@ -167,7 +170,10 @@ class SessionManager(
             targetId = targetId,
             deviceName = deviceName,
             deviceOs = deviceOs,
-            status = SessionStatus.Connecting("endpoint", "正在建立加密通道…"),
+            status = SessionStatus.Connecting(
+                "endpoint",
+                AppStrings.get(R.string.session_stage_init, "正在建立加密通道…"),
+            ),
             watchOnly = watchOnly,
             audioMuted = !prefs.audioEnabledDefault,
             clipboardEnabled = prefs.clipboardEnabledDefault,
@@ -186,7 +192,9 @@ class SessionManager(
             val resp = JSONObject(Core.openSession(req.toString()))
             Log.i("RC_DIAG", "openSession resp=$resp")
             if (resp.optBoolean("cancelled", false)) {
-                throw IllegalStateException("连接已取消")
+                throw IllegalStateException(
+                    AppStrings.get(R.string.session_err_cancelled, "连接已取消"),
+                )
             }
             resp
         }
@@ -196,15 +204,25 @@ class SessionManager(
             if (prefs.clipboardEnabledDefault) clipboardBridge.start()
             SessionForegroundService.startOrUpdate(
                 context,
-                title = "正在连接 $deviceName",
-                subtitle = if (watchOnly) "观看模式" else "远程桌面控制",
+                title = AppStrings.get(
+                    R.string.session_notif_connecting_title,
+                    "正在连接 $deviceName",
+                    deviceName,
+                ),
+                subtitle = if (watchOnly) {
+                    AppStrings.get(R.string.session_mode_watch, "观看模式")
+                } else {
+                    AppStrings.get(R.string.session_mode_control, "远程桌面控制")
+                },
             )
             startPolling()
         }.onFailure { err ->
             Log.w("RC_DIAG", "openSession failed: ${err.message}", err)
             releaseMulticastLock()
+            val errMsg = err.message?.let { NativeErrorLocalizer.localize(it) }
+                ?: AppStrings.get(R.string.session_err_connect_failed, "连接建立失败")
             _state.value = _state.value.copy(
-                status = SessionStatus.Error(err.message ?: "连接建立失败"),
+                status = SessionStatus.Error(errMsg),
             )
             SessionForegroundService.stop(context)
         }
@@ -393,11 +411,11 @@ class SessionManager(
                 val phase = data.optString("phase")
                 Log.i("RC_DIAG", "sessionUpdate connecting phase=$phase watchOnly=${data.optBoolean("watch_only", _state.value.watchOnly)}")
                 val label = when (phase) {
-                    "endpoint_creating" -> "准备传输端点…"
-                    "connecting" -> "正在建立安全握手…"
-                    "awaiting_welcome" -> "正在协商画质与权限…"
-                    "first_frame_pending" -> "等待首帧画面…"
-                    else -> "正在连接…"
+                    "endpoint_creating" -> AppStrings.get(R.string.session_stage_endpoint, "准备传输端点…")
+                    "connecting" -> AppStrings.get(R.string.session_stage_connecting, "正在建立安全握手…")
+                    "awaiting_welcome" -> AppStrings.get(R.string.session_stage_welcome, "正在协商画质与权限…")
+                    "first_frame_pending" -> AppStrings.get(R.string.session_stage_first_frame, "等待首帧画面…")
+                    else -> AppStrings.get(R.string.session_stage_default, "正在连接…")
                 }
                 _state.value = _state.value.copy(
                     status = SessionStatus.Connecting(phase, label),
@@ -428,7 +446,11 @@ class SessionManager(
                 )
                 SessionForegroundService.startOrUpdate(
                     context,
-                    title = "正在远控 ${_state.value.deviceName}",
+                    title = AppStrings.get(
+                        R.string.session_notif_controlling_title,
+                        "正在远控 ${_state.value.deviceName}",
+                        _state.value.deviceName,
+                    ),
                     subtitle = "${neg.width}×${neg.height} @ ${neg.fps}fps · ${neg.transport}",
                 )
             }
@@ -482,7 +504,12 @@ class SessionManager(
                 }
             }
             "session_switching" -> if (data != null) {
-                val reason = data.optString("reason").ifBlank { "远端正在切换桌面，自动重连中…" }
+                val rawReason = data.optString("reason")
+                val reason = if (rawReason.isBlank()) {
+                    AppStrings.get(R.string.session_reconnecting_desktop_switch, "远端正在切换桌面，自动重连中…")
+                } else {
+                    NativeErrorLocalizer.localize(rawReason)
+                }
                 Log.i("RC_DIAG", "sessionUpdate switching reason=$reason")
                 _state.value = _state.value.copy(status = SessionStatus.Switching(reason))
                 scope.launch {
@@ -501,7 +528,12 @@ class SessionManager(
             }
             "ended" -> if (data != null) {
                 if (_state.value.status is SessionStatus.Switching) return
-                val reason = data.optString("reason").ifBlank { "会话已结束" }
+                val rawReason = data.optString("reason")
+                val reason = if (rawReason.isBlank()) {
+                    AppStrings.get(R.string.session_ended_default, "会话已结束")
+                } else {
+                    NativeErrorLocalizer.localize(rawReason)
+                }
                 Log.i("RC_DIAG", "sessionUpdate ended reason=$reason")
                 clipboardBridge.stop()
                 releaseMulticastLock()

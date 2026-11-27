@@ -54,6 +54,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -62,6 +63,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.rabbitcontrol.android.R
+import io.rabbitcontrol.android.core.i18n.NativeErrorLocalizer
 import io.rabbitcontrol.android.core.nativebridge.TerminalSessionSummary
 import io.rabbitcontrol.android.core.session.SessionStatus
 import io.rabbitcontrol.android.ui.components.RabbitCard
@@ -104,7 +107,7 @@ fun TerminalScreen(
             .imePadding(),
     ) {
         RabbitTopBar(
-            title = if (inInteractiveTerm) "终端" else "终端远控",
+            title = stringResource(if (inInteractiveTerm) R.string.term_title_active else R.string.term_title_idle),
             subtitle = deviceName,
             onBack = {
                 if (inInteractiveTerm) viewModel.detachBackToList() else onBack()
@@ -114,7 +117,7 @@ fun TerminalScreen(
             actions = {
                 if (!inInteractiveTerm) {
                     IconButton(onClick = viewModel::refreshSessions, modifier = Modifier.size(44.dp)) {
-                        Icon(Icons.Rounded.Refresh, "刷新", tint = palette.muted)
+                        Icon(Icons.Rounded.Refresh, stringResource(R.string.common_refresh), tint = palette.muted)
                     }
                     Button(
                         onClick = viewModel::createTerminal,
@@ -130,11 +133,11 @@ fun TerminalScreen(
                     ) {
                         Icon(Icons.Rounded.Add, null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("新建", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        Text(stringResource(R.string.term_new), fontSize = 13.sp, fontWeight = FontWeight.Medium)
                     }
                 } else {
                     IconButton(onClick = viewModel::createTerminal, modifier = Modifier.size(44.dp)) {
-                        Icon(Icons.Rounded.Add, "新建标签", tint = SessionPalette.text)
+                        Icon(Icons.Rounded.Add, stringResource(R.string.term_cd_new_tab), tint = SessionPalette.text)
                     }
                 }
             },
@@ -154,7 +157,7 @@ fun TerminalScreen(
             }
             is SessionStatus.Error -> {
                 Text(
-                    text = "会话异常: ${st.message}",
+                    text = stringResource(R.string.ft_session_error, NativeErrorLocalizer.localize(st.message)),
                     fontSize = 12.sp,
                     color = palette.danger,
                     modifier = Modifier
@@ -165,7 +168,7 @@ fun TerminalScreen(
             }
             is SessionStatus.Ended -> {
                 Text(
-                    text = "会话已断开: ${st.reason}",
+                    text = stringResource(R.string.ft_session_disconnected, NativeErrorLocalizer.localize(st.reason)),
                     fontSize = 12.sp,
                     color = palette.danger,
                     modifier = Modifier
@@ -188,8 +191,8 @@ fun TerminalScreen(
                     item {
                         RabbitEmptyState(
                             icon = Icons.Rounded.Terminal,
-                            title = "暂无运行中的终端会话",
-                            description = "点击右上角「新建」在远端开启 PTY Shell。",
+                            title = stringResource(R.string.term_empty_title),
+                            description = stringResource(R.string.term_empty_desc),
                         )
                     }
                 } else {
@@ -212,7 +215,7 @@ fun TerminalScreen(
                                 Spacer(modifier = Modifier.width(12.dp))
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        sess.name.ifBlank { "终端 #${sess.termId}" },
+                                        sess.name.ifBlank { stringResource(R.string.term_default_name, sess.termId) },
                                         fontSize = 15.sp,
                                         fontWeight = FontWeight.SemiBold,
                                         color = palette.text,
@@ -234,13 +237,13 @@ fun TerminalScreen(
                                     },
                                     modifier = Modifier.size(44.dp),
                                 ) {
-                                    Icon(Icons.Rounded.Edit, "重命名", tint = palette.muted, modifier = Modifier.size(18.dp))
+                                    Icon(Icons.Rounded.Edit, stringResource(R.string.term_cd_rename), tint = palette.muted, modifier = Modifier.size(18.dp))
                                 }
                                 IconButton(
                                     onClick = { viewModel.closeTerminal(sess.termId) },
                                     modifier = Modifier.size(44.dp),
                                 ) {
-                                    Icon(Icons.Rounded.DeleteOutline, "关闭", tint = palette.danger, modifier = Modifier.size(18.dp))
+                                    Icon(Icons.Rounded.DeleteOutline, stringResource(R.string.common_close), tint = palette.danger, modifier = Modifier.size(18.dp))
                                 }
                             }
                         }
@@ -285,7 +288,7 @@ fun TerminalScreen(
                         ) {
                             Icon(
                                 Icons.Rounded.Close,
-                                "关闭",
+                                stringResource(R.string.common_close),
                                 tint = SessionPalette.muted,
                                 modifier = Modifier.size(14.dp),
                             )
@@ -354,7 +357,7 @@ fun TerminalScreen(
                     TermKeyChip("|") { viewModel.sendTextOrCommand("|") }
                     TermKeyChip("~") { viewModel.sendTextOrCommand("~") }
                     TermKeyChip("/") { viewModel.sendTextOrCommand("/") }
-                    TermKeyChip("清屏") { viewModel.clearActiveBuffer() }
+                    TermKeyChip(stringResource(R.string.term_clear_screen)) { viewModel.clearActiveBuffer() }
                 }
 
                 Row(
@@ -391,7 +394,7 @@ fun TerminalScreen(
                         modifier = Modifier.weight(1f),
                         decorationBox = { inner ->
                             if (inputLine.isEmpty()) {
-                                Text("输入命令或文本后发送…", color = SessionPalette.muted, fontSize = 13.sp)
+                                Text(stringResource(R.string.term_input_hint), color = SessionPalette.muted, fontSize = 13.sp)
                             }
                             inner()
                         },
@@ -403,7 +406,7 @@ fun TerminalScreen(
                         },
                         modifier = Modifier.size(40.dp),
                     ) {
-                        Icon(Icons.AutoMirrored.Rounded.Send, "发送", tint = SessionPalette.accentText, modifier = Modifier.size(18.dp))
+                        Icon(Icons.AutoMirrored.Rounded.Send, stringResource(R.string.common_send), tint = SessionPalette.accentText, modifier = Modifier.size(18.dp))
                     }
                 }
             }
@@ -413,10 +416,10 @@ fun TerminalScreen(
     if (renameTarget != null) {
         val target = renameTarget!!
         RabbitDialog(
-            title = "重命名终端",
+            title = stringResource(R.string.term_rename_title),
             onDismissRequest = { renameTarget = null },
-            dismissLabel = "取消",
-            confirmLabel = "保存",
+            dismissLabel = stringResource(R.string.common_cancel),
+            confirmLabel = stringResource(R.string.common_save),
             confirmEnabled = renameDraft.isNotBlank(),
             onConfirm = {
                 viewModel.renameTerminal(target.termId, renameDraft)
@@ -426,7 +429,7 @@ fun TerminalScreen(
             RabbitTextField(
                 value = renameDraft,
                 onValueChange = { renameDraft = it },
-                placeholder = "输入终端名称",
+                placeholder = stringResource(R.string.term_rename_hint),
             )
         }
     }

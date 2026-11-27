@@ -52,92 +52,158 @@ object ScancodeMapper {
     const val SC_DELETE = 0xE053
     const val SC_LEFT_GUI = 0xE05B
     const val SC_RIGHT_GUI = 0xE05C
+    const val SC_PRINT_SCREEN = 0xE037
+    const val SC_SCROLL_LOCK = 0x46
+    const val SC_NUM_LOCK = 0x45
+    const val SC_CONTEXT_MENU = 0xE05D
+    const val SC_NUMPAD_0 = 0x52
+    const val SC_NUMPAD_1 = 0x4F
+    const val SC_NUMPAD_2 = 0x50
+    const val SC_NUMPAD_3 = 0x51
+    const val SC_NUMPAD_4 = 0x4B
+    const val SC_NUMPAD_5 = 0x4C
+    const val SC_NUMPAD_6 = 0x4D
+    const val SC_NUMPAD_7 = 0x47
+    const val SC_NUMPAD_8 = 0x48
+    const val SC_NUMPAD_9 = 0x49
+    const val SC_NUMPAD_DECIMAL = 0x53
+    const val SC_NUMPAD_ADD = 0x4E
+    const val SC_NUMPAD_SUBTRACT = 0x4A
+    const val SC_NUMPAD_MULTIPLY = 0x37
+    const val SC_NUMPAD_DIVIDE = 0xE035
+    const val SC_NUMPAD_ENTER = 0xE01C
 
-    fun keyCodeToScancode(keyCode: Int): Int? = when (keyCode) {
-        KeyEvent.KEYCODE_ESCAPE -> SC_ESC
-        KeyEvent.KEYCODE_1 -> 0x02
-        KeyEvent.KEYCODE_2 -> 0x03
-        KeyEvent.KEYCODE_3 -> 0x04
-        KeyEvent.KEYCODE_4 -> 0x05
-        KeyEvent.KEYCODE_5 -> 0x06
-        KeyEvent.KEYCODE_6 -> 0x07
-        KeyEvent.KEYCODE_7 -> 0x08
-        KeyEvent.KEYCODE_8 -> 0x09
-        KeyEvent.KEYCODE_9 -> 0x0A
-        KeyEvent.KEYCODE_0 -> 0x0B
-        KeyEvent.KEYCODE_MINUS -> 0x0C
-        KeyEvent.KEYCODE_EQUALS -> 0x0D
-        KeyEvent.KEYCODE_DEL -> SC_BACKSPACE
-        KeyEvent.KEYCODE_TAB -> SC_TAB
-        KeyEvent.KEYCODE_Q -> 0x10
-        KeyEvent.KEYCODE_W -> 0x11
-        KeyEvent.KEYCODE_E -> 0x12
-        KeyEvent.KEYCODE_R -> 0x13
-        KeyEvent.KEYCODE_T -> 0x14
-        KeyEvent.KEYCODE_Y -> 0x15
-        KeyEvent.KEYCODE_U -> 0x16
-        KeyEvent.KEYCODE_I -> 0x17
-        KeyEvent.KEYCODE_O -> 0x18
-        KeyEvent.KEYCODE_P -> 0x19
-        KeyEvent.KEYCODE_LEFT_BRACKET -> 0x1A
-        KeyEvent.KEYCODE_RIGHT_BRACKET -> 0x1B
-        KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> SC_ENTER
-        KeyEvent.KEYCODE_CTRL_LEFT -> SC_LEFT_CTRL
-        KeyEvent.KEYCODE_A -> 0x1E
-        KeyEvent.KEYCODE_S -> 0x1F
-        KeyEvent.KEYCODE_D -> 0x20
-        KeyEvent.KEYCODE_F -> 0x21
-        KeyEvent.KEYCODE_G -> 0x22
-        KeyEvent.KEYCODE_H -> 0x23
-        KeyEvent.KEYCODE_J -> 0x24
-        KeyEvent.KEYCODE_K -> 0x25
-        KeyEvent.KEYCODE_L -> 0x26
-        KeyEvent.KEYCODE_SEMICOLON -> 0x27
-        KeyEvent.KEYCODE_APOSTROPHE -> 0x28
-        KeyEvent.KEYCODE_GRAVE -> 0x29
-        KeyEvent.KEYCODE_SHIFT_LEFT -> SC_LEFT_SHIFT
-        KeyEvent.KEYCODE_BACKSLASH -> 0x2B
-        KeyEvent.KEYCODE_Z -> 0x2C
-        KeyEvent.KEYCODE_X -> 0x2D
-        KeyEvent.KEYCODE_C -> 0x2E
-        KeyEvent.KEYCODE_V -> 0x2F
-        KeyEvent.KEYCODE_B -> 0x30
-        KeyEvent.KEYCODE_N -> 0x31
-        KeyEvent.KEYCODE_M -> 0x32
-        KeyEvent.KEYCODE_COMMA -> 0x33
-        KeyEvent.KEYCODE_PERIOD -> 0x34
-        KeyEvent.KEYCODE_SLASH -> 0x35
-        KeyEvent.KEYCODE_SHIFT_RIGHT -> SC_RIGHT_SHIFT
-        KeyEvent.KEYCODE_ALT_LEFT -> SC_LEFT_ALT
-        KeyEvent.KEYCODE_SPACE -> SC_SPACE
-        KeyEvent.KEYCODE_CAPS_LOCK -> SC_CAPS_LOCK
-        KeyEvent.KEYCODE_F1 -> SC_F1
-        KeyEvent.KEYCODE_F2 -> SC_F2
-        KeyEvent.KEYCODE_F3 -> SC_F3
-        KeyEvent.KEYCODE_F4 -> SC_F4
-        KeyEvent.KEYCODE_F5 -> SC_F5
-        KeyEvent.KEYCODE_F6 -> SC_F6
-        KeyEvent.KEYCODE_F7 -> SC_F7
-        KeyEvent.KEYCODE_F8 -> SC_F8
-        KeyEvent.KEYCODE_F9 -> SC_F9
-        KeyEvent.KEYCODE_F10 -> SC_F10
-        KeyEvent.KEYCODE_F11 -> SC_F11
-        KeyEvent.KEYCODE_F12 -> SC_F12
-        KeyEvent.KEYCODE_CTRL_RIGHT -> SC_RIGHT_CTRL
-        KeyEvent.KEYCODE_ALT_RIGHT -> SC_RIGHT_ALT
-        KeyEvent.KEYCODE_MOVE_HOME -> SC_HOME
-        KeyEvent.KEYCODE_DPAD_UP -> SC_UP
-        KeyEvent.KEYCODE_PAGE_UP -> SC_PAGE_UP
-        KeyEvent.KEYCODE_DPAD_LEFT -> SC_LEFT
-        KeyEvent.KEYCODE_DPAD_RIGHT -> SC_RIGHT
-        KeyEvent.KEYCODE_MOVE_END -> SC_END
-        KeyEvent.KEYCODE_DPAD_DOWN -> SC_DOWN
-        KeyEvent.KEYCODE_PAGE_DOWN -> SC_PAGE_DOWN
-        KeyEvent.KEYCODE_INSERT -> SC_INSERT
-        KeyEvent.KEYCODE_FORWARD_DEL -> SC_DELETE
-        KeyEvent.KEYCODE_META_LEFT -> SC_LEFT_GUI
-        KeyEvent.KEYCODE_META_RIGHT -> SC_RIGHT_GUI
+    fun keyCodeToScancode(keyCode: Int): Int? = keyCodeToScancodeAndShift(keyCode)?.first
+
+    /**
+     * Maps an Android `KeyEvent.keyCode` to `(ps2Set1Scancode, requiresShift)`.
+     * `requiresShift` is true for Android virtual symbol keycodes such as `@`, `#`, `*`, `+`, `(`, `)`.
+     */
+    fun keyCodeToScancodeAndShift(keyCode: Int): Pair<Int, Boolean>? = when (keyCode) {
+        KeyEvent.KEYCODE_ESCAPE -> SC_ESC to false
+        KeyEvent.KEYCODE_1 -> 0x02 to false
+        KeyEvent.KEYCODE_2 -> 0x03 to false
+        KeyEvent.KEYCODE_AT -> 0x03 to true
+        KeyEvent.KEYCODE_3 -> 0x04 to false
+        KeyEvent.KEYCODE_POUND -> 0x04 to true
+        KeyEvent.KEYCODE_4 -> 0x05 to false
+        KeyEvent.KEYCODE_5 -> 0x06 to false
+        KeyEvent.KEYCODE_6 -> 0x07 to false
+        KeyEvent.KEYCODE_7 -> 0x08 to false
+        KeyEvent.KEYCODE_8 -> 0x09 to false
+        KeyEvent.KEYCODE_STAR -> 0x09 to true
+        KeyEvent.KEYCODE_9 -> 0x0A to false
+        KeyEvent.KEYCODE_NUMPAD_LEFT_PAREN -> 0x0A to true
+        KeyEvent.KEYCODE_0 -> 0x0B to false
+        KeyEvent.KEYCODE_NUMPAD_RIGHT_PAREN -> 0x0B to true
+        KeyEvent.KEYCODE_MINUS -> 0x0C to false
+        KeyEvent.KEYCODE_EQUALS -> 0x0D to false
+        KeyEvent.KEYCODE_PLUS -> 0x0D to true
+        KeyEvent.KEYCODE_DEL -> SC_BACKSPACE to false
+        KeyEvent.KEYCODE_TAB -> SC_TAB to false
+        KeyEvent.KEYCODE_Q -> 0x10 to false
+        KeyEvent.KEYCODE_W -> 0x11 to false
+        KeyEvent.KEYCODE_E -> 0x12 to false
+        KeyEvent.KEYCODE_R -> 0x13 to false
+        KeyEvent.KEYCODE_T -> 0x14 to false
+        KeyEvent.KEYCODE_Y -> 0x15 to false
+        KeyEvent.KEYCODE_U -> 0x16 to false
+        KeyEvent.KEYCODE_I -> 0x17 to false
+        KeyEvent.KEYCODE_O -> 0x18 to false
+        KeyEvent.KEYCODE_P -> 0x19 to false
+        KeyEvent.KEYCODE_LEFT_BRACKET -> 0x1A to false
+        KeyEvent.KEYCODE_RIGHT_BRACKET -> 0x1B to false
+        KeyEvent.KEYCODE_ENTER -> SC_ENTER to false
+        KeyEvent.KEYCODE_CTRL_LEFT -> SC_LEFT_CTRL to false
+        KeyEvent.KEYCODE_A -> 0x1E to false
+        KeyEvent.KEYCODE_S -> 0x1F to false
+        KeyEvent.KEYCODE_D -> 0x20 to false
+        KeyEvent.KEYCODE_F -> 0x21 to false
+        KeyEvent.KEYCODE_G -> 0x22 to false
+        KeyEvent.KEYCODE_H -> 0x23 to false
+        KeyEvent.KEYCODE_J -> 0x24 to false
+        KeyEvent.KEYCODE_K -> 0x25 to false
+        KeyEvent.KEYCODE_L -> 0x26 to false
+        KeyEvent.KEYCODE_SEMICOLON -> 0x27 to false
+        KeyEvent.KEYCODE_APOSTROPHE -> 0x28 to false
+        KeyEvent.KEYCODE_GRAVE -> 0x29 to false
+        KeyEvent.KEYCODE_SHIFT_LEFT -> SC_LEFT_SHIFT to false
+        KeyEvent.KEYCODE_BACKSLASH -> 0x2B to false
+        KeyEvent.KEYCODE_Z -> 0x2C to false
+        KeyEvent.KEYCODE_X -> 0x2D to false
+        KeyEvent.KEYCODE_C -> 0x2E to false
+        KeyEvent.KEYCODE_V -> 0x2F to false
+        KeyEvent.KEYCODE_B -> 0x30 to false
+        KeyEvent.KEYCODE_N -> 0x31 to false
+        KeyEvent.KEYCODE_M -> 0x32 to false
+        KeyEvent.KEYCODE_COMMA -> 0x33 to false
+        KeyEvent.KEYCODE_PERIOD -> 0x34 to false
+        KeyEvent.KEYCODE_SLASH -> 0x35 to false
+        KeyEvent.KEYCODE_SHIFT_RIGHT -> SC_RIGHT_SHIFT to false
+        KeyEvent.KEYCODE_ALT_LEFT -> SC_LEFT_ALT to false
+        KeyEvent.KEYCODE_SPACE -> SC_SPACE to false
+        KeyEvent.KEYCODE_CAPS_LOCK -> SC_CAPS_LOCK to false
+        KeyEvent.KEYCODE_F1 -> SC_F1 to false
+        KeyEvent.KEYCODE_F2 -> SC_F2 to false
+        KeyEvent.KEYCODE_F3 -> SC_F3 to false
+        KeyEvent.KEYCODE_F4 -> SC_F4 to false
+        KeyEvent.KEYCODE_F5 -> SC_F5 to false
+        KeyEvent.KEYCODE_F6 -> SC_F6 to false
+        KeyEvent.KEYCODE_F7 -> SC_F7 to false
+        KeyEvent.KEYCODE_F8 -> SC_F8 to false
+        KeyEvent.KEYCODE_F9 -> SC_F9 to false
+        KeyEvent.KEYCODE_F10 -> SC_F10 to false
+        KeyEvent.KEYCODE_F11 -> SC_F11 to false
+        KeyEvent.KEYCODE_F12 -> SC_F12 to false
+        KeyEvent.KEYCODE_CTRL_RIGHT -> SC_RIGHT_CTRL to false
+        KeyEvent.KEYCODE_ALT_RIGHT -> SC_RIGHT_ALT to false
+        KeyEvent.KEYCODE_SYSRQ -> SC_PRINT_SCREEN to false
+        KeyEvent.KEYCODE_SCROLL_LOCK -> SC_SCROLL_LOCK to false
+        KeyEvent.KEYCODE_NUM_LOCK -> SC_NUM_LOCK to false
+        KeyEvent.KEYCODE_MENU -> SC_CONTEXT_MENU to false
+        KeyEvent.KEYCODE_MOVE_HOME -> SC_HOME to false
+        KeyEvent.KEYCODE_DPAD_UP -> SC_UP to false
+        KeyEvent.KEYCODE_PAGE_UP -> SC_PAGE_UP to false
+        KeyEvent.KEYCODE_DPAD_LEFT -> SC_LEFT to false
+        KeyEvent.KEYCODE_DPAD_RIGHT -> SC_RIGHT to false
+        KeyEvent.KEYCODE_MOVE_END -> SC_END to false
+        KeyEvent.KEYCODE_DPAD_DOWN -> SC_DOWN to false
+        KeyEvent.KEYCODE_PAGE_DOWN -> SC_PAGE_DOWN to false
+        KeyEvent.KEYCODE_INSERT -> SC_INSERT to false
+        KeyEvent.KEYCODE_FORWARD_DEL -> SC_DELETE to false
+        KeyEvent.KEYCODE_META_LEFT -> SC_LEFT_GUI to false
+        KeyEvent.KEYCODE_META_RIGHT -> SC_RIGHT_GUI to false
+        KeyEvent.KEYCODE_NUMPAD_0 -> SC_NUMPAD_0 to false
+        KeyEvent.KEYCODE_NUMPAD_1 -> SC_NUMPAD_1 to false
+        KeyEvent.KEYCODE_NUMPAD_2 -> SC_NUMPAD_2 to false
+        KeyEvent.KEYCODE_NUMPAD_3 -> SC_NUMPAD_3 to false
+        KeyEvent.KEYCODE_NUMPAD_4 -> SC_NUMPAD_4 to false
+        KeyEvent.KEYCODE_NUMPAD_5 -> SC_NUMPAD_5 to false
+        KeyEvent.KEYCODE_NUMPAD_6 -> SC_NUMPAD_6 to false
+        KeyEvent.KEYCODE_NUMPAD_7 -> SC_NUMPAD_7 to false
+        KeyEvent.KEYCODE_NUMPAD_8 -> SC_NUMPAD_8 to false
+        KeyEvent.KEYCODE_NUMPAD_9 -> SC_NUMPAD_9 to false
+        KeyEvent.KEYCODE_NUMPAD_DOT -> SC_NUMPAD_DECIMAL to false
+        KeyEvent.KEYCODE_NUMPAD_ADD -> SC_NUMPAD_ADD to false
+        KeyEvent.KEYCODE_NUMPAD_SUBTRACT -> SC_NUMPAD_SUBTRACT to false
+        KeyEvent.KEYCODE_NUMPAD_MULTIPLY -> SC_NUMPAD_MULTIPLY to false
+        KeyEvent.KEYCODE_NUMPAD_DIVIDE -> SC_NUMPAD_DIVIDE to false
+        KeyEvent.KEYCODE_NUMPAD_ENTER -> SC_NUMPAD_ENTER to false
         else -> null
+    }
+
+    fun isModifierScancode(scancode: Int): Boolean = modifierBitForScancode(scancode) != 0
+
+    fun modifierBitForScancode(scancode: Int): Int = when (scancode) {
+        SC_LEFT_CTRL -> MOD_LEFT_CTRL
+        SC_LEFT_SHIFT -> MOD_LEFT_SHIFT
+        SC_LEFT_ALT -> MOD_LEFT_ALT
+        SC_LEFT_GUI -> MOD_LEFT_GUI
+        SC_RIGHT_CTRL -> MOD_RIGHT_CTRL
+        SC_RIGHT_SHIFT -> MOD_RIGHT_SHIFT
+        SC_RIGHT_ALT -> MOD_RIGHT_ALT
+        SC_RIGHT_GUI -> MOD_RIGHT_GUI
+        else -> 0
     }
 
     /** Maps a printable ASCII character to `(scancode, needsShift)`. */

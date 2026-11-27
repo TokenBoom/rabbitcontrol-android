@@ -1,6 +1,8 @@
 package io.rabbitcontrol.android.core.data
 
 import android.content.Context
+import io.rabbitcontrol.android.R
+import io.rabbitcontrol.android.core.i18n.AppStrings
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -69,13 +71,23 @@ class TargetHistoryStore(context: Context) {
     }
 
     fun formatLastConnected(deviceId: String): String {
-        val ts = _lastConnected.value[deviceId] ?: return "尚未连接过该设备"
+        val ts = _lastConnected.value[deviceId]
+            ?: return AppStrings.get(R.string.history_never_connected, "尚未连接过该设备")
         val deltaSec = ((System.currentTimeMillis() - ts) / 1000L).coerceAtLeast(0L)
         return when {
-            deltaSec < 60L -> "上次连接：刚刚"
-            deltaSec < 3600L -> "上次连接：${deltaSec / 60L} 分钟前"
-            deltaSec < 86400L -> "上次连接：${deltaSec / 3600L} 小时前"
-            else -> "上次连接：${deltaSec / 86400L} 天前"
+            deltaSec < 60L -> AppStrings.get(R.string.history_last_just_now, "上次连接：刚刚")
+            deltaSec < 3600L -> {
+                val m = deltaSec / 60L
+                AppStrings.get(R.string.history_last_minutes, "上次连接：$m 分钟前", m)
+            }
+            deltaSec < 86400L -> {
+                val h = deltaSec / 3600L
+                AppStrings.get(R.string.history_last_hours, "上次连接：$h 小时前", h)
+            }
+            else -> {
+                val d = deltaSec / 86400L
+                AppStrings.get(R.string.history_last_days, "上次连接：$d 天前", d)
+            }
         }
     }
 }

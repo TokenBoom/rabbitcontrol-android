@@ -82,20 +82,29 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.rabbitcontrol.android.R
 import io.rabbitcontrol.android.core.data.QuickActionCategory
 import io.rabbitcontrol.android.core.data.QuickActionKind
+import io.rabbitcontrol.android.core.i18n.AppStrings
 import io.rabbitcontrol.android.ui.theme.RabbitElevation
 import io.rabbitcontrol.android.ui.theme.RabbitRadius
 import io.rabbitcontrol.android.ui.theme.SessionPalette
 
-enum class SidebarSide(val title: String) {
-    Left("左侧快捷握持区"),
-    Right("右侧自定义按钮"),
+enum class SidebarSide(
+    @androidx.annotation.StringRes val titleRes: Int,
+    private val fallbackTitle: String,
+) {
+    Left(R.string.sidebar_left_group, "左侧快捷握持区"),
+    Right(R.string.sidebar_right_group, "右侧自定义按钮");
+
+    val title: String
+        get() = AppStrings.get(titleRes, fallbackTitle)
 }
 
 @Composable
@@ -134,7 +143,7 @@ fun LandscapeLeftSidebar(
                     QuickActionKind.HoldRightClick -> {
                         HoldModifierSlotButton(
                             icon = quickActionIcon(action),
-                            label = if (rightClickHeld) "右键中" else action.shortLabel,
+                            label = if (rightClickHeld) stringResource(R.string.session_right_active) else action.shortLabel,
                             held = rightClickHeld,
                             activeTint = Color(0xFF4C8DFF),
                             onHoldChanged = onHoldRightClick,
@@ -144,7 +153,7 @@ fun LandscapeLeftSidebar(
                     QuickActionKind.HoldDrag -> {
                         HoldModifierSlotButton(
                             icon = quickActionIcon(action),
-                            label = if (dragModHeld) "拖动中" else action.shortLabel,
+                            label = if (dragModHeld) stringResource(R.string.session_drag_active) else action.shortLabel,
                             held = dragModHeld,
                             activeTint = Color(0xFF34C759),
                             onHoldChanged = onHoldDrag,
@@ -217,7 +226,7 @@ fun LandscapeRightSidebar(
             // Fixed top core Control Center button
             SidebarSlotButton(
                 icon = Icons.Rounded.Tune,
-                label = "操作",
+                label = stringResource(R.string.session_actions),
                 active = false,
                 onClick = onOpenControls,
                 modifier = Modifier.weight(1f),
@@ -275,7 +284,7 @@ private fun quickActionDynamicLabel(
     dragLocked: Boolean,
 ): String = when {
     action == QuickActionKind.ZoomIn && zoomScale > 1.02f -> String.format("%.1fx", zoomScale)
-    action == QuickActionKind.DragLock && dragLocked -> "拖动中"
+    action == QuickActionKind.DragLock && dragLocked -> AppStrings.get(R.string.session_drag_active, "拖动中")
     else -> action.shortLabel
 }
 
@@ -442,7 +451,7 @@ fun SidebarSlotPickerOverlay(
                         modifier = Modifier.weight(1f),
                     )
                     Text(
-                        "长按侧边按钮可快速更换",
+                        stringResource(R.string.sidebar_long_press_tip),
                         color = SessionPalette.muted,
                         fontSize = 11.sp,
                         maxLines = 1,
@@ -450,7 +459,7 @@ fun SidebarSlotPickerOverlay(
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     IconButton(onClick = onDismiss, modifier = Modifier.size(34.dp)) {
-                        Icon(Icons.Rounded.Close, "关闭", tint = SessionPalette.text, modifier = Modifier.size(18.dp))
+                        Icon(Icons.Rounded.Close, stringResource(R.string.common_close), tint = SessionPalette.text, modifier = Modifier.size(18.dp))
                     }
                 }
 
@@ -483,7 +492,7 @@ fun SidebarSlotPickerOverlay(
                             contentAlignment = Alignment.Center,
                         ) {
                             Text(
-                                text = "槽位${idx + 1} · ${act.shortLabel}",
+                                text = stringResource(R.string.sidebar_slot_label, idx + 1, act.shortLabel),
                                 fontSize = 11.sp,
                                 fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
                                 color = if (selected) SessionPalette.text else SessionPalette.muted,

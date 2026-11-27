@@ -77,6 +77,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -97,6 +98,8 @@ import io.rabbitcontrol.android.core.data.OrientationPreference
 import io.rabbitcontrol.android.core.data.PortraitLayoutMode
 import io.rabbitcontrol.android.core.data.TouchInputMode
 import io.rabbitcontrol.android.core.host.HostManager
+import io.rabbitcontrol.android.core.i18n.AppStrings
+import io.rabbitcontrol.android.core.i18n.NativeErrorLocalizer
 import io.rabbitcontrol.android.core.update.AppUpdateManager
 import io.rabbitcontrol.android.core.update.AppUpdateUiState
 import io.rabbitcontrol.android.core.update.CoreCheckStatus
@@ -188,7 +191,7 @@ fun HostSettingsScreen(
             .background(palette.canvas)
             .systemBarsPadding(),
     ) {
-        RabbitTopBar(title = "手机被控端", onBack = onBack)
+        RabbitTopBar(title = stringResource(R.string.home_menu_host_mode), onBack = onBack)
 
         Column(
             modifier = Modifier
@@ -204,25 +207,30 @@ fun HostSettingsScreen(
                 ) {
                     Icon(Icons.Rounded.ScreenShare, null, tint = palette.primaryText, modifier = Modifier.size(20.dp))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("被控服务状态", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = palette.text, modifier = Modifier.weight(1f))
+                    Text(stringResource(R.string.host_service_status), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = palette.text, modifier = Modifier.weight(1f))
                     val (pillText, pillTone) = when {
-                        hostState.connectedPeer != null -> "远控中" to StatusTone.Primary
-                        hostState.enabled -> "等待连接" to StatusTone.Success
-                        hostState.starting -> "启动中" to StatusTone.Warning
-                        else -> "已关闭" to StatusTone.Muted
+                        hostState.connectedPeer != null -> stringResource(R.string.home_host_controlling) to StatusTone.Primary
+                        hostState.enabled -> stringResource(R.string.home_host_waiting) to StatusTone.Success
+                        hostState.starting -> stringResource(R.string.home_host_starting) to StatusTone.Warning
+                        else -> stringResource(R.string.home_host_off) to StatusTone.Muted
                     }
                     RabbitStatusPill(label = pillText, tone = pillTone)
                 }
 
                 Spacer(modifier = Modifier.height(6.dp))
                 RabbitSwitchRow(
-                    title = "允许本机被远控",
+                    title = stringResource(R.string.host_allow_control),
                     subtitle = if (profile == null) {
-                        "需先登录账号以绑定设备码与安全证书"
+                        stringResource(R.string.host_sub_need_login)
                     } else if (hostState.enabled) {
-                        "同账号电脑可直接在设备列表发起控制${if (hostState.ownerSelfControlReady) "（免密直通已就绪）" else ""}"
+                        val readySuffix = if (hostState.ownerSelfControlReady) {
+                            stringResource(R.string.host_sub_owner_ready)
+                        } else {
+                            ""
+                        }
+                        stringResource(R.string.host_sub_enabled, readySuffix)
                     } else {
-                        "开启后将请求屏幕共享权限并允许电脑控制此手机"
+                        stringResource(R.string.host_sub_disabled)
                     },
                     checked = hostState.enabled || hostState.starting,
                     onCheckedChange = { wantEnable ->
@@ -255,9 +263,9 @@ fun HostSettingsScreen(
                         ) {
                             Text(
                                 text = if (hostState.connectedIsOwner) {
-                                    "本人设备 ${hostState.connectedPeer} 正在控制"
+                                    stringResource(R.string.host_peer_owner, hostState.connectedPeer.orEmpty())
                                 } else {
-                                    "协助端 ${hostState.connectedPeer} 正在控制"
+                                    stringResource(R.string.host_peer_helper, hostState.connectedPeer.orEmpty())
                                 },
                                 fontSize = 12.sp,
                                 color = palette.primaryText,
@@ -267,13 +275,13 @@ fun HostSettingsScreen(
                                 onClick = hostManager::disconnectClient,
                                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
                             ) {
-                                Text("断开", color = palette.danger, fontSize = 12.sp)
+                                Text(stringResource(R.string.host_disconnect), color = palette.danger, fontSize = 12.sp)
                             }
                         }
                     } else if (!signal.deviceIdFormatted.isNullOrBlank()) {
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "本机识别码：${signal.deviceIdFormatted}",
+                            text = stringResource(R.string.host_self_id, signal.deviceIdFormatted.orEmpty()),
                             fontFamily = FontFamily.Monospace,
                             fontSize = 12.sp,
                             color = palette.muted,
@@ -283,14 +291,15 @@ fun HostSettingsScreen(
 
                 HorizontalDivider(color = palette.line, thickness = 1.dp)
                 RabbitSwitchRow(
-                    title = "允许他人远程协助",
-                    subtitle = "关闭时仅允许同账号本人设备控制；开启后生成临时验证码并需机主确认",
+                    title = stringResource(R.string.host_allow_assist),
+                    subtitle = stringResource(R.string.host_allow_assist_sub),
                     checked = hostState.allowRemoteAssist,
                     onCheckedChange = hostManager::setAllowRemoteAssist,
                 )
 
                 if (hostState.enabled && hostState.allowRemoteAssist && !hostState.tempCode.isNullOrBlank()) {
                     val code = hostState.tempCode!!
+                    val copiedCodeMsg = stringResource(R.string.host_temp_code_copied)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -301,7 +310,7 @@ fun HostSettingsScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("临时验证码", fontSize = 11.sp, color = palette.muted)
+                            Text(stringResource(R.string.host_temp_code), fontSize = 11.sp, color = palette.muted)
                             Text(
                                 text = code,
                                 fontFamily = FontFamily.Monospace,
@@ -312,14 +321,14 @@ fun HostSettingsScreen(
                         }
                         IconButton(onClick = {
                             clipboard.setText(AnnotatedString(code))
-                            RabbitToast.success("已复制临时验证码")
+                            RabbitToast.success(copiedCodeMsg)
                         }) {
-                            Icon(Icons.Rounded.ContentCopy, "复制验证码", tint = palette.muted, modifier = Modifier.size(18.dp))
+                            Icon(Icons.Rounded.ContentCopy, stringResource(R.string.host_cd_copy_code), tint = palette.muted, modifier = Modifier.size(18.dp))
                         }
                         IconButton(onClick = {
                             hostManager.rotateTempCode()
                         }) {
-                            Icon(Icons.Rounded.Refresh, "刷新验证码", tint = palette.muted, modifier = Modifier.size(18.dp))
+                            Icon(Icons.Rounded.Refresh, stringResource(R.string.host_cd_rotate_code), tint = palette.muted, modifier = Modifier.size(18.dp))
                         }
                     }
                     Spacer(modifier = Modifier.height(6.dp))
@@ -345,12 +354,12 @@ fun HostSettingsScreen(
                     )
                     Spacer(modifier = Modifier.width(10.dp))
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("无障碍触控权限", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = palette.text)
+                        Text(stringResource(R.string.host_accessibility_title), fontSize = 14.sp, fontWeight = FontWeight.Medium, color = palette.text)
                         Text(
                             if (hostState.accessibilityEnabled) {
-                                "已授权 · 支持远程点击、滑动与返回手势"
+                                stringResource(R.string.host_accessibility_on)
                             } else {
-                                "未开启 · 仅可观看屏幕，点此去系统设置授权"
+                                stringResource(R.string.host_accessibility_off)
                             },
                             fontSize = 12.sp,
                             color = if (hostState.accessibilityEnabled) palette.success else palette.warning,
@@ -377,7 +386,7 @@ fun InteractionSettingsScreen(
             .background(palette.canvas)
             .systemBarsPadding(),
     ) {
-        RabbitTopBar(title = "远控默认设置", onBack = onBack)
+        RabbitTopBar(title = stringResource(R.string.home_menu_interaction), onBack = onBack)
 
         Column(
             modifier = Modifier
@@ -387,10 +396,10 @@ fun InteractionSettingsScreen(
             verticalArrangement = Arrangement.spacedBy(RabbitSpacing.Md),
         ) {
             RabbitCard(modifier = Modifier.fillMaxWidth()) {
-                Text("操控与屏幕", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
+                Text(stringResource(R.string.settings_controls_screen), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
                 Spacer(modifier = Modifier.height(14.dp))
 
-                Text("默认交互模式", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = palette.text)
+                Text(stringResource(R.string.settings_default_touch), fontSize = 13.sp, fontWeight = FontWeight.Medium, color = palette.text)
                 Spacer(modifier = Modifier.height(6.dp))
                 RabbitSegmentedControl(
                     options = TouchInputMode.entries,
@@ -400,23 +409,26 @@ fun InteractionSettingsScreen(
                 )
 
                 Spacer(modifier = Modifier.height(14.dp))
-                Text("默认屏幕方向", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = palette.text)
+                Text(stringResource(R.string.settings_default_orientation), fontSize = 13.sp, fontWeight = FontWeight.Medium, color = palette.text)
                 Spacer(modifier = Modifier.height(6.dp))
+                val autoOrientLabel = stringResource(R.string.orientation_auto)
+                val landOrientLabel = stringResource(R.string.orientation_landscape)
+                val portOrientLabel = stringResource(R.string.orientation_portrait)
                 RabbitSegmentedControl(
                     options = OrientationPreference.entries,
                     selected = prefs.orientationPref,
                     labelProvider = {
                         when (it) {
-                            OrientationPreference.AutoSensor -> "自动旋转"
-                            OrientationPreference.LandscapeFirst -> "锁定横屏"
-                            OrientationPreference.PortraitTrackpad -> "锁定竖屏"
+                            OrientationPreference.AutoSensor -> autoOrientLabel
+                            OrientationPreference.LandscapeFirst -> landOrientLabel
+                            OrientationPreference.PortraitTrackpad -> portOrientLabel
                         }
                     },
                     onSelect = { opt -> prefsStore.update { it.copy(orientationPref = opt) } },
                 )
 
                 Spacer(modifier = Modifier.height(14.dp))
-                Text("默认竖屏布局", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = palette.text)
+                Text(stringResource(R.string.settings_default_portrait_layout), fontSize = 13.sp, fontWeight = FontWeight.Medium, color = palette.text)
                 Spacer(modifier = Modifier.height(6.dp))
                 RabbitSegmentedControl(
                     options = PortraitLayoutMode.entries,
@@ -427,7 +439,7 @@ fun InteractionSettingsScreen(
 
                 Spacer(modifier = Modifier.height(14.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("指针灵敏度", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = palette.text)
+                    Text(stringResource(R.string.settings_pointer_sensitivity), fontSize = 14.sp, fontWeight = FontWeight.Medium, color = palette.text)
                     Text(
                         "${String.format("%.2f", prefs.pointerSensitivity)}x",
                         fontSize = 13.sp,
@@ -448,22 +460,22 @@ fun InteractionSettingsScreen(
             }
 
             RabbitCard(modifier = Modifier.fillMaxWidth()) {
-                Text("默认偏好", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
+                Text(stringResource(R.string.settings_default_prefs), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
                 Spacer(modifier = Modifier.height(6.dp))
 
-                RabbitSwitchRow("默认开启性能 HUD", prefs.showHud) { on ->
+                RabbitSwitchRow(stringResource(R.string.settings_hud_default), prefs.showHud) { on ->
                     prefsStore.update { it.copy(showHud = on) }
                 }
                 HorizontalDivider(color = palette.line, thickness = 1.dp)
-                RabbitSwitchRow("默认同步远端声音", prefs.audioEnabledDefault) { on ->
+                RabbitSwitchRow(stringResource(R.string.settings_audio_default), prefs.audioEnabledDefault) { on ->
                     prefsStore.update { it.copy(audioEnabledDefault = on) }
                 }
                 HorizontalDivider(color = palette.line, thickness = 1.dp)
-                RabbitSwitchRow("默认同步剪贴板", prefs.clipboardEnabledDefault) { on ->
+                RabbitSwitchRow(stringResource(R.string.settings_clipboard_default), prefs.clipboardEnabledDefault) { on ->
                     prefsStore.update { it.copy(clipboardEnabledDefault = on) }
                 }
                 HorizontalDivider(color = palette.line, thickness = 1.dp)
-                RabbitSwitchRow("直点模式指尖防遮挡偏置", prefs.directTouchOffset) { on ->
+                RabbitSwitchRow(stringResource(R.string.settings_direct_offset), prefs.directTouchOffset) { on ->
                     prefsStore.update { it.copy(directTouchOffset = on) }
                 }
             }
@@ -486,12 +498,12 @@ fun AboutScreen(
     fun openUrl(url: String) {
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         runCatching { context.startActivity(intent) }
-            .onFailure { RabbitToast.error("未找到可用的浏览器") }
+            .onFailure { RabbitToast.error(AppStrings.get(R.string.about_no_browser, "未找到可用的浏览器")) }
     }
 
     fun copyUrl(label: String, url: String) {
         clipboard.setText(AnnotatedString(url))
-        RabbitToast.success("已复制$label 链接")
+        RabbitToast.success(AppStrings.get(R.string.about_copied_link, "已复制$label 链接", label))
     }
 
     Box(
@@ -501,7 +513,7 @@ fun AboutScreen(
             .systemBarsPadding(),
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            RabbitTopBar(title = "关于我们", onBack = onBack)
+            RabbitTopBar(title = stringResource(R.string.home_menu_about), onBack = onBack)
 
             Column(
                 modifier = Modifier
@@ -543,7 +555,7 @@ fun AboutScreen(
                         }
                         Spacer(modifier = Modifier.height(10.dp))
                         Text(
-                            text = "低延迟跨平台远程桌面与移动协助客户端",
+                            text = stringResource(R.string.about_tagline),
                             fontSize = 13.sp,
                             color = palette.muted,
                         )
@@ -554,15 +566,17 @@ fun AboutScreen(
                     modifier = Modifier.fillMaxWidth(),
                     contentPadding = PaddingValues(horizontal = RabbitSpacing.Lg, vertical = 4.dp),
                 ) {
-                    AboutInfoRow(label = "当前版本", value = "v$versionName")
+                    AboutInfoRow(label = stringResource(R.string.about_current_version), value = "v$versionName")
                     HorizontalDivider(color = palette.line, thickness = 1.dp)
                     val loadedCore = coreState.loadedCore
+                    val coreStatusTag = stringResource(if (loadedCore.isDynamic) R.string.home_core_dynamic else R.string.home_core_builtin)
+                    val pendingTag = stringResource(R.string.about_pending_short)
                     val coreSummary = buildString {
                         append("v${loadedCore.version} · ")
-                        append(if (loadedCore.isDynamic) "已更新" else "内置")
+                        append(coreStatusTag)
                         append(" · ABI v${loadedCore.abiVersion}")
                         if (loadedCore.pendingRestartVersion != null) {
-                            append(" · 待重启")
+                            append(" · $pendingTag")
                         }
                     }
                     Row(
@@ -583,7 +597,7 @@ fun AboutScreen(
                             .padding(vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("内核版本", fontSize = 14.sp, color = palette.text, modifier = Modifier.weight(1f))
+                        Text(stringResource(R.string.about_core_version), fontSize = 14.sp, color = palette.text, modifier = Modifier.weight(1f))
                         if (coreState.hasUpdate) {
                             Box(
                                 modifier = Modifier
@@ -603,22 +617,25 @@ fun AboutScreen(
                         )
                     }
                     HorizontalDivider(color = palette.line, thickness = 1.dp)
+                    val homepageLabel = stringResource(R.string.about_homepage)
+                    val feedbackLabel = stringResource(R.string.about_feedback)
+                    val releasesLabel = stringResource(R.string.about_releases)
                     AboutLinkRow(
-                        label = "项目主页",
+                        label = homepageLabel,
                         value = "TokenBoom/rabbitcontrol-android",
                         onClick = { openUrl(AppUpdateManager.GITHUB_REPO_URL) },
-                        onLongClick = { copyUrl("项目主页", AppUpdateManager.GITHUB_REPO_URL) },
+                        onLongClick = { copyUrl(homepageLabel, AppUpdateManager.GITHUB_REPO_URL) },
                     )
                     HorizontalDivider(color = palette.line, thickness = 1.dp)
                     AboutLinkRow(
-                        label = "反馈与建议",
+                        label = feedbackLabel,
                         value = "GitHub Issues",
                         onClick = { openUrl(AppUpdateManager.GITHUB_ISSUES_URL) },
                         onLongClick = { copyUrl("Issues", AppUpdateManager.GITHUB_ISSUES_URL) },
                     )
                     HorizontalDivider(color = palette.line, thickness = 1.dp)
                     AboutLinkRow(
-                        label = "发行版本",
+                        label = releasesLabel,
                         value = "GitHub Releases",
                         onClick = { openUrl(AppUpdateManager.GITHUB_RELEASES_URL) },
                         onLongClick = { copyUrl("Releases", AppUpdateManager.GITHUB_RELEASES_URL) },
@@ -626,7 +643,7 @@ fun AboutScreen(
                 }
 
                 Text(
-                    text = "提示：长按任意开源地址条目可快速复制链接",
+                    text = stringResource(R.string.about_copy_tip),
                     fontSize = 12.sp,
                     color = palette.muted,
                     modifier = Modifier.padding(horizontal = 4.dp),
@@ -726,9 +743,9 @@ fun AppUpdateDialog(
     ) {
         Surface(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp)
-                .widthIn(max = 370.dp),
+                .padding(horizontal = 24.dp, vertical = 16.dp)
+                .widthIn(max = 370.dp)
+                .fillMaxWidth(),
             shape = RoundedCornerShape(RabbitRadius.Xl),
             color = palette.surface,
             tonalElevation = 0.dp,
@@ -738,11 +755,12 @@ fun AppUpdateDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
                     .padding(20.dp),
             ) {
                 when (val dl = state.downloadState) {
                     is UpdateDownloadState.Downloading -> {
-                        Text("正在下载更新", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
+                        Text(stringResource(R.string.update_downloading_title), fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
                         if (release != null) {
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
@@ -781,7 +799,7 @@ fun AppUpdateDialog(
                         }
                         Spacer(modifier = Modifier.height(10.dp))
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            val pctStr = progress?.let { "${(it * 100).toInt()}%" } ?: "下载中…"
+                            val pctStr = progress?.let { "${(it * 100).toInt()}%" } ?: stringResource(R.string.update_downloading_pct)
                             val sizeStr = if (dl.totalBytes > 0L) {
                                 "${formatUpdateBytes(dl.downloadedBytes)} / ${formatUpdateBytes(dl.totalBytes)}"
                             } else {
@@ -797,7 +815,7 @@ fun AppUpdateDialog(
                         }
                         Spacer(modifier = Modifier.height(20.dp))
                         DialogActionButton(
-                            label = "取消下载",
+                            label = stringResource(R.string.update_cancel_download),
                             filled = false,
                             onClick = onCancelDownload,
                             modifier = Modifier.fillMaxWidth(),
@@ -805,13 +823,13 @@ fun AppUpdateDialog(
                     }
 
                     is UpdateDownloadState.ReadyToInstall -> {
-                        Text("安装包已就绪", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
+                        Text(stringResource(R.string.update_ready_title), fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
                             text = if (dl.needsInstallPermission) {
-                                "请在系统设置中开启「允许来自此来源的应用」安装权限，授权后点击下方「立即安装」。"
+                                stringResource(R.string.update_ready_perm_desc)
                             } else {
-                                "新版本安装包已下载完成，点击「立即安装」即可升级。"
+                                stringResource(R.string.update_ready_desc)
                             },
                             fontSize = 14.sp,
                             lineHeight = 20.sp,
@@ -820,13 +838,13 @@ fun AppUpdateDialog(
                         Spacer(modifier = Modifier.height(20.dp))
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             DialogActionButton(
-                                label = "稍后",
+                                label = stringResource(R.string.common_later),
                                 filled = false,
                                 onClick = onDismiss,
                                 modifier = Modifier.weight(1f),
                             )
                             DialogActionButton(
-                                label = "立即安装",
+                                label = stringResource(R.string.update_install_now),
                                 filled = true,
                                 onClick = { onInstall(dl.apkPath) },
                                 modifier = Modifier.weight(1.3f),
@@ -837,14 +855,14 @@ fun AppUpdateDialog(
                     is UpdateDownloadState.Error -> {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Icon(Icons.Rounded.ErrorOutline, null, tint = palette.danger, modifier = Modifier.size(20.dp))
-                            Text("下载失败", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
+                            Text(stringResource(R.string.update_download_failed), fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
                         }
                         Spacer(modifier = Modifier.height(8.dp))
-                        Text(dl.message, fontSize = 14.sp, lineHeight = 20.sp, color = palette.muted)
+                        Text(NativeErrorLocalizer.localize(dl.message), fontSize = 14.sp, lineHeight = 20.sp, color = palette.muted)
                         Spacer(modifier = Modifier.height(20.dp))
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             DialogActionButton(
-                                label = "浏览器打开",
+                                label = stringResource(R.string.update_open_browser),
                                 filled = false,
                                 onClick = {
                                     onOpenReleasePage(release?.htmlUrl ?: AppUpdateManager.GITHUB_RELEASES_URL)
@@ -853,7 +871,7 @@ fun AppUpdateDialog(
                                 modifier = Modifier.weight(1f),
                             )
                             DialogActionButton(
-                                label = "重试下载",
+                                label = stringResource(R.string.update_retry_download),
                                 filled = true,
                                 onClick = {
                                     if (release != null) onStartDownload(release) else onRetryCheck()
@@ -866,7 +884,7 @@ fun AppUpdateDialog(
                     UpdateDownloadState.Idle -> {
                         when (val check = state.checkStatus) {
                             UpdateCheckStatus.Checking -> {
-                                Text("检查更新", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
+                                Text(stringResource(R.string.update_check_title), fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
                                 Spacer(modifier = Modifier.height(16.dp))
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
@@ -877,11 +895,11 @@ fun AppUpdateDialog(
                                         strokeWidth = 2.5.dp,
                                         modifier = Modifier.size(22.dp),
                                     )
-                                    Text("正在查询 GitHub 最新正式版本…", fontSize = 14.sp, color = palette.muted)
+                                    Text(stringResource(R.string.update_checking_msg), fontSize = 14.sp, color = palette.muted)
                                 }
                                 Spacer(modifier = Modifier.height(20.dp))
                                 DialogActionButton(
-                                    label = "关闭",
+                                    label = stringResource(R.string.common_close),
                                     filled = false,
                                     onClick = onDismiss,
                                     modifier = Modifier.fillMaxWidth(),
@@ -904,9 +922,9 @@ fun AppUpdateDialog(
                                         Icon(Icons.Rounded.SystemUpdate, null, tint = palette.primaryText, modifier = Modifier.size(18.dp))
                                     }
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("发现新版本 v${rel.versionName}", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
+                                        Text(stringResource(R.string.update_found_title, rel.versionName), fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
                                         val meta = buildString {
-                                            append("当前 v${state.currentVersion}")
+                                            append(stringResource(R.string.update_current_prefix, state.currentVersion))
                                             if (rel.apkSizeBytes > 0L) append(" · ${formatUpdateBytes(rel.apkSizeBytes)}")
                                             if (rel.publishedAt.isNotBlank()) append(" · ${rel.publishedAt}")
                                         }
@@ -942,20 +960,20 @@ fun AppUpdateDialog(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                                 ) {
-                                    Text("前往 GitHub Releases 查看详情", fontSize = 12.sp, color = palette.primaryText)
+                                    Text(stringResource(R.string.update_view_github), fontSize = 12.sp, color = palette.primaryText)
                                     Icon(Icons.AutoMirrored.Rounded.OpenInNew, null, tint = palette.primaryText, modifier = Modifier.size(13.dp))
                                 }
 
                                 Spacer(modifier = Modifier.height(16.dp))
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                     DialogActionButton(
-                                        label = "稍后再说",
+                                        label = stringResource(R.string.common_later),
                                         filled = false,
                                         onClick = onDismiss,
                                         modifier = Modifier.weight(1f),
                                     )
                                     DialogActionButton(
-                                        label = if (rel.apkUrl != null) "立即更新" else "前往下载",
+                                        label = stringResource(if (rel.apkUrl != null) R.string.update_now else R.string.update_go_download),
                                         filled = true,
                                         onClick = {
                                             if (rel.apkUrl != null) {
@@ -973,14 +991,14 @@ fun AppUpdateDialog(
                             is UpdateCheckStatus.Error -> {
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Icon(Icons.Rounded.ErrorOutline, null, tint = palette.danger, modifier = Modifier.size(20.dp))
-                                    Text("检查更新失败", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
+                                    Text(stringResource(R.string.update_check_failed), fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
                                 }
                                 Spacer(modifier = Modifier.height(8.dp))
-                                Text(check.message, fontSize = 14.sp, lineHeight = 20.sp, color = palette.muted)
+                                Text(NativeErrorLocalizer.localize(check.message), fontSize = 14.sp, lineHeight = 20.sp, color = palette.muted)
                                 Spacer(modifier = Modifier.height(20.dp))
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                     DialogActionButton(
-                                        label = "浏览器查看",
+                                        label = stringResource(R.string.update_view_browser),
                                         filled = false,
                                         onClick = {
                                             onOpenReleasePage(AppUpdateManager.GITHUB_RELEASES_URL)
@@ -989,7 +1007,7 @@ fun AppUpdateDialog(
                                         modifier = Modifier.weight(1f),
                                     )
                                     DialogActionButton(
-                                        label = "重试",
+                                        label = stringResource(R.string.common_retry),
                                         filled = true,
                                         onClick = onRetryCheck,
                                         modifier = Modifier.weight(1f),
@@ -1000,11 +1018,11 @@ fun AppUpdateDialog(
                             UpdateCheckStatus.Idle, is UpdateCheckStatus.UpToDate -> {
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Icon(Icons.Rounded.CheckCircleOutline, null, tint = palette.success, modifier = Modifier.size(20.dp))
-                                    Text("已是最新版本", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
+                                    Text(stringResource(R.string.update_up_to_date_title), fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
                                 }
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    "当前版本 v${state.currentVersion} 已是 GitHub 最新正式版。",
+                                    stringResource(R.string.update_up_to_date_desc, state.currentVersion),
                                     fontSize = 14.sp,
                                     lineHeight = 20.sp,
                                     color = palette.muted,
@@ -1012,7 +1030,7 @@ fun AppUpdateDialog(
                                 Spacer(modifier = Modifier.height(20.dp))
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                     DialogActionButton(
-                                        label = "查看历史版本",
+                                        label = stringResource(R.string.update_view_history),
                                         filled = false,
                                         onClick = {
                                             onOpenReleasePage(AppUpdateManager.GITHUB_RELEASES_URL)
@@ -1021,7 +1039,7 @@ fun AppUpdateDialog(
                                         modifier = Modifier.weight(1.1f),
                                     )
                                     DialogActionButton(
-                                        label = "知道了",
+                                        label = stringResource(R.string.common_got_it),
                                         filled = true,
                                         onClick = onDismiss,
                                         modifier = Modifier.weight(1f),
@@ -1107,9 +1125,9 @@ fun CoreUpdateDialog(
     ) {
         Surface(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp)
-                .widthIn(max = 380.dp),
+                .padding(horizontal = 24.dp, vertical = 16.dp)
+                .widthIn(max = 380.dp)
+                .fillMaxWidth(),
             shape = RoundedCornerShape(RabbitRadius.Xl),
             color = palette.surface,
             tonalElevation = 0.dp,
@@ -1119,6 +1137,7 @@ fun CoreUpdateDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
                     .padding(20.dp),
             ) {
                 // Header: current core status
@@ -1136,9 +1155,9 @@ fun CoreUpdateDialog(
                         Icon(Icons.Rounded.Memory, null, tint = palette.primaryText, modifier = Modifier.size(18.dp))
                     }
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("rabbitcontrol-core 内核", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
+                        Text(stringResource(R.string.core_title), fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
                         Text(
-                            text = "当前 v${loaded.version} (${loaded.coreGitSha}) · ABI v${loaded.abiVersion}",
+                            text = stringResource(R.string.core_current_meta, loaded.version, loaded.coreGitSha, loaded.abiVersion),
                             fontSize = 12.sp,
                             fontFamily = FontFamily.Monospace,
                             color = palette.muted,
@@ -1147,7 +1166,7 @@ fun CoreUpdateDialog(
                         )
                     }
                     RabbitStatusPill(
-                        label = if (loaded.isDynamic) "已热更新" else "内置",
+                        label = stringResource(if (loaded.isDynamic) R.string.home_core_dynamic else R.string.home_core_builtin),
                         tone = if (loaded.isDynamic) StatusTone.Primary else StatusTone.Muted,
                     )
                 }
@@ -1165,7 +1184,7 @@ fun CoreUpdateDialog(
                     ) {
                         Icon(Icons.Rounded.WarningAmber, null, tint = palette.danger, modifier = Modifier.size(16.dp))
                         Text(
-                            text = loaded.lastFallbackReason,
+                            text = NativeErrorLocalizer.localize(loaded.lastFallbackReason),
                             fontSize = 12.sp,
                             lineHeight = 17.sp,
                             color = palette.danger,
@@ -1178,7 +1197,8 @@ fun CoreUpdateDialog(
                 when (val dl = state.downloadState) {
                     is CoreDownloadState.Downloading -> {
                         Text(
-                            text = candidate?.let { "正在下载内核 v${it.manifest.coreVersion}" } ?: "正在下载内核",
+                            text = candidate?.let { stringResource(R.string.core_downloading_ver, it.manifest.coreVersion) }
+                                ?: stringResource(R.string.core_downloading),
                             fontSize = 15.sp,
                             fontWeight = FontWeight.Medium,
                             color = palette.text,
@@ -1211,7 +1231,7 @@ fun CoreUpdateDialog(
                         }
                         Spacer(modifier = Modifier.height(8.dp))
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            val pctStr = progress?.let { "${(it * 100).toInt()}%" } ?: "下载中…"
+                            val pctStr = progress?.let { "${(it * 100).toInt()}%" } ?: stringResource(R.string.update_downloading_pct)
                             val sizeStr = if (dl.totalBytes > 0L) {
                                 "${formatUpdateBytes(dl.downloadedBytes)} / ${formatUpdateBytes(dl.totalBytes)}"
                             } else {
@@ -1227,7 +1247,7 @@ fun CoreUpdateDialog(
                         }
                         Spacer(modifier = Modifier.height(18.dp))
                         DialogActionButton(
-                            label = "取消下载",
+                            label = stringResource(R.string.update_cancel_download),
                             filled = false,
                             onClick = onCancelDownload,
                             modifier = Modifier.fillMaxWidth(),
@@ -1244,24 +1264,23 @@ fun CoreUpdateDialog(
                                 strokeWidth = 2.5.dp,
                                 modifier = Modifier.size(22.dp),
                             )
-                            Text("正在校验 SHA-256 与文件完整性…", fontSize = 14.sp, color = palette.muted)
+                            Text(stringResource(R.string.core_verifying), fontSize = 14.sp, color = palette.muted)
                         }
                     }
 
                     is CoreDownloadState.ReadyToRestart -> {
                         Text(
-                            text = if (dl.isRevert) "已切换回内置内核" else "新内核已就绪",
+                            text = stringResource(if (dl.isRevert) R.string.core_reverted_title else R.string.core_ready_title),
                             fontSize = 16.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = palette.text,
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = if (dl.isRevert) {
-                                "已恢复为安装包内置内核 v${dl.targetVersion}，重启应用后生效。"
-                            } else {
-                                "内核 v${dl.targetVersion} 已通过 ECDSA P-256 签名与 SHA-256 校验，重启应用后立即生效。"
-                            },
+                            text = stringResource(
+                                if (dl.isRevert) R.string.core_reverted_desc else R.string.core_ready_desc,
+                                dl.targetVersion,
+                            ),
                             fontSize = 13.sp,
                             lineHeight = 19.sp,
                             color = palette.muted,
@@ -1269,13 +1288,13 @@ fun CoreUpdateDialog(
                         Spacer(modifier = Modifier.height(18.dp))
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             DialogActionButton(
-                                label = "下次启动生效",
+                                label = stringResource(R.string.core_apply_next_launch),
                                 filled = false,
                                 onClick = onDismiss,
                                 modifier = Modifier.weight(1f),
                             )
                             DialogActionButton(
-                                label = "立即重启生效",
+                                label = stringResource(R.string.core_restart_now),
                                 filled = true,
                                 onClick = onRestartApp,
                                 modifier = Modifier.weight(1.2f),
@@ -1286,20 +1305,20 @@ fun CoreUpdateDialog(
                     is CoreDownloadState.Error -> {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Icon(Icons.Rounded.ErrorOutline, null, tint = palette.danger, modifier = Modifier.size(18.dp))
-                            Text("内核更新失败", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
+                            Text(stringResource(R.string.core_update_failed), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
                         }
                         Spacer(modifier = Modifier.height(6.dp))
-                        Text(dl.message, fontSize = 13.sp, lineHeight = 19.sp, color = palette.muted)
+                        Text(NativeErrorLocalizer.localize(dl.message), fontSize = 13.sp, lineHeight = 19.sp, color = palette.muted)
                         Spacer(modifier = Modifier.height(18.dp))
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             DialogActionButton(
-                                label = "关闭",
+                                label = stringResource(R.string.common_close),
                                 filled = false,
                                 onClick = onDismiss,
                                 modifier = Modifier.weight(1f),
                             )
                             DialogActionButton(
-                                label = "重试",
+                                label = stringResource(R.string.common_retry),
                                 filled = true,
                                 onClick = {
                                     if (candidate != null) onStartDownload(candidate) else onRetryCheck()
@@ -1321,11 +1340,11 @@ fun CoreUpdateDialog(
                                         strokeWidth = 2.5.dp,
                                         modifier = Modifier.size(22.dp),
                                     )
-                                    Text("正在查询 GitHub 最新内核版本…", fontSize = 14.sp, color = palette.muted)
+                                    Text(stringResource(R.string.core_checking_msg), fontSize = 14.sp, color = palette.muted)
                                 }
                                 Spacer(modifier = Modifier.height(18.dp))
                                 DialogActionButton(
-                                    label = "关闭",
+                                    label = stringResource(R.string.common_close),
                                     filled = false,
                                     onClick = onDismiss,
                                     modifier = Modifier.fillMaxWidth(),
@@ -1335,7 +1354,7 @@ fun CoreUpdateDialog(
                             is CoreCheckStatus.UpdateAvailable -> {
                                 val rel = check.candidate
                                 Text(
-                                    text = "发现新内核 v${rel.manifest.coreVersion}",
+                                    text = stringResource(R.string.core_found_title, rel.manifest.coreVersion),
                                     fontSize = 16.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     color = palette.text,
@@ -1375,13 +1394,13 @@ fun CoreUpdateDialog(
                                 Spacer(modifier = Modifier.height(14.dp))
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                     DialogActionButton(
-                                        label = "稍后再说",
+                                        label = stringResource(R.string.common_later),
                                         filled = false,
                                         onClick = onDismiss,
                                         modifier = Modifier.weight(1f),
                                     )
                                     DialogActionButton(
-                                        label = "立即更新内核",
+                                        label = stringResource(R.string.core_update_now),
                                         filled = true,
                                         onClick = { onStartDownload(rel) },
                                         modifier = Modifier.weight(1.3f),
@@ -1392,14 +1411,14 @@ fun CoreUpdateDialog(
                             is CoreCheckStatus.Error -> {
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Icon(Icons.Rounded.ErrorOutline, null, tint = palette.danger, modifier = Modifier.size(18.dp))
-                                    Text("检查内核更新失败", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
+                                    Text(stringResource(R.string.core_check_failed), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
                                 }
                                 Spacer(modifier = Modifier.height(6.dp))
-                                Text(check.message, fontSize = 13.sp, lineHeight = 19.sp, color = palette.muted)
+                                Text(NativeErrorLocalizer.localize(check.message), fontSize = 13.sp, lineHeight = 19.sp, color = palette.muted)
                                 Spacer(modifier = Modifier.height(16.dp))
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                     DialogActionButton(
-                                        label = "浏览器查看",
+                                        label = stringResource(R.string.update_view_browser),
                                         filled = false,
                                         onClick = {
                                             onOpenReleasePage(AppUpdateManager.GITHUB_RELEASES_URL)
@@ -1408,7 +1427,7 @@ fun CoreUpdateDialog(
                                         modifier = Modifier.weight(1f),
                                     )
                                     DialogActionButton(
-                                        label = "重试",
+                                        label = stringResource(R.string.common_retry),
                                         filled = true,
                                         onClick = onRetryCheck,
                                         modifier = Modifier.weight(1f),
@@ -1421,9 +1440,9 @@ fun CoreUpdateDialog(
                                     Icon(Icons.Rounded.CheckCircleOutline, null, tint = palette.success, modifier = Modifier.size(18.dp))
                                     Text(
                                         text = if (loaded.pendingRestartVersion != null) {
-                                            "新内核 v${loaded.pendingRestartVersion} 已就绪（待重启）"
+                                            stringResource(R.string.core_pending_ready_title, loaded.pendingRestartVersion)
                                         } else {
-                                            "当前内核已是最新兼容版"
+                                            stringResource(R.string.core_up_to_date_title)
                                         },
                                         fontSize = 15.sp,
                                         fontWeight = FontWeight.SemiBold,
@@ -1432,7 +1451,7 @@ fun CoreUpdateDialog(
                                 }
                                 Spacer(modifier = Modifier.height(6.dp))
                                 Text(
-                                    text = "内置基线 v${loaded.builtInVersion} · 当前已启用 ECDSA P-256 离线签名校验。",
+                                    text = stringResource(R.string.core_baseline_desc, loaded.builtInVersion),
                                     fontSize = 13.sp,
                                     lineHeight = 19.sp,
                                     color = palette.muted,
@@ -1445,26 +1464,26 @@ fun CoreUpdateDialog(
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                     if (loaded.pendingRestartVersion != null) {
                                         DialogActionButton(
-                                            label = "关闭",
+                                            label = stringResource(R.string.common_close),
                                             filled = false,
                                             onClick = onDismiss,
                                             modifier = Modifier.weight(1f),
                                         )
                                         DialogActionButton(
-                                            label = "立即重启生效",
+                                            label = stringResource(R.string.core_restart_now),
                                             filled = true,
                                             onClick = onRestartApp,
                                             modifier = Modifier.weight(1.2f),
                                         )
                                     } else {
                                         DialogActionButton(
-                                            label = "重新检查",
+                                            label = stringResource(R.string.core_recheck),
                                             filled = false,
                                             onClick = onRetryCheck,
                                             modifier = Modifier.weight(1f),
                                         )
                                         DialogActionButton(
-                                            label = "知道了",
+                                            label = stringResource(R.string.common_got_it),
                                             filled = true,
                                             onClick = onDismiss,
                                             modifier = Modifier.weight(1f),
@@ -1477,7 +1496,7 @@ fun CoreUpdateDialog(
                         if (loaded.isDynamic || loaded.pendingRestartVersion != null) {
                             Spacer(modifier = Modifier.height(10.dp))
                             DialogActionButton(
-                                label = "恢复内置内核 (v${loaded.builtInVersion})",
+                                label = stringResource(R.string.core_revert_btn, loaded.builtInVersion),
                                 filled = false,
                                 onClick = onRevertToBuiltIn,
                                 modifier = Modifier.fillMaxWidth(),
@@ -1495,12 +1514,14 @@ fun CoreUpdateDialog(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(
-                                text = if (state.mirrorPrefix.isBlank()) "下载镜像加速（可选）" else "镜像已配置",
+                                text = stringResource(
+                                    if (state.mirrorPrefix.isBlank()) R.string.core_mirror_title else R.string.core_mirror_configured,
+                                ),
                                 fontSize = 12.sp,
                                 color = palette.primaryText,
                             )
                             Text(
-                                text = if (showMirrorEditor) "收起" else "设置",
+                                text = stringResource(if (showMirrorEditor) R.string.common_collapse else R.string.common_settings),
                                 fontSize = 12.sp,
                                 color = palette.muted,
                             )
@@ -1512,7 +1533,7 @@ fun CoreUpdateDialog(
                                 value = mirrorDraft,
                                 onValueChange = { mirrorDraft = it },
                                 singleLine = true,
-                                placeholder = { Text("例如 https://ghfast.top/", fontSize = 12.sp) },
+                                placeholder = { Text(stringResource(R.string.core_mirror_hint), fontSize = 12.sp) },
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedBorderColor = palette.primary,
                                     unfocusedBorderColor = palette.line,
@@ -1524,7 +1545,7 @@ fun CoreUpdateDialog(
                             Spacer(modifier = Modifier.height(8.dp))
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 DialogActionButton(
-                                    label = "清除直连",
+                                    label = stringResource(R.string.core_mirror_clear),
                                     filled = false,
                                     onClick = {
                                         mirrorDraft = ""
@@ -1534,7 +1555,7 @@ fun CoreUpdateDialog(
                                     modifier = Modifier.weight(1f),
                                 )
                                 DialogActionButton(
-                                    label = "保存前缀",
+                                    label = stringResource(R.string.core_mirror_save),
                                     filled = true,
                                     onClick = {
                                         onSaveMirrorPrefix(mirrorDraft)
@@ -1569,7 +1590,12 @@ private fun IncompatibleCoreBanner(
     ) {
         Icon(Icons.Rounded.SystemUpdate, null, tint = palette.primaryText, modifier = Modifier.size(16.dp))
         Text(
-            text = "另有更新内核 v${notice.coreVersion}（ABI v${notice.requiredAbiVersion}），需升级 App 至 v${notice.minAppVersion}+ 后可用",
+            text = stringResource(
+                R.string.core_incompat_banner,
+                notice.coreVersion,
+                notice.requiredAbiVersion,
+                notice.minAppVersion,
+            ),
             fontSize = 12.sp,
             lineHeight = 17.sp,
             color = palette.primaryText,

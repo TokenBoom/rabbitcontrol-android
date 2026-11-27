@@ -72,6 +72,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -79,6 +80,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.rabbitcontrol.android.R
 import io.rabbitcontrol.android.core.data.DeviceToolKind
 import io.rabbitcontrol.android.core.data.rememberWallpaperImage
 import io.rabbitcontrol.android.core.nativebridge.RemoteDevice
@@ -164,7 +166,7 @@ fun DeviceDetailScreen(
                     ) {
                         Icon(
                             imageVector = if (isFav) Icons.Rounded.Star else Icons.Rounded.StarOutline,
-                            contentDescription = "收藏",
+                            contentDescription = stringResource(R.string.home_cd_favorite),
                             tint = if (isFav) palette.primaryText else palette.muted,
                         )
                     }
@@ -228,7 +230,11 @@ fun DeviceDetailScreen(
                             }
                             Spacer(modifier = Modifier.height(10.dp))
                             Text(
-                                text = if (isCurrentConnected) "当前会话已连接" else viewModel.lastConnectedLabel(device.id),
+                                text = if (isCurrentConnected) {
+                                    stringResource(R.string.detail_session_connected)
+                                } else {
+                                    viewModel.lastConnectedLabel(device.id)
+                                },
                                 fontSize = 13.sp,
                                 color = Color(0xFFD4D4D4),
                             )
@@ -252,9 +258,15 @@ fun DeviceDetailScreen(
                                 if (connecting) {
                                     CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Text("正在连接…", fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                                    Text(stringResource(R.string.detail_connecting), fontSize = 15.sp, fontWeight = FontWeight.Medium)
                                 } else {
-                                    Text(if (isCurrentConnected) "回到桌面" else "进入桌面", fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                                    Text(
+                                        stringResource(
+                                            if (isCurrentConnected) R.string.home_btn_resume_control else R.string.detail_enter_desktop,
+                                        ),
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.Medium,
+                                    )
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Icon(Icons.AutoMirrored.Rounded.ArrowForward, null, modifier = Modifier.size(18.dp))
                                 }
@@ -265,10 +277,10 @@ fun DeviceDetailScreen(
 
                 // 2x2 Quick Tools Grid
                 RabbitSectionHeader(
-                    title = "快捷工具",
+                    title = stringResource(R.string.detail_quick_tools),
                     trailing = {
                         Text(
-                            text = "自定义排序",
+                            text = stringResource(R.string.detail_custom_order),
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Medium,
                             color = palette.primaryText,
@@ -329,15 +341,15 @@ fun DeviceDetailScreen(
                 // Device Metadata & Power Entry Card
                 RabbitCard(modifier = Modifier.fillMaxWidth()) {
                     val (statusLabel, statusTone) = when {
-                        device.disabled -> "已停用" to StatusTone.Muted
-                        device.busy -> "会话中" to StatusTone.Primary
-                        device.online -> "在线" to StatusTone.Success
-                        else -> "离线" to StatusTone.Muted
+                        device.disabled -> stringResource(R.string.home_status_disabled) to StatusTone.Muted
+                        device.busy -> stringResource(R.string.home_status_busy) to StatusTone.Primary
+                        device.online -> stringResource(R.string.home_status_online) to StatusTone.Success
+                        else -> stringResource(R.string.home_status_offline) to StatusTone.Muted
                     }
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                         Icon(Icons.Rounded.Computer, null, tint = palette.muted, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(10.dp))
-                        Text("设备状态", fontSize = 14.sp, color = palette.muted, modifier = Modifier.weight(1f))
+                        Text(stringResource(R.string.detail_device_status), fontSize = 14.sp, color = palette.muted, modifier = Modifier.weight(1f))
                         RabbitStatusPill(label = statusLabel, tone = statusTone)
                     }
 
@@ -348,7 +360,7 @@ fun DeviceDetailScreen(
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                         Icon(Icons.Rounded.LaptopMac, null, tint = palette.muted, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(10.dp))
-                        Text("系统信息", fontSize = 14.sp, color = palette.muted, modifier = Modifier.weight(1f))
+                        Text(stringResource(R.string.detail_os_info), fontSize = 14.sp, color = palette.muted, modifier = Modifier.weight(1f))
                         Text(osLabel, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = palette.text)
                     }
 
@@ -357,6 +369,7 @@ fun DeviceDetailScreen(
                         HorizontalDivider(color = palette.line, thickness = 1.dp)
                         Spacer(modifier = Modifier.height(8.dp))
                         val formatted = if (device.id.contains(':')) device.id else device.id.chunked(3).joinToString(" ")
+                        val copiedIdMsg = stringResource(R.string.detail_copied_id)
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
@@ -365,13 +378,13 @@ fun DeviceDetailScreen(
                                 .clip(RoundedCornerShape(RabbitRadius.Sm))
                                 .clickable {
                                     clipboard.setText(AnnotatedString(device.id))
-                                    RabbitToast.success("已复制设备 ID")
+                                    RabbitToast.success(copiedIdMsg)
                                 }
                                 .padding(vertical = 4.dp),
                         ) {
                             Icon(Icons.Rounded.Key, null, tint = palette.muted, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(10.dp))
-                            Text("设备 ID", fontSize = 14.sp, color = palette.muted, modifier = Modifier.weight(1f))
+                            Text(stringResource(R.string.detail_device_id), fontSize = 14.sp, color = palette.muted, modifier = Modifier.weight(1f))
                             Text(formatted, fontFamily = FontFamily.Monospace, fontSize = 14.sp, color = palette.text)
                             Spacer(modifier = Modifier.width(6.dp))
                             Icon(Icons.Rounded.ContentCopy, null, tint = palette.primaryText, modifier = Modifier.size(16.dp))
@@ -393,7 +406,7 @@ fun DeviceDetailScreen(
                     ) {
                         Icon(Icons.Rounded.Tune, null, tint = palette.primaryText, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(10.dp))
-                        Text("更多工具与电源管理", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = palette.text, modifier = Modifier.weight(1f))
+                        Text(stringResource(R.string.detail_more_and_power), fontSize = 14.sp, fontWeight = FontWeight.Medium, color = palette.text, modifier = Modifier.weight(1f))
                         Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, tint = palette.muted)
                     }
 
@@ -414,7 +427,7 @@ fun DeviceDetailScreen(
                             Icon(Icons.Rounded.LinkOff, null, tint = palette.danger, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(10.dp))
                             Text(
-                                text = if (removing) "正在解绑…" else "从账号解绑设备",
+                                text = stringResource(if (removing) R.string.detail_unbinding else R.string.detail_unbind),
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Medium,
                                 color = palette.danger,
@@ -464,14 +477,14 @@ fun DeviceDetailScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                "自定义工具排序",
+                                stringResource(R.string.detail_order_title),
                                 fontSize = 17.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = palette.text,
                             )
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
-                                "决定详情页快捷工具的展示顺序",
+                                stringResource(R.string.detail_order_sub),
                                 fontSize = 12.sp,
                                 color = palette.muted,
                             )
@@ -480,7 +493,7 @@ fun DeviceDetailScreen(
                             onClick = { sheetMode = null },
                             modifier = Modifier.size(36.dp),
                         ) {
-                            Icon(Icons.Rounded.Close, "关闭", tint = palette.muted, modifier = Modifier.size(18.dp))
+                            Icon(Icons.Rounded.Close, stringResource(R.string.common_close), tint = palette.muted, modifier = Modifier.size(18.dp))
                         }
                     }
 
@@ -531,7 +544,7 @@ fun DeviceDetailScreen(
                             )
                             ReorderArrowButton(
                                 icon = Icons.Rounded.ArrowUpward,
-                                contentDescription = "上移",
+                                contentDescription = stringResource(R.string.detail_move_up),
                                 enabled = idx > 0,
                                 onClick = {
                                     if (idx > 0) {
@@ -544,7 +557,7 @@ fun DeviceDetailScreen(
                             Spacer(modifier = Modifier.width(6.dp))
                             ReorderArrowButton(
                                 icon = Icons.Rounded.ArrowDownward,
-                                contentDescription = "下移",
+                                contentDescription = stringResource(R.string.detail_move_down),
                                 enabled = idx < draftOrder.lastIndex,
                                 onClick = {
                                     if (idx < draftOrder.lastIndex) {
@@ -563,12 +576,12 @@ fun DeviceDetailScreen(
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         RabbitSecondaryButton(
-                            label = "取消",
+                            label = stringResource(R.string.common_cancel),
                             onClick = { sheetMode = null },
                             modifier = Modifier.weight(1f),
                         )
                         RabbitPrimaryButton(
-                            label = "保存排序",
+                            label = stringResource(R.string.detail_save_order),
                             onClick = {
                                 viewModel.saveToolOrder(draftOrder)
                                 sheetMode = null
@@ -582,20 +595,20 @@ fun DeviceDetailScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            "更多工具与电源管理",
+                            stringResource(R.string.detail_more_and_power),
                             fontSize = 17.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = palette.text,
                             modifier = Modifier.weight(1f),
                         )
                         TextButton(onClick = { sheetMode = DetailSheetMode.ReorderTools }) {
-                            Text("调整顺序", color = palette.primaryText)
+                            Text(stringResource(R.string.detail_adjust_order), color = palette.primaryText)
                         }
                         IconButton(
                             onClick = { sheetMode = null },
                             modifier = Modifier.size(36.dp),
                         ) {
-                            Icon(Icons.Rounded.Close, "关闭", tint = palette.muted, modifier = Modifier.size(18.dp))
+                            Icon(Icons.Rounded.Close, stringResource(R.string.common_close), tint = palette.muted, modifier = Modifier.size(18.dp))
                         }
                     }
 
@@ -630,11 +643,11 @@ fun DeviceDetailScreen(
                     }
 
                     HorizontalDivider(color = palette.line, thickness = 1.dp)
-                    Text("远程电源管理", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = palette.muted)
+                    Text(stringResource(R.string.detail_remote_power), fontSize = 12.sp, fontWeight = FontWeight.Medium, color = palette.muted)
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                         PowerActionChip(
                             icon = Icons.Rounded.RestartAlt,
-                            label = "重启设备",
+                            label = stringResource(R.string.detail_reboot),
                             modifier = Modifier.weight(1f),
                         ) {
                             sheetMode = null
@@ -642,7 +655,7 @@ fun DeviceDetailScreen(
                         }
                         PowerActionChip(
                             icon = Icons.Rounded.PowerSettingsNew,
-                            label = "关闭电源",
+                            label = stringResource(R.string.detail_shutdown),
                             modifier = Modifier.weight(1f),
                         ) {
                             sheetMode = null
@@ -656,33 +669,35 @@ fun DeviceDetailScreen(
 
     if (powerConfirmKind != null) {
         val isReboot = powerConfirmKind == "reboot"
-        val verb = if (isReboot) "重启" else "关机"
+        val verb = stringResource(if (isReboot) R.string.detail_power_reboot_verb else R.string.detail_power_shutdown_verb)
+        val unsupportedMsg = stringResource(R.string.detail_power_unsupported, verb)
         RabbitDialog(
-            title = "${verb}设备",
-            message = "确认要${verb}「${device.name}」吗？",
+            title = stringResource(R.string.detail_power_confirm_title, verb),
+            message = stringResource(R.string.detail_power_confirm_msg, verb, device.name),
             onDismissRequest = { powerConfirmKind = null },
-            dismissLabel = "取消",
-            confirmLabel = "确认$verb",
+            dismissLabel = stringResource(R.string.common_cancel),
+            confirmLabel = stringResource(R.string.detail_power_confirm_btn, verb),
             destructive = true,
             onConfirm = {
                 powerConfirmKind = null
-                RabbitToast.info("等待被控端支持远程电源协议（可使用「终端」执行 $verb）")
+                RabbitToast.info(unsupportedMsg)
             },
         )
     }
 
     if (showRemoveConfirm) {
+        val removedMsg = stringResource(R.string.detail_unbind_success)
         RabbitDialog(
-            title = "解绑设备",
-            message = "确定要从当前账号解绑「${device.name}」吗？解绑后将从我的设备列表中移除。",
+            title = stringResource(R.string.detail_unbind_title),
+            message = stringResource(R.string.detail_unbind_msg, device.name),
             onDismissRequest = { showRemoveConfirm = false },
-            dismissLabel = "取消",
-            confirmLabel = "确认解绑",
+            dismissLabel = stringResource(R.string.common_cancel),
+            confirmLabel = stringResource(R.string.detail_unbind_confirm),
             destructive = true,
             onConfirm = {
                 showRemoveConfirm = false
                 viewModel.removeDevice(device.id) {
-                    RabbitToast.success("已解绑设备")
+                    RabbitToast.success(removedMsg)
                     onBack()
                 }
             },
@@ -745,7 +760,7 @@ private fun ReorderArrowButton(
 private fun formatDetailOs(raw: String): String {
     val normalized = raw.trim().lowercase()
     return when {
-        normalized.isEmpty() -> "桌面设备"
+        normalized.isEmpty() -> io.rabbitcontrol.android.core.i18n.AppStrings.get(R.string.home_device_default_name, "桌面设备")
         normalized.contains("mac") || normalized.contains("darwin") -> "macOS"
         normalized.contains("win") -> "Windows"
         normalized.contains("linux") -> "Linux"

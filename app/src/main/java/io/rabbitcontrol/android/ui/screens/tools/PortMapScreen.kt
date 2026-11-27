@@ -44,6 +44,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -51,6 +52,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.rabbitcontrol.android.R
+import io.rabbitcontrol.android.core.i18n.NativeErrorLocalizer
 import io.rabbitcontrol.android.ui.components.RabbitCard
 import io.rabbitcontrol.android.ui.components.RabbitDialog
 import io.rabbitcontrol.android.ui.components.RabbitEmptyState
@@ -81,7 +84,7 @@ fun PortMapScreen(
     LaunchedEffect(error) {
         val err = error
         if (!err.isNullOrBlank()) {
-            RabbitToast.error(err)
+            RabbitToast.error(NativeErrorLocalizer.localize(err))
             viewModel.clearError()
         }
     }
@@ -100,7 +103,7 @@ fun PortMapScreen(
                     hoveredElevation = RabbitElevation.Floating,
                 ),
             ) {
-                Icon(Icons.Rounded.Add, "新增映射")
+                Icon(Icons.Rounded.Add, stringResource(R.string.pm_cd_add))
             }
         },
     ) { padding ->
@@ -110,7 +113,7 @@ fun PortMapScreen(
                 .padding(padding),
         ) {
             RabbitTopBar(
-                title = "端口映射",
+                title = stringResource(R.string.pm_title),
                 subtitle = deviceName,
                 onBack = onBack,
             )
@@ -129,8 +132,8 @@ fun PortMapScreen(
                     item {
                         RabbitEmptyState(
                             icon = Icons.Rounded.Cable,
-                            title = "暂无端口映射规则",
-                            description = "把远端电脑的服务端口安全转发到手机本地 127.0.0.1，后台保活不断线。",
+                            title = stringResource(R.string.pm_empty_title),
+                            description = stringResource(R.string.pm_empty_desc),
                         )
                     }
                 }
@@ -177,19 +180,20 @@ fun PortMapScreen(
                         Spacer(modifier = Modifier.height(6.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                "连接 ${rule.activeConns} · ↑${rule.bytesTx}B ↓${rule.bytesRx}B",
+                                stringResource(R.string.pm_stats, rule.activeConns, rule.bytesTx, rule.bytesRx),
                                 fontSize = 12.sp,
                                 color = if (!rule.error.isNullOrBlank()) palette.danger else palette.muted,
                                 modifier = Modifier.weight(1f),
                             )
+                            val copiedText = stringResource(R.string.pm_copied, rule.localPort)
                             IconButton(
                                 onClick = {
                                     clipboard.setText(AnnotatedString("127.0.0.1:${rule.localPort}"))
-                                    RabbitToast.success("已复制 127.0.0.1:${rule.localPort}")
+                                    RabbitToast.success(copiedText)
                                 },
                                 modifier = Modifier.size(44.dp),
                             ) {
-                                Icon(Icons.Rounded.ContentCopy, "复制", tint = palette.muted, modifier = Modifier.size(18.dp))
+                                Icon(Icons.Rounded.ContentCopy, stringResource(R.string.common_copy), tint = palette.muted, modifier = Modifier.size(18.dp))
                             }
                             IconButton(
                                 onClick = {
@@ -201,13 +205,13 @@ fun PortMapScreen(
                                 },
                                 modifier = Modifier.size(44.dp),
                             ) {
-                                Icon(Icons.AutoMirrored.Rounded.OpenInNew, "打开", tint = palette.primaryText, modifier = Modifier.size(18.dp))
+                                Icon(Icons.AutoMirrored.Rounded.OpenInNew, stringResource(R.string.common_open), tint = palette.primaryText, modifier = Modifier.size(18.dp))
                             }
                             IconButton(
                                 onClick = { viewModel.deleteRule(rule.id) },
                                 modifier = Modifier.size(44.dp),
                             ) {
-                                Icon(Icons.Rounded.DeleteOutline, "删除", tint = palette.danger, modifier = Modifier.size(18.dp))
+                                Icon(Icons.Rounded.DeleteOutline, stringResource(R.string.common_delete), tint = palette.danger, modifier = Modifier.size(18.dp))
                             }
                         }
                     }
@@ -224,10 +228,10 @@ fun PortMapScreen(
         val lp = localPort.toIntOrNull() ?: 0
         val tp = targetPort.toIntOrNull() ?: 0
         RabbitDialog(
-            title = "新建端口映射",
+            title = stringResource(R.string.pm_dialog_title),
             onDismissRequest = { showAddDialog = false },
-            dismissLabel = "取消",
-            confirmLabel = "添加",
+            dismissLabel = stringResource(R.string.common_cancel),
+            confirmLabel = stringResource(R.string.common_add),
             confirmEnabled = lp in 1..65535 && tp in 1..65535,
             onConfirm = {
                 viewModel.addRule(name, lp, targetAddr, tp)
@@ -241,27 +245,27 @@ fun PortMapScreen(
                 RabbitTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = "规则名称",
-                    placeholder = "例如 本地 Web 服务",
+                    label = stringResource(R.string.pm_label_name),
+                    placeholder = stringResource(R.string.pm_hint_name),
                 )
                 RabbitTextField(
                     value = localPort,
                     onValueChange = { localPort = it },
-                    label = "本机监听端口 (1-65535)",
-                    placeholder = "例如 8080",
+                    label = stringResource(R.string.pm_label_local_port),
+                    placeholder = stringResource(R.string.pm_hint_local_port),
                     keyboardType = KeyboardType.Number,
                 )
                 RabbitTextField(
                     value = targetAddr,
                     onValueChange = { targetAddr = it },
-                    label = "远端目标地址",
+                    label = stringResource(R.string.pm_label_remote_host),
                     placeholder = "127.0.0.1",
                 )
                 RabbitTextField(
                     value = targetPort,
                     onValueChange = { targetPort = it },
-                    label = "远端目标端口 (1-65535)",
-                    placeholder = "例如 80",
+                    label = stringResource(R.string.pm_label_remote_port),
+                    placeholder = stringResource(R.string.pm_hint_remote_port),
                     keyboardType = KeyboardType.Number,
                 )
             }

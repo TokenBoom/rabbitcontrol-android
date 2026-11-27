@@ -2,11 +2,14 @@ package io.rabbitcontrol.android.ui.screens.detail
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import io.rabbitcontrol.android.R
 import io.rabbitcontrol.android.core.data.AccountRepository
 import io.rabbitcontrol.android.core.data.DeviceToolKind
 import io.rabbitcontrol.android.core.data.TargetHistoryStore
 import io.rabbitcontrol.android.core.data.ToolOrderStore
 import io.rabbitcontrol.android.core.data.WallpaperCache
+import io.rabbitcontrol.android.core.i18n.AppStrings
+import io.rabbitcontrol.android.core.i18n.NativeErrorLocalizer
 import io.rabbitcontrol.android.core.session.ActiveSessionState
 import io.rabbitcontrol.android.core.session.SessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -75,7 +78,10 @@ class DeviceDetailViewModel(
             )
             _connecting.value = false
             res.onSuccess { onReady() }
-                .onFailure { err -> _connectError.value = err.message ?: "连接失败" }
+                .onFailure { err ->
+                    _connectError.value = err.message?.let(NativeErrorLocalizer::localize)
+                        ?: AppStrings.get(R.string.detail_err_connect_failed, "连接失败")
+                }
         }
     }
 
@@ -91,7 +97,8 @@ class DeviceDetailViewModel(
                 }
                 .onFailure { err ->
                     _removing.value = false
-                    _connectError.value = err.message ?: "解绑失败"
+                    _connectError.value = err.message?.let(NativeErrorLocalizer::localize)
+                        ?: AppStrings.get(R.string.detail_err_unbind_failed, "解绑失败")
                 }
         }
     }

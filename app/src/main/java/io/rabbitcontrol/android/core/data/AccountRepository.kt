@@ -4,6 +4,8 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import io.rabbitcontrol.android.R
+import io.rabbitcontrol.android.core.i18n.AppStrings
 import io.rabbitcontrol.android.core.nativebridge.NativeRuntimeBootstrap
 import io.rabbitcontrol.android.core.nativebridge.RemoteDevice
 import io.rabbitcontrol.android.core.nativebridge.ServerConfigModel
@@ -398,7 +400,11 @@ class AccountRepository(context: Context) {
             signalPort = signalPort.takeIf { it in 1..65535 } ?: ServerConfigModel.DEFAULT_SIGNAL_PORT,
             relayPort = relayPort.takeIf { it in 1..65535 } ?: ServerConfigModel.DEFAULT_RELAY_PORT,
         )
-        val health = if (response.getString("status") == "ok") "连接正常" else "服务状态异常"
+        val health = if (response.getString("status") == "ok") {
+            AppStrings.get(R.string.repo_health_ok, "连接正常")
+        } else {
+            AppStrings.get(R.string.repo_health_abnormal, "服务状态异常")
+        }
         val report = "$health · ${response.getLong("elapsedMs")} ms"
         model to report
     }
@@ -536,9 +542,13 @@ class AccountRepository(context: Context) {
     }
 
     suspend fun login(email: String, password: String): UserProfile = withContext(Dispatchers.IO) {
-        val selected = checkNotNull(_server.value) { "请先配置服务器" }
+        val selected = checkNotNull(_server.value) {
+            AppStrings.get(R.string.repo_err_no_server, "请先配置服务器")
+        }
         val response = request("login", selected, "email" to email, "password" to password)
-        check(response.optJSONObject("user") != null) { "服务器没有返回账号信息" }
+        check(response.optJSONObject("user") != null) {
+            AppStrings.get(R.string.repo_err_no_user, "服务器没有返回账号信息")
+        }
         response.optJSONObject("device")?.optString("device_id")?.takeIf { it.isNotBlank() }?.let { did ->
             prefs.edit().putString(deviceIdKey(selected), did).apply()
         }
@@ -548,13 +558,17 @@ class AccountRepository(context: Context) {
 
     suspend fun register(email: String, displayName: String, password: String): UserProfile =
         withContext(Dispatchers.IO) {
-            val selected = checkNotNull(_server.value) { "请先配置服务器" }
+            val selected = checkNotNull(_server.value) {
+                AppStrings.get(R.string.repo_err_no_server, "请先配置服务器")
+            }
             val args = mutableListOf("email" to email, "password" to password)
             if (displayName.isNotBlank()) {
                 args.add("displayName" to displayName.trim())
             }
             val response = request("register", selected, *args.toTypedArray())
-            check(response.optJSONObject("user") != null) { "服务器没有返回账号信息" }
+            check(response.optJSONObject("user") != null) {
+                AppStrings.get(R.string.repo_err_no_user, "服务器没有返回账号信息")
+            }
             response.optJSONObject("device")?.optString("device_id")?.takeIf { it.isNotBlank() }?.let { did ->
                 prefs.edit().putString(deviceIdKey(selected), did).apply()
             }
@@ -564,7 +578,9 @@ class AccountRepository(context: Context) {
 
     suspend fun refreshDevices(): List<RemoteDevice> = withContext(Dispatchers.IO) {
         pendingNativeRestoreJob?.join()
-        val selected = checkNotNull(_server.value) { "请先配置服务器" }
+        val selected = checkNotNull(_server.value) {
+            AppStrings.get(R.string.repo_err_no_server, "请先配置服务器")
+        }
         val raw = authenticated {
             request("devices", selected, "access" to it.getString("access_token"))
         }.getJSONArray("devices")
@@ -589,7 +605,9 @@ class AccountRepository(context: Context) {
     }
 
     suspend fun removeDevice(deviceId: String): Unit = withContext(Dispatchers.IO) {
-        val selected = checkNotNull(_server.value) { "请先配置服务器" }
+        val selected = checkNotNull(_server.value) {
+            AppStrings.get(R.string.repo_err_no_server, "请先配置服务器")
+        }
         authenticated {
             request(
                 "remove_device",
@@ -602,7 +620,9 @@ class AccountRepository(context: Context) {
     }
 
     suspend fun changePassword(current: String, replacement: String): UserProfile = withContext(Dispatchers.IO) {
-        val selected = checkNotNull(_server.value) { "请先配置服务器" }
+        val selected = checkNotNull(_server.value) {
+            AppStrings.get(R.string.repo_err_no_server, "请先配置服务器")
+        }
         val changed = authenticated {
             request(
                 "password",
@@ -648,8 +668,12 @@ class AccountRepository(context: Context) {
     }
 
     private fun <T> authenticated(action: (JSONObject) -> T): T {
-        val selected = checkNotNull(_server.value) { "请先配置服务器" }
-        val current = checkNotNull(tokens) { "请先登录" }
+        val selected = checkNotNull(_server.value) {
+            AppStrings.get(R.string.repo_err_no_server, "请先配置服务器")
+        }
+        val current = checkNotNull(tokens) {
+            AppStrings.get(R.string.repo_err_not_logged_in, "请先登录")
+        }
         try {
             return action(current)
         } catch (_: SecurityException) {
@@ -707,7 +731,9 @@ class AccountRepository(context: Context) {
         if (prof != null) {
             editor.putString(emailKey(selected), prof.email)
         }
-        check(editor.commit()) { "无法保存本机账号配置" }
+        check(editor.commit()) {
+            AppStrings.get(R.string.repo_err_save_account, "无法保存本机账号配置")
+        }
         if (_server.value?.id == selected.id) {
             tokens = response
             _profile.value = prof

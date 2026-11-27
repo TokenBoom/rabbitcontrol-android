@@ -44,10 +44,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.rabbitcontrol.android.R
 import io.rabbitcontrol.android.ui.theme.SessionPalette
 
 @Composable
@@ -93,7 +95,7 @@ fun SessionGestureGuide(
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowLeft,
-                        contentDescription = "上一步",
+                        contentDescription = stringResource(R.string.guide_prev),
                         tint = Color.White,
                         modifier = Modifier.size(22.dp),
                     )
@@ -112,9 +114,9 @@ fun SessionGestureGuide(
             ) {
                 Text(
                     text = when (step) {
-                        0 -> "下一步 (1/3)"
-                        1 -> "下一步 (2/3)"
-                        else -> "知道了 (3/3)"
+                        0 -> stringResource(R.string.guide_next_1)
+                        1 -> stringResource(R.string.guide_next_2)
+                        else -> stringResource(R.string.guide_finish)
                     },
                     color = Color.White,
                     fontSize = 14.sp,
@@ -135,7 +137,7 @@ private fun GestureStep1Content(isPortrait: Boolean) {
         verticalArrangement = Arrangement.Center,
     ) {
         Text(
-            text = "鼠标模式手势操作",
+            text = stringResource(R.string.guide_title_mouse),
             color = Color.White,
             fontSize = 19.sp,
             fontWeight = FontWeight.SemiBold,
@@ -148,18 +150,18 @@ private fun GestureStep1Content(isPortrait: Boolean) {
             ) {
                 PortraitGestureGuideCard(
                     icon = Icons.Rounded.TouchApp,
-                    title = "按下拖动",
-                    subtitle = "双击按住 / 长按滑动 / 三指拖动，控制桌面拖拽窗口",
+                    title = stringResource(R.string.guide_drag_title),
+                    subtitle = stringResource(R.string.guide_drag_sub_portrait),
                 )
                 PortraitGestureGuideCard(
                     icon = Icons.Rounded.ZoomOutMap,
-                    title = "双指放大",
-                    subtitle = "双指捏合自由缩放画面，单指移动放大后的视野",
+                    title = stringResource(R.string.guide_zoom_title),
+                    subtitle = stringResource(R.string.guide_zoom_sub_portrait),
                 )
                 PortraitGestureGuideCard(
                     icon = Icons.Rounded.SwipeVertical,
-                    title = "双指滚动与右键",
-                    subtitle = "双指上下左右滑动滚轮，双指轻点触发鼠标右键",
+                    title = stringResource(R.string.guide_scroll_title),
+                    subtitle = stringResource(R.string.guide_scroll_sub_portrait),
                 )
             }
         } else {
@@ -170,18 +172,18 @@ private fun GestureStep1Content(isPortrait: Boolean) {
             ) {
                 GestureGuideTile(
                     icon = Icons.Rounded.TouchApp,
-                    title = "按下拖动",
-                    subtitle = "双击按住 / 三指拖动\n或按住左侧拖动区",
+                    title = stringResource(R.string.guide_drag_title),
+                    subtitle = stringResource(R.string.guide_drag_sub_landscape),
                 )
                 GestureGuideTile(
                     icon = Icons.Rounded.ZoomOutMap,
-                    title = "双指放大",
-                    subtitle = "双指捏合自由缩放\n单指可移动放大视野",
+                    title = stringResource(R.string.guide_zoom_title),
+                    subtitle = stringResource(R.string.guide_zoom_sub_landscape),
                 )
                 GestureGuideTile(
                     icon = Icons.Rounded.SwipeVertical,
-                    title = "双指滚动",
-                    subtitle = "双指上下左右滑动\n双指轻点触发右键",
+                    title = stringResource(R.string.guide_scroll_title_short),
+                    subtitle = stringResource(R.string.guide_scroll_sub_landscape),
                 )
             }
         }
@@ -265,7 +267,7 @@ private fun GestureStep2Content(isPortrait: Boolean) {
             verticalArrangement = Arrangement.Center,
         ) {
             Text(
-                text = "竖屏高效控制工具栏",
+                text = stringResource(R.string.guide_title_portrait_bar),
                 color = Color.White,
                 fontSize = 19.sp,
                 fontWeight = FontWeight.SemiBold,
@@ -273,20 +275,20 @@ private fun GestureStep2Content(isPortrait: Boolean) {
             Spacer(modifier = Modifier.height(18.dp))
             PortraitGestureGuideCard(
                 icon = Icons.Rounded.Mouse,
-                title = "按住右键",
-                subtitle = "左手按住底栏「按住右键」时，单指点击画面直接触发右键",
+                title = stringResource(R.string.session_right_hold),
+                subtitle = stringResource(R.string.guide_p_right_sub),
             )
             Spacer(modifier = Modifier.height(10.dp))
             PortraitGestureGuideCard(
                 icon = Icons.Rounded.TouchApp,
-                title = "触控板分屏 / 竖屏全屏",
-                subtitle = "被控为手机竖屏时默认全屏显示；随时可点「触控板」切为分屏单手控制",
+                title = stringResource(R.string.guide_p_split_title),
+                subtitle = stringResource(R.string.guide_p_split_sub),
             )
             Spacer(modifier = Modifier.height(10.dp))
             PortraitGestureGuideCard(
                 icon = Icons.Rounded.ScreenRotation,
-                title = "横竖屏随心切换",
-                subtitle = "支持随手机自动旋转，也可在底栏一键切换到横屏或锁定方向",
+                title = stringResource(R.string.guide_p_orient_title),
+                subtitle = stringResource(R.string.guide_p_orient_sub),
             )
             Spacer(modifier = Modifier.height(72.dp))
         }
@@ -331,20 +333,20 @@ private fun GestureStep2Content(isPortrait: Boolean) {
         ) {
             GuideCalloutRow(
                 dotColor = Color(0xFF6BA1FF),
-                title = "右键操作模式",
-                desc = "左手按住后，右手点击桌面直接触发右键",
+                title = stringResource(R.string.guide_l_right_title),
+                desc = stringResource(R.string.guide_l_right_desc),
                 modifier = Modifier.weight(1f),
             )
             GuideCalloutRow(
                 dotColor = Color(0xFF4ADE80),
-                title = "拖动操作模式",
-                desc = "左手按住后，右手单指滑动即可框选或拖拽窗口",
+                title = stringResource(R.string.guide_l_drag_title),
+                desc = stringResource(R.string.guide_l_drag_desc),
                 modifier = Modifier.weight(1f),
             )
             GuideCalloutRow(
                 dotColor = Color(0xFFFBBF24),
-                title = "快捷功能槽位（可自定义）",
-                desc = "默认放大画面，长按左侧任意槽位可自由更换功能",
+                title = stringResource(R.string.guide_l_slot_title),
+                desc = stringResource(R.string.guide_l_slot_desc),
                 modifier = Modifier.weight(1f),
             )
         }
@@ -405,14 +407,14 @@ private fun GestureStep3Content(isPortrait: Boolean) {
             }
             Spacer(modifier = Modifier.height(18.dp))
             Text(
-                text = "控制中心与更多设置",
+                text = stringResource(R.string.guide_title_cp_portrait),
                 color = Color.White,
                 fontSize = 18.sp,
                 fontWeight = FontWeight.SemiBold,
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "点击右下角「操作」打开底部控制中心\n可随时切换竖屏全屏 / 触控板分屏、横竖屏锁定、画质帧率与虚拟按键映射",
+                text = stringResource(R.string.guide_cp_portrait_desc),
                 color = SessionPalette.muted,
                 fontSize = 13.sp,
                 textAlign = TextAlign.Center,
@@ -442,14 +444,14 @@ private fun GestureStep3Content(isPortrait: Boolean) {
             ) {
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
-                        "控制中心与自定义右侧按键",
+                        stringResource(R.string.guide_title_cp_landscape),
                         color = Color.White,
                         fontSize = 16.sp,
                         fontWeight = FontWeight.SemiBold,
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        "点击「操作」调节画质、开启虚拟按键映射或切换直点模式\n下方 3 个快捷按钮均可长按自定义",
+                        stringResource(R.string.guide_cp_landscape_desc),
                         color = SessionPalette.muted,
                         fontSize = 12.sp,
                         textAlign = TextAlign.End,

@@ -13,16 +13,22 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -71,12 +77,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.rabbitcontrol.android.R
 import io.rabbitcontrol.android.core.data.DeviceToolKind
 import io.rabbitcontrol.android.core.data.InteractionPrefs
 import io.rabbitcontrol.android.core.data.KeyMapState
@@ -85,17 +93,25 @@ import io.rabbitcontrol.android.core.data.PortraitLayoutMode
 import io.rabbitcontrol.android.core.data.QuickActionKind
 import io.rabbitcontrol.android.core.data.SidebarConfig
 import io.rabbitcontrol.android.core.data.TouchInputMode
+import io.rabbitcontrol.android.core.i18n.AppStrings
 import io.rabbitcontrol.android.core.session.ActiveSessionState
 import io.rabbitcontrol.android.ui.theme.RabbitElevation
 import io.rabbitcontrol.android.ui.theme.RabbitRadius
 import io.rabbitcontrol.android.ui.theme.SessionPalette
 import kotlin.math.roundToInt
 
-enum class ControlPanelTab(val label: String, val icon: ImageVector) {
-    Controls("操控", Icons.Rounded.Tune),
-    Display("画质", Icons.Rounded.Speed),
-    Keymap("键位", Icons.Rounded.SportsEsports),
-    Tools("工具", Icons.Rounded.FolderOpen),
+enum class ControlPanelTab(
+    @androidx.annotation.StringRes val labelRes: Int,
+    private val fallbackLabel: String,
+    val icon: ImageVector,
+) {
+    Controls(R.string.cp_tab_controls, "操控", Icons.Rounded.Tune),
+    Display(R.string.cp_tab_display, "画质", Icons.Rounded.Speed),
+    Keymap(R.string.cp_tab_keymap, "键位", Icons.Rounded.SportsEsports),
+    Tools(R.string.cp_tab_tools, "工具", Icons.Rounded.FolderOpen);
+
+    val label: String
+        get() = AppStrings.get(labelRes, fallbackLabel)
 }
 
 @Composable
@@ -121,347 +137,189 @@ fun SessionControlPanel(
     var activeTab by remember(initialTab) { mutableStateOf(initialTab) }
 
     val neg = state.negotiated
-    val devTitle = state.deviceName.ifBlank { "控制中心" }
+    val devTitle = state.deviceName.ifBlank { stringResource(R.string.cp_title_default) }
     val telemetry = if (neg != null) {
-        val hwTag = if (diag.hardware) "硬解" else "软解"
+        val hwTag = stringResource(if (diag.hardware) R.string.cp_hw_decode else R.string.cp_sw_decode)
         "${neg.width}×${neg.height} · ${neg.fps}fps · ${neg.transport} · $hwTag"
     } else {
-        "已就绪"
+        stringResource(R.string.cp_ready)
     }
 
-    Box(
+    Surface(
         modifier = Modifier
-            .fillMaxSize()
-            .background(SessionPalette.scrim)
+            .then(
+                if (isPortrait) {
+                    Modifier
+                        .fillMaxWidth()
+                        .fillMaxHeight(0.52f)
+                        .heightIn(max = 440.dp)
+                } else {
+                    Modifier
+                        .fillMaxWidth(0.45f)
+                        .widthIn(min = 320.dp, max = 360.dp)
+                        .fillMaxHeight()
+                },
+            )
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
-                onClick = onDismiss,
+                onClick = {},
             ),
-        contentAlignment = if (isPortrait) Alignment.BottomCenter else Alignment.Center,
+        shape = if (isPortrait) {
+            RoundedCornerShape(topStart = RabbitRadius.Xl, topEnd = RabbitRadius.Xl)
+        } else {
+            RoundedCornerShape(topStart = RabbitRadius.Xl, bottomStart = RabbitRadius.Xl)
+        },
+        color = if (isPortrait) SessionPalette.chrome.copy(alpha = 0.98f) else SessionPalette.chrome.copy(alpha = 0.96f),
+        tonalElevation = 0.dp,
+        shadowElevation = RabbitElevation.Sheet,
+        border = BorderStroke(1.dp, SessionPalette.border),
     ) {
-        if (!isPortrait) {
-            // Landscape: Floating Split-Rail Control Center (Left Rail + Wide Right Canvas)
-            Surface(
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .then(
+                    if (isPortrait) {
+                        Modifier.navigationBarsPadding()
+                    } else {
+                        Modifier.windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.End))
+                    },
+                ),
+        ) {
+            if (isPortrait) {
+                Box(
+                    modifier = Modifier
+                        .padding(top = 8.dp)
+                        .align(Alignment.CenterHorizontally)
+                        .width(32.dp)
+                        .height(3.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(SessionPalette.border),
+                )
+            }
+
+            // Unified Header Row: Device Title + Telemetry + Guide + Lock + Close
+            Row(
                 modifier = Modifier
-                    .fillMaxWidth(0.78f)
-                    .widthIn(min = 480.dp, max = 610.dp)
-                    .fillMaxHeight(0.88f)
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = {},
-                    ),
-                shape = RoundedCornerShape(RabbitRadius.Xl),
-                color = SessionPalette.chrome,
-                tonalElevation = 0.dp,
-                shadowElevation = RabbitElevation.Sheet,
-                border = BorderStroke(1.dp, SessionPalette.border),
+                    .fillMaxWidth()
+                    .height(44.dp)
+                    .padding(start = 12.dp, end = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Row(modifier = Modifier.fillMaxSize()) {
-                    // Left Navigation Rail
-                    Column(
-                        modifier = Modifier
-                            .width(114.dp)
-                            .fillMaxHeight()
-                            .background(SessionPalette.trackpad)
-                            .padding(horizontal = 8.dp, vertical = 10.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        ControlPanelTab.entries.forEach { tab ->
-                            val selected = tab == activeTab
-                            val itemShape = RoundedCornerShape(10.dp)
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(38.dp)
-                                    .clip(itemShape)
-                                    .background(if (selected) SessionPalette.surfaceActive else Color.Transparent)
-                                    .then(
-                                        if (selected) Modifier.border(1.dp, SessionPalette.accent, itemShape)
-                                        else Modifier,
-                                    )
-                                    .clickable { activeTab = tab }
-                                    .padding(horizontal = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Icon(
-                                    imageVector = tab.icon,
-                                    contentDescription = null,
-                                    tint = if (selected) SessionPalette.accentText else SessionPalette.muted,
-                                    modifier = Modifier.size(16.dp),
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = tab.label,
-                                    fontSize = 13.sp,
-                                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                                    color = if (selected) SessionPalette.text else SessionPalette.muted,
-                                    maxLines = 1,
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.weight(1f))
-                        HorizontalDivider(color = SessionPalette.border, thickness = 1.dp)
-                        Spacer(modifier = Modifier.height(6.dp))
-
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(34.dp)
-                                .clip(RoundedCornerShape(9.dp))
-                                .background(SessionPalette.surface)
-                                .border(1.dp, SessionPalette.border, RoundedCornerShape(9.dp))
-                                .clickable(onClick = onShowGestureGuide)
-                                .padding(horizontal = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Icon(Icons.Rounded.HelpOutline, null, tint = SessionPalette.accentText, modifier = Modifier.size(15.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("使用教程", color = SessionPalette.text, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-                        }
-
-                        Spacer(modifier = Modifier.height(4.dp))
-
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(34.dp)
-                                .clip(RoundedCornerShape(9.dp))
-                                .background(SessionPalette.surface)
-                                .border(1.dp, SessionPalette.border, RoundedCornerShape(9.dp))
-                                .clickable(onClick = viewModel::lockRemoteScreen)
-                                .padding(horizontal = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Icon(Icons.Rounded.Lock, null, tint = SessionPalette.text, modifier = Modifier.size(15.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("锁屏", color = SessionPalette.text, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-                        }
-
-                        Spacer(modifier = Modifier.height(4.dp))
-
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(34.dp)
-                                .clip(RoundedCornerShape(9.dp))
-                                .background(SessionPalette.danger)
-                                .clickable(onClick = onRequestDisconnect)
-                                .padding(horizontal = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Icon(Icons.Rounded.PowerSettingsNew, null, tint = Color.White, modifier = Modifier.size(15.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("断开连接", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-                        }
-                    }
-
-                    Box(
-                        modifier = Modifier
-                            .width(1.dp)
-                            .fillMaxHeight()
-                            .background(SessionPalette.border),
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = devTitle,
+                        color = SessionPalette.text,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
+                    Text(
+                        text = telemetry,
+                        color = SessionPalette.muted,
+                        fontSize = 10.sp,
+                        fontFamily = FontFamily.Monospace,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(SessionPalette.surface)
+                        .border(1.dp, SessionPalette.border, RoundedCornerShape(8.dp))
+                        .clickable(onClick = onShowGestureGuide),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.Rounded.HelpOutline, stringResource(R.string.cp_guide), tint = SessionPalette.accentText, modifier = Modifier.size(16.dp))
+                }
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(SessionPalette.surface)
+                        .border(1.dp, SessionPalette.border, RoundedCornerShape(8.dp))
+                        .clickable(onClick = viewModel::lockRemoteScreen),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.Rounded.Lock, stringResource(R.string.cp_lock), tint = SessionPalette.text, modifier = Modifier.size(16.dp))
+                }
+                IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
+                    Icon(Icons.Rounded.Close, stringResource(R.string.common_close), tint = SessionPalette.text, modifier = Modifier.size(18.dp))
+                }
+            }
 
-                    // Right Wide Content Canvas
-                    Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(44.dp)
-                                .padding(start = 16.dp, end = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                text = devTitle,
-                                color = SessionPalette.text,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = telemetry,
-                                color = SessionPalette.muted,
-                                fontSize = 11.sp,
-                                fontFamily = FontFamily.Monospace,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f),
-                            )
-                            IconButton(onClick = onDismiss, modifier = Modifier.size(36.dp)) {
-                                Icon(Icons.Rounded.Close, "关闭", tint = SessionPalette.text, modifier = Modifier.size(18.dp))
-                            }
-                        }
-                        HorizontalDivider(color = SessionPalette.border, thickness = 1.dp)
+            // Horizontal Tab Row: Quick Disconnect first + Divider + Tabs
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    modifier = Modifier
+                        .height(30.dp)
+                        .clip(RoundedCornerShape(RabbitRadius.Sm))
+                        .background(SessionPalette.danger)
+                        .clickable(onClick = onRequestDisconnect)
+                        .padding(horizontal = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Rounded.PowerSettingsNew, null, tint = Color.White, modifier = Modifier.size(14.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = stringResource(R.string.host_disconnect),
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                    )
+                }
 
-                        Column(
-                            modifier = Modifier
-                                .weight(1f)
-                                .verticalScroll(rememberScrollState())
-                                .padding(horizontal = 16.dp, vertical = 12.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp),
-                        ) {
-                            ControlCenterTabBody(
-                                activeTab = activeTab,
-                                isPortrait = false,
-                                state = state,
-                                prefs = prefs,
-                                sidebarConfig = sidebarConfig,
-                                keymapState = keymapState,
-                                viewModel = viewModel,
-                                onQuickAction = onQuickAction,
-                                onEditSidebarSlot = onEditSidebarSlot,
-                                onEditKeymap = onEditKeymap,
-                                onShowGestureGuide = onShowGestureGuide,
-                                onShowKeyboard = onShowKeyboard,
-                                onPushClipboard = onPushClipboard,
-                                onOpenTool = onOpenTool,
-                            )
-                        }
+                Box(
+                    modifier = Modifier
+                        .width(1.dp)
+                        .height(16.dp)
+                        .background(SessionPalette.border),
+                )
+
+                ControlPanelTab.entries.forEach { tab ->
+                    SessionKeyChip(tab.label, highlighted = tab == activeTab, compact = true) {
+                        activeTab = tab
                     }
                 }
             }
-        } else {
-            // Portrait: Compact Bottom Sheet with Horizontal Pill Tabs
-            Surface(
+
+            HorizontalDivider(color = SessionPalette.border, thickness = 1.dp)
+
+            Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .fillMaxHeight(0.78f)
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = {},
-                    ),
-                shape = RoundedCornerShape(topStart = RabbitRadius.Xl, topEnd = RabbitRadius.Xl),
-                color = SessionPalette.chrome,
-                tonalElevation = 0.dp,
-                shadowElevation = RabbitElevation.Sheet,
-                border = BorderStroke(1.dp, SessionPalette.border),
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .navigationBarsPadding(),
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .padding(top = 8.dp)
-                            .align(Alignment.CenterHorizontally)
-                            .width(32.dp)
-                            .height(3.dp)
-                            .clip(RoundedCornerShape(2.dp))
-                            .background(SessionPalette.border),
-                    )
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(42.dp)
-                            .padding(start = 14.dp, end = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = devTitle,
-                                color = SessionPalette.text,
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Text(
-                                text = telemetry,
-                                color = SessionPalette.muted,
-                                fontSize = 10.sp,
-                                fontFamily = FontFamily.Monospace,
-                                maxLines = 1,
-                            )
-                        }
-                        Box(
-                            modifier = Modifier
-                                .size(34.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(SessionPalette.surface)
-                                .border(1.dp, SessionPalette.border, RoundedCornerShape(8.dp))
-                                .clickable(onClick = onShowGestureGuide),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(Icons.Rounded.HelpOutline, "使用教程", tint = SessionPalette.accentText, modifier = Modifier.size(16.dp))
-                        }
-                        Box(
-                            modifier = Modifier
-                                .size(34.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(SessionPalette.surface)
-                                .border(1.dp, SessionPalette.border, RoundedCornerShape(8.dp))
-                                .clickable(onClick = viewModel::lockRemoteScreen),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(Icons.Rounded.Lock, "锁屏", tint = SessionPalette.text, modifier = Modifier.size(16.dp))
-                        }
-                        Row(
-                            modifier = Modifier
-                                .height(32.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(SessionPalette.danger)
-                                .clickable(onClick = onRequestDisconnect)
-                                .padding(horizontal = 9.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Icon(Icons.Rounded.PowerSettingsNew, null, tint = Color.White, modifier = Modifier.size(14.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("断开", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-                        }
-                        IconButton(onClick = onDismiss, modifier = Modifier.size(34.dp)) {
-                            Icon(Icons.Rounded.Close, "关闭", tint = SessionPalette.text, modifier = Modifier.size(18.dp))
-                        }
-                    }
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState())
-                            .padding(horizontal = 14.dp, vertical = 6.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        ControlPanelTab.entries.forEach { tab ->
-                            SessionKeyChip(tab.label, highlighted = tab == activeTab) {
-                                activeTab = tab
-                            }
-                        }
-                    }
-
-                    HorizontalDivider(color = SessionPalette.border, thickness = 1.dp)
-
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .verticalScroll(rememberScrollState())
-                            .padding(horizontal = 14.dp, vertical = 12.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        ControlCenterTabBody(
-                            activeTab = activeTab,
-                            isPortrait = true,
-                            state = state,
-                            prefs = prefs,
-                            sidebarConfig = sidebarConfig,
-                            keymapState = keymapState,
-                            viewModel = viewModel,
-                            onQuickAction = onQuickAction,
-                            onEditSidebarSlot = onEditSidebarSlot,
-                            onEditKeymap = onEditKeymap,
-                            onShowGestureGuide = onShowGestureGuide,
-                            onShowKeyboard = onShowKeyboard,
-                            onPushClipboard = onPushClipboard,
-                            onOpenTool = onOpenTool,
-                        )
-                    }
-                }
+                ControlCenterTabBody(
+                    activeTab = activeTab,
+                    isPortrait = isPortrait,
+                    state = state,
+                    prefs = prefs,
+                    sidebarConfig = sidebarConfig,
+                    keymapState = keymapState,
+                    viewModel = viewModel,
+                    onQuickAction = onQuickAction,
+                    onEditSidebarSlot = onEditSidebarSlot,
+                    onEditKeymap = onEditKeymap,
+                    onShowGestureGuide = onShowGestureGuide,
+                    onShowKeyboard = onShowKeyboard,
+                    onPushClipboard = onPushClipboard,
+                    onOpenTool = onOpenTool,
+                )
             }
         }
     }
@@ -526,7 +384,7 @@ private fun ControlsTabBody(
     viewModel: SessionViewModel,
     onQuickAction: (QuickActionKind) -> Unit,
 ) {
-    val cols = if (isPortrait) 3 else 4
+    val cols = 3
     val tiles = listOf(
         TileSpec(
             icon = if (prefs.touchMode == TouchInputMode.Trackpad) Icons.Rounded.Mouse else Icons.Rounded.TouchApp,
@@ -539,28 +397,28 @@ private fun ControlsTabBody(
         ),
         TileSpec(
             icon = if (state.audioMuted) Icons.AutoMirrored.Rounded.VolumeOff else Icons.AutoMirrored.Rounded.VolumeUp,
-            label = if (state.audioMuted) "已静音" else "声音开",
+            label = stringResource(if (state.audioMuted) R.string.cp_sound_muted else R.string.cp_sound_on),
             active = !state.audioMuted,
             onClick = { viewModel.setAudioMuted(!state.audioMuted) },
         ),
         TileSpec(
             icon = Icons.Rounded.ContentPaste,
-            label = if (state.clipboardEnabled) "剪贴板" else "剪贴板关",
+            label = stringResource(if (state.clipboardEnabled) R.string.cp_clipboard_on else R.string.cp_clipboard_off),
             active = state.clipboardEnabled,
             onClick = { viewModel.setClipboardEnabled(!state.clipboardEnabled) },
         ),
         TileSpec(
             icon = Icons.Rounded.Visibility,
-            label = if (state.watchOnly) "观看模式" else "控制模式",
+            label = stringResource(if (state.watchOnly) R.string.tool_watch_mode else R.string.cp_mode_control),
             active = state.watchOnly,
             onClick = { viewModel.setWatchOnly(!state.watchOnly) },
         ),
         TileSpec(
             icon = Icons.Rounded.ScreenRotation,
             label = when (prefs.orientationPref) {
-                OrientationPreference.AutoSensor -> "自动旋转"
-                OrientationPreference.LandscapeFirst -> "锁定横屏"
-                OrientationPreference.PortraitTrackpad -> "锁定竖屏"
+                OrientationPreference.AutoSensor -> stringResource(R.string.orientation_auto)
+                OrientationPreference.LandscapeFirst -> stringResource(R.string.orientation_landscape)
+                OrientationPreference.PortraitTrackpad -> stringResource(R.string.orientation_portrait)
             },
             active = prefs.orientationPref != OrientationPreference.AutoSensor,
             onClick = {
@@ -571,7 +429,7 @@ private fun ControlsTabBody(
         if (isPortrait) {
             TileSpec(
                 icon = Icons.Rounded.ViewAgenda,
-                label = "竖屏·${prefs.portraitLayoutMode.label}",
+                label = stringResource(R.string.cp_portrait_prefix, prefs.portraitLayoutMode.label),
                 active = prefs.portraitLayoutMode != PortraitLayoutMode.Auto,
                 onClick = {
                     val modes = PortraitLayoutMode.entries
@@ -581,20 +439,20 @@ private fun ControlsTabBody(
         } else {
             TileSpec(
                 icon = Icons.Rounded.ViewSidebar,
-                label = if (sidebarConfig.showLandscapeSidebars) "侧边栏" else "纯全屏",
+                label = stringResource(if (sidebarConfig.showLandscapeSidebars) R.string.cp_sidebars_on else R.string.cp_sidebars_off),
                 active = sidebarConfig.showLandscapeSidebars,
                 onClick = { viewModel.setShowLandscapeSidebars(!sidebarConfig.showLandscapeSidebars) },
             )
         },
         TileSpec(
             icon = Icons.Rounded.SportsEsports,
-            label = if (keymapState.enabled) "按键开" else "按键映射",
+            label = stringResource(if (keymapState.enabled) R.string.cp_keymap_on else R.string.cp_keymap_off),
             active = keymapState.enabled,
             onClick = { viewModel.setKeymapEnabled(!keymapState.enabled) },
         ),
         TileSpec(
             icon = Icons.Rounded.Speed,
-            label = if (prefs.showHud) "HUD 开" else "HUD 关",
+            label = stringResource(if (prefs.showHud) R.string.cp_hud_on else R.string.cp_hud_off),
             active = prefs.showHud,
             onClick = { viewModel.setShowHud(!prefs.showHud) },
         ),
@@ -612,7 +470,7 @@ private fun ControlsTabBody(
     HorizontalDivider(color = SessionPalette.border, thickness = 1.dp)
 
     // Flat Shortcut Chips Section
-    Text("快捷操作", color = SessionPalette.muted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+    Text(stringResource(R.string.cp_quick_actions), color = SessionPalette.muted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
     FlowRow(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -641,7 +499,7 @@ private fun ControlsTabBody(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("指针灵敏度", color = SessionPalette.text, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            Text(stringResource(R.string.settings_pointer_sensitivity), color = SessionPalette.text, fontSize = 13.sp, fontWeight = FontWeight.Medium)
             Text(
                 "${String.format("%.2f", prefs.pointerSensitivity)}x",
                 color = SessionPalette.accentText,
@@ -659,8 +517,8 @@ private fun ControlsTabBody(
                 inactiveTrackColor = SessionPalette.border,
             ),
         )
-        SessionSwitchRow("自然滚动方向", prefs.naturalScroll, viewModel::setNaturalScroll)
-        SessionSwitchRow("直点指尖微偏置", prefs.directTouchOffset, viewModel::setDirectTouchOffset)
+        SessionSwitchRow(stringResource(R.string.cp_natural_scroll), prefs.naturalScroll, viewModel::setNaturalScroll)
+        SessionSwitchRow(stringResource(R.string.cp_direct_offset), prefs.directTouchOffset, viewModel::setDirectTouchOffset)
     }
 }
 
@@ -681,7 +539,7 @@ private fun DisplayTabBody(
     }
     var showMoreResolutions by remember { mutableStateOf(false) }
 
-    SessionSwitchRow("悬浮性能 HUD", prefs.showHud, viewModel::setShowHud)
+    SessionSwitchRow(stringResource(R.string.cp_floating_hud), prefs.showHud, viewModel::setShowHud)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -695,8 +553,8 @@ private fun DisplayTabBody(
     ) {
         Icon(Icons.Rounded.Refresh, contentDescription = null, tint = SessionPalette.accentText, modifier = Modifier.size(18.dp))
         Spacer(modifier = Modifier.width(8.dp))
-        Text("刷新画面关键帧 (IDR)", color = SessionPalette.text, fontSize = 13.sp, modifier = Modifier.weight(1f))
-        Text("立即请求", color = SessionPalette.accentText, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        Text(stringResource(R.string.cp_request_idr), color = SessionPalette.text, fontSize = 13.sp, modifier = Modifier.weight(1f))
+        Text(stringResource(R.string.cp_request_now), color = SessionPalette.accentText, fontSize = 12.sp, fontWeight = FontWeight.Medium)
     }
 
     if (presetSelection.common.isNotEmpty()) {
@@ -706,7 +564,7 @@ private fun DisplayTabBody(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("分辨率", color = SessionPalette.muted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+            Text(stringResource(R.string.cp_resolution), color = SessionPalette.muted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
             if (curW > 0 && curH > 0) {
                 Text("${curW}×${curH}", color = SessionPalette.accentText, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
             }
@@ -724,7 +582,11 @@ private fun DisplayTabBody(
             }
             if (presetSelection.extra.isNotEmpty()) {
                 SessionKeyChip(
-                    label = if (showMoreResolutions) "收起" else "更多 (${presetSelection.extra.size})",
+                    label = if (showMoreResolutions) {
+                        stringResource(R.string.common_collapse)
+                    } else {
+                        stringResource(R.string.cp_more_res, presetSelection.extra.size)
+                    },
                     highlighted = showMoreResolutions || presetSelection.extra.any { it.width == curW && it.height == curH },
                 ) {
                     showMoreResolutions = !showMoreResolutions
@@ -753,7 +615,7 @@ private fun DisplayTabBody(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text("帧率上限", color = SessionPalette.muted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        Text(stringResource(R.string.cp_fps_limit), color = SessionPalette.muted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
         Text("${curFps}fps", color = SessionPalette.accentText, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
     }
     val maxFpsCap = maxOf(dc?.maxFps ?: 120, curFps, 60)
@@ -776,7 +638,7 @@ private fun DisplayTabBody(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text("目标带宽", color = SessionPalette.muted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        Text(stringResource(R.string.cp_bitrate), color = SessionPalette.muted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
         if (activeBps != null && activeBps > 0) {
             Text("${activeBps / 1_000_000}M", color = SessionPalette.accentText, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
         }
@@ -809,7 +671,7 @@ private fun KeymapTabBody(
     onEditKeymap: () -> Unit,
 ) {
     // Right 3 Customizable Buttons
-    Text("右侧 3 个自定义按钮（点击更换）", color = SessionPalette.muted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+    Text(stringResource(R.string.cp_right_slots), color = SessionPalette.muted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
         (0 until 3).forEach { idx ->
             val act = sidebarConfig.rightSlots.getOrElse(idx) { QuickActionKind.Empty }
@@ -825,7 +687,7 @@ private fun KeymapTabBody(
     HorizontalDivider(color = SessionPalette.border, thickness = 1.dp)
 
     // Left 3 Hold/Shortcut Zones
-    Text("左侧 3 个握持快捷区（点击更换）", color = SessionPalette.muted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+    Text(stringResource(R.string.cp_left_slots), color = SessionPalette.muted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
         (0 until 3).forEach { idx ->
             val act = sidebarConfig.leftSlots.getOrElse(idx) { QuickActionKind.Empty }
@@ -841,7 +703,7 @@ private fun KeymapTabBody(
     HorizontalDivider(color = SessionPalette.border, thickness = 1.dp)
 
     // Virtual Keymap Overlay Settings
-    SessionSwitchRow("开启屏幕虚拟按键映射", keymapState.enabled, viewModel::setKeymapEnabled)
+    SessionSwitchRow(stringResource(R.string.cp_enable_keymap), keymapState.enabled, viewModel::setKeymapEnabled)
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
         keymapState.profiles.forEach { profile ->
             val active = profile.id == keymapState.activeProfileId
@@ -851,7 +713,7 @@ private fun KeymapTabBody(
         }
     }
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("透明度", color = SessionPalette.muted, fontSize = 12.sp)
+        Text(stringResource(R.string.cp_opacity), color = SessionPalette.muted, fontSize = 12.sp)
         Spacer(modifier = Modifier.width(8.dp))
         Slider(
             value = keymapState.opacity,
@@ -878,7 +740,7 @@ private fun KeymapTabBody(
     ) {
         Icon(Icons.Rounded.Edit, null, modifier = Modifier.size(16.dp))
         Spacer(modifier = Modifier.width(6.dp))
-        Text("进入拖拽布局编辑器（移动/大小/增删）", fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        Text(stringResource(R.string.cp_edit_keymap), fontSize = 12.sp, fontWeight = FontWeight.Medium)
     }
 }
 
@@ -896,23 +758,23 @@ private fun ToolsTabBody(
             .background(SessionPalette.surface)
             .border(1.dp, SessionPalette.border, RoundedCornerShape(14.dp)),
     ) {
-        SessionToolRow(Icons.Rounded.Keyboard, "键盘扩展条", "打开软键盘与常用快捷组合键", onShowKeyboard)
+        SessionToolRow(Icons.Rounded.Keyboard, stringResource(R.string.cp_tool_kbd_title), stringResource(R.string.cp_tool_kbd_sub), onShowKeyboard)
         HorizontalDivider(color = SessionPalette.border, thickness = 1.dp)
-        SessionToolRow(Icons.Rounded.ContentPaste, "发送手机剪贴板", "将当前剪贴板文本同步到远端", onPushClipboard)
+        SessionToolRow(Icons.Rounded.ContentPaste, stringResource(R.string.cp_tool_clip_title), stringResource(R.string.cp_tool_clip_sub), onPushClipboard)
         HorizontalDivider(color = SessionPalette.border, thickness = 1.dp)
-        SessionToolRow(Icons.Rounded.FolderOpen, "文件传输", "浏览与收发远端计算机文件") {
+        SessionToolRow(Icons.Rounded.FolderOpen, stringResource(R.string.tool_file_transfer), stringResource(R.string.cp_tool_ft_sub)) {
             onOpenTool(DeviceToolKind.FileTransfer)
         }
         HorizontalDivider(color = SessionPalette.border, thickness = 1.dp)
-        SessionToolRow(Icons.Rounded.Terminal, "远程终端", "在远端主机开启命令行会话") {
+        SessionToolRow(Icons.Rounded.Terminal, stringResource(R.string.cp_tool_term_title), stringResource(R.string.cp_tool_term_sub)) {
             onOpenTool(DeviceToolKind.Terminal)
         }
         HorizontalDivider(color = SessionPalette.border, thickness = 1.dp)
-        SessionToolRow(Icons.Rounded.Cable, "端口映射", "将远端端口安全转发到本地") {
+        SessionToolRow(Icons.Rounded.Cable, stringResource(R.string.tool_port_map), stringResource(R.string.cp_tool_pm_sub)) {
             onOpenTool(DeviceToolKind.PortMap)
         }
         HorizontalDivider(color = SessionPalette.border, thickness = 1.dp)
-        SessionToolRow(Icons.Rounded.HelpOutline, "使用教程", "再次查看手势与侧边栏操作指南", onShowGestureGuide)
+        SessionToolRow(Icons.Rounded.HelpOutline, stringResource(R.string.cp_guide), stringResource(R.string.cp_tool_guide_sub), onShowGestureGuide)
     }
 }
 

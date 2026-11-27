@@ -1,6 +1,7 @@
 package io.rabbitcontrol.android
 
 import android.app.Activity
+import android.content.Context
 import android.os.Bundle
 import android.view.Gravity
 import android.view.SurfaceHolder
@@ -9,6 +10,8 @@ import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.TextView
+import io.rabbitcontrol.android.core.i18n.AppLocaleManager
+import io.rabbitcontrol.android.core.i18n.AppStrings
 import io.rabbitcontrol.android.input.TouchPad
 import io.rabbitcontrol.android.session.Core
 import io.rabbitcontrol.android.video.MotionClip
@@ -22,6 +25,10 @@ class PreviewActivity : Activity(), SurfaceHolder.Callback {
     private var player: PreviewPlayer? = null
     private var visible = false
     private var generation = 0
+
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(AppLocaleManager.wrapContext(newBase))
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -51,9 +58,20 @@ class PreviewActivity : Activity(), SurfaceHolder.Callback {
             // typed InputEvents directly on SessionHandle's urgent input path.
             if (kind != 0) {
                 val eventBytes = Core.encodeInput(kind, a, b)
-                val action = if (kind == 2) "滚动 $a 行" else {
-                    val name = if (a == 0) "左键" else "右键"
-                    "$name${if (b == 1) "按下" else "松开"}"
+                val action = if (kind == 2) {
+                    AppStrings.get(R.string.preview_action_scroll, "滚动 $a 行", a)
+                } else {
+                    val name = if (a == 0) {
+                        AppStrings.get(R.string.preview_btn_left, "左键")
+                    } else {
+                        AppStrings.get(R.string.preview_btn_right, "右键")
+                    }
+                    val dir = if (b == 1) {
+                        AppStrings.get(R.string.preview_btn_down, "按下")
+                    } else {
+                        AppStrings.get(R.string.preview_btn_up, "松开")
+                    }
+                    "$name$dir"
                 }
                 if (action != lastAction) {
                     inputStatus.text = getString(R.string.input_result, action, eventBytes.size)

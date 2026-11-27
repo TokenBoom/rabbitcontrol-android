@@ -5,6 +5,8 @@ import android.content.Intent
 import android.os.Build
 import android.os.Process
 import io.rabbitcontrol.android.BuildConfig
+import io.rabbitcontrol.android.R
+import io.rabbitcontrol.android.core.i18n.AppStrings
 import io.rabbitcontrol.android.core.nativebridge.LoadedCoreInfo
 import io.rabbitcontrol.android.core.nativebridge.NativeLibraryLoader
 import kotlinx.coroutines.CancellationException
@@ -213,7 +215,12 @@ class CoreUpdateManager(
         if (!publicKeyConfigured) {
             if (force) {
                 _state.value = _state.value.copy(
-                    checkStatus = CoreCheckStatus.Error("当前安装包未配置内核验签公钥，无法验证在线内核"),
+                    checkStatus = CoreCheckStatus.Error(
+                        AppStrings.get(
+                            R.string.core_err_no_pubkey,
+                            "当前安装包未配置内核验签公钥，无法验证在线内核",
+                        ),
+                    ),
                 )
             }
             return
@@ -247,11 +254,24 @@ class CoreUpdateManager(
                     if (force) {
                         val msg = when (err) {
                             is CoreHttpStatusException -> when (err.code) {
-                                403, 429 -> "GitHub 接口请求受限，请稍后再试或配置镜像前缀"
-                                else -> "检查内核更新失败（HTTP ${err.code}）"
+                                403, 429 -> AppStrings.get(
+                                    R.string.core_err_rate_limit,
+                                    "GitHub 接口请求受限，请稍后再试或配置镜像前缀",
+                                )
+                                else -> AppStrings.get(
+                                    R.string.core_err_http_check,
+                                    "检查内核更新失败（HTTP ${err.code}）",
+                                    err.code,
+                                )
                             }
-                            is SecurityException -> err.message ?: "内核清单签名校验失败"
-                            else -> "网络连接失败，请检查网络或镜像设置"
+                            is SecurityException -> err.message ?: AppStrings.get(
+                                R.string.core_err_sig_failed,
+                                "内核清单签名校验失败",
+                            )
+                            else -> AppStrings.get(
+                                R.string.core_err_network,
+                                "网络连接失败，请检查网络或镜像设置",
+                            )
                         }
                         _state.value = _state.value.copy(checkStatus = CoreCheckStatus.Error(msg))
                     }
@@ -262,7 +282,9 @@ class CoreUpdateManager(
     fun startDownload(candidate: CoreReleaseCandidate) {
         if (!publicKeyConfigured) {
             _state.value = _state.value.copy(
-                downloadState = CoreDownloadState.Error("未配置验签公钥，已拒绝安装动态内核"),
+                downloadState = CoreDownloadState.Error(
+                    AppStrings.get(R.string.core_err_refused_install, "未配置验签公钥，已拒绝安装动态内核"),
+                ),
             )
             return
         }
@@ -275,7 +297,9 @@ class CoreUpdateManager(
                 }
             if (store == null) {
                 _state.value = _state.value.copy(
-                    downloadState = CoreDownloadState.Error("内核存储目录初始化失败"),
+                    downloadState = CoreDownloadState.Error(
+                        AppStrings.get(R.string.core_err_store_init, "内核存储目录初始化失败"),
+                    ),
                 )
                 return@launch
             }
@@ -299,7 +323,10 @@ class CoreUpdateManager(
                 conn = openFollowingRedirects(downloadUrl, accept = "application/octet-stream")
                 val code = conn.responseCode
                 if (code !in 200..299) {
-                    throw CoreHttpStatusException(code, "下载失败（HTTP $code）")
+                    throw CoreHttpStatusException(
+                        code,
+                        AppStrings.get(R.string.update_err_http_dl, "下载失败（HTTP $code）", code),
+                    )
                 }
                 val contentLength = conn.contentLengthLong.let { len ->
                     if (len > 0L) len else candidate.artifact.sizeBytes
@@ -345,7 +372,12 @@ class CoreUpdateManager(
                     expectedSizeBytes = candidate.artifact.sizeBytes,
                 )
                 if (!ok) {
-                    throw SecurityException("内核文件 SHA-256 或大小校验不通过，已丢弃")
+                    throw SecurityException(
+                        AppStrings.get(
+                            R.string.core_err_sha_mismatch,
+                            "内核文件 SHA-256 或大小校验不通过，已丢弃",
+                        ),
+                    )
                 }
 
                 NativeLibraryLoader.installVerifiedCore(
@@ -371,8 +403,15 @@ class CoreUpdateManager(
             } catch (e: Exception) {
                 runCatching { partFile.delete() }
                 val msg = when (e) {
-                    is CoreHttpStatusException -> "下载内核失败（HTTP ${e.code}）"
-                    else -> e.message?.takeIf { it.isNotBlank() } ?: "下载或校验内核失败"
+                    is CoreHttpStatusException -> AppStrings.get(
+                        R.string.core_err_http_dl,
+                        "下载内核失败（HTTP ${e.code}）",
+                        e.code,
+                    )
+                    else -> e.message?.takeIf { it.isNotBlank() } ?: AppStrings.get(
+                        R.string.core_err_dl_or_verify,
+                        "下载或校验内核失败",
+                    )
                 }
                 _state.value = _state.value.copy(downloadState = CoreDownloadState.Error(msg))
             } finally {
@@ -563,7 +602,9 @@ class CoreUpdateManager(
                     if (read < 0) break
                     total += read
                     if (total > maxBytes) {
-                        throw IllegalStateException("响应体积超出上限")
+                        throw IllegalStateException(
+                            AppStrings.get(R.string.core_err_resp_limit, "响应体积超出上限"),
+                        )
                     }
                     out.write(buf, 0, read)
                 }
@@ -588,13 +629,20 @@ class CoreUpdateManager(
             if (code in listOf(301, 302, 303, 307, 308)) {
                 val location = conn.getHeaderField("Location")
                 conn.disconnect()
-                if (location.isNullOrBlank()) throw CoreHttpStatusException(code, "重定向地址为空")
+                if (location.isNullOrBlank()) {
+                    throw CoreHttpStatusException(
+                        code,
+                        AppStrings.get(R.string.update_err_empty_redirect, "重定向地址为空"),
+                    )
+                }
                 currentUrl = URL(URL(currentUrl), location).toString()
             } else {
                 return conn
             }
         }
-        throw IllegalStateException("重定向次数过多")
+        throw IllegalStateException(
+            AppStrings.get(R.string.update_err_too_many_redirects, "重定向次数过多"),
+        )
     }
 
     companion object {

@@ -19,11 +19,16 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import io.rabbitcontrol.android.MainActivity
 import io.rabbitcontrol.android.R
+import io.rabbitcontrol.android.core.i18n.AppLocaleManager
 import org.koin.core.context.GlobalContext
 
 class HostForegroundService : Service() {
     private var mediaProjection: MediaProjection? = null
     private var projectionCallback: MediaProjection.Callback? = null
+
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(AppLocaleManager.wrapContext(newBase))
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -68,7 +73,11 @@ class HostForegroundService : Service() {
                 runCatching { GlobalContext.get().get<HostManager>().onMediaProjectionReady(proj) }
             } else {
                 Log.w("RC_DIAG", "getMediaProjection returned null")
-                runCatching { GlobalContext.get().get<HostManager>().onProjectionFailed("无法获取屏幕共享授权") }
+                runCatching {
+                    GlobalContext.get().get<HostManager>().onProjectionFailed(
+                        getString(R.string.host_err_projection_denied),
+                    )
+                }
                 stopSelf()
             }
         }
@@ -100,7 +109,7 @@ class HostForegroundService : Service() {
                 nm.createNotificationChannel(
                     NotificationChannel(
                         CHANNEL_ID,
-                        "手机被控端投屏服务",
+                        getString(R.string.host_notif_channel),
                         NotificationManager.IMPORTANCE_LOW,
                     ),
                 )
@@ -123,11 +132,11 @@ class HostForegroundService : Service() {
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.rabbitcontrol)
-            .setContentTitle("RabbitControl 被控服务运行中")
-            .setContentText("允许其他设备远程查看或控制当前手机")
+            .setContentTitle(getString(R.string.host_notif_title))
+            .setContentText(getString(R.string.host_notif_text))
             .setOngoing(true)
             .setContentIntent(openIntent)
-            .addAction(0, "停止被控", stopIntent)
+            .addAction(0, getString(R.string.host_notif_stop), stopIntent)
             .build()
     }
 

@@ -1,6 +1,7 @@
 package io.rabbitcontrol.android.ui.session
 
 import android.app.KeyguardManager
+import android.content.Context
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
@@ -18,13 +19,19 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.rabbitcontrol.android.MainActivity
 import io.rabbitcontrol.android.core.data.DeviceToolKind
 import io.rabbitcontrol.android.core.data.OrientationPreference
+import io.rabbitcontrol.android.core.i18n.AppLocaleManager
 import io.rabbitcontrol.android.core.input.ScancodeMapper
+import io.rabbitcontrol.android.core.session.SessionStatus
 import io.rabbitcontrol.android.session.Core
 import io.rabbitcontrol.android.ui.theme.RabbitTheme
 import org.koin.androidx.viewmodel.ext.android.viewModel
 
 class SessionActivity : ComponentActivity() {
     private val viewModel: SessionViewModel by viewModel()
+
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(AppLocaleManager.wrapContext(newBase))
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -82,6 +89,7 @@ class SessionActivity : ComponentActivity() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        AppLocaleManager.refreshLocalizedContext(this, newConfig)
         applyImmersiveBars()
     }
 
@@ -93,16 +101,36 @@ class SessionActivity : ComponentActivity() {
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (event.keyCode != KeyEvent.KEYCODE_BACK &&
+        val isStreaming = viewModel.sessionState.value.status is SessionStatus.Streaming
+        if (isStreaming &&
+            !viewModel.drawerOpen.value &&
+            event.keyCode != KeyEvent.KEYCODE_BACK &&
             event.keyCode != KeyEvent.KEYCODE_VOLUME_UP &&
             event.keyCode != KeyEvent.KEYCODE_VOLUME_DOWN
         ) {
-            val sc = ScancodeMapper.keyCodeToScancode(event.keyCode)
-            if (sc != null && (event.action == KeyEvent.ACTION_DOWN || event.action == KeyEvent.ACTION_UP)) {
-                val mods = ScancodeMapper.metaStateToModifierBits(event.metaState) or viewModel.stickyModifiers.value
-                Core.sendKey(sc, event.action == KeyEvent.ACTION_DOWN, mods)
-                if (event.action == KeyEvent.ACTION_UP) {
-                    viewModel.consumeStickyModifiers()
+            val mapped = ScancodeMapper.keyCodeToScancodeAndShift(event.keyCode)
+            if (mapped != null && (event.action == KeyEvent.ACTION_DOWN || event.action == KeyEvent.ACTION_UP)) {
+                val (sc, needsShift) = mapped
+                val pressed = event.action == KeyEvent.ACTION_DOWN
+                val sticky = viewModel.stickyModifiers.value
+                val metaMods = ScancodeMapper.metaStateToModifierBits(event.metaState)
+                val combinedMods = metaMods or sticky
+                val shiftAlreadyHeld = (combinedMods and (ScancodeMapper.MOD_LEFT_SHIFT or ScancodeMapper.MOD_RIGHT_SHIFT)) != 0
+                val effectiveMods = if (needsShift) combinedMods or ScancodeMapper.MOD_LEFT_SHIFT else combinedMods
+
+                if (pressed) {
+                    if (needsShift && !shiftAlreadyHeld) {
+                        Core.sendKey(ScancodeMapper.SC_LEFT_SHIFT, true, effectiveMods)
+                    }
+                    Core.sendKey(sc, true, effectiveMods)
+                } else {
+                    Core.sendKey(sc, false, effectiveMods)
+                    if (needsShift && !shiftAlreadyHeld) {
+                        Core.sendKey(ScancodeMapper.SC_LEFT_SHIFT, false, combinedMods)
+                    }
+                    if (!ScancodeMapper.isModifierScancode(sc)) {
+                        viewModel.consumeStickyModifiers()
+                    }
                 }
                 return true
             }

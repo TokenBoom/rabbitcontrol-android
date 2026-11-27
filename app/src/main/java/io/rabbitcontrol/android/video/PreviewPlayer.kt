@@ -4,6 +4,7 @@ import android.content.res.Resources
 import android.os.SystemClock
 import android.view.Surface
 import io.rabbitcontrol.android.R
+import io.rabbitcontrol.android.core.i18n.AppStrings
 import java.io.Closeable
 import java.util.concurrent.locks.LockSupport
 
@@ -34,7 +35,14 @@ internal class PreviewPlayer(
                     }
                     if (now - window >= 1_000_000_000L) {
                         val fps = submitted * 1_000_000_000L / (now - window)
-                        update("${decoder.description}\n1280 × 720 · 送显 $fps fps")
+                        update(
+                            AppStrings.get(
+                                R.string.preview_player_stats,
+                                "${decoder.description}\n1280 × 720 · 送显 $fps fps",
+                                decoder.description,
+                                fps,
+                            ),
+                        )
                         submitted = 0
                         window = now
                     }
@@ -42,7 +50,10 @@ internal class PreviewPlayer(
                 }
             }
         } catch (e: Exception) {
-            if (running) update("画面校验失败 · ${e.message ?: e.javaClass.simpleName}")
+            if (running) {
+                val reason = e.message ?: e.javaClass.simpleName
+                update(AppStrings.get(R.string.preview_player_failed, "画面校验失败 · $reason", reason))
+            }
         }
     }, "rc-media").apply { start() }
 

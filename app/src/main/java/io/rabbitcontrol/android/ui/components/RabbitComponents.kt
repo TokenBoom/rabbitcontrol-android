@@ -21,8 +21,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Visibility
@@ -52,6 +54,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -66,6 +70,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import io.rabbitcontrol.android.R
 import io.rabbitcontrol.android.ui.theme.LocalRabbitPalette
 import io.rabbitcontrol.android.ui.theme.RabbitElevation
 import io.rabbitcontrol.android.ui.theme.RabbitRadius
@@ -125,7 +130,7 @@ fun RabbitTopBar(
             ) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                    contentDescription = "返回",
+                    contentDescription = stringResource(R.string.common_back),
                     tint = contentColor,
                 )
             }
@@ -404,7 +409,11 @@ fun RabbitTextField(
                 IconButton(onClick = { passwordVisible = !passwordVisible }) {
                     Icon(
                         imageVector = if (passwordVisible) Icons.Rounded.Visibility else Icons.Rounded.VisibilityOff,
-                        contentDescription = if (passwordVisible) "隐藏密码" else "显示密码",
+                        contentDescription = if (passwordVisible) {
+                            stringResource(R.string.common_hide_password)
+                        } else {
+                            stringResource(R.string.common_show_password)
+                        },
                         tint = if (passwordVisible) palette.primaryText else palette.muted,
                         modifier = Modifier.size(20.dp),
                     )
@@ -580,6 +589,11 @@ fun RabbitDialog(
     val bodyColor = if (darkSessionStyle) SessionPalette.muted else palette.muted
     val fieldColor = if (darkSessionStyle) SessionPalette.surface else palette.field
     val primaryColor = if (darkSessionStyle) SessionPalette.accent else palette.primary
+    val config = LocalConfiguration.current
+    val isLandscape = config.screenWidthDp > config.screenHeightDp
+    val maxDialogWidth = if (darkSessionStyle && isLandscape) 340.dp else 360.dp
+    val contentPad = if (isLandscape) 16.dp else 20.dp
+    val buttonHeight = if (isLandscape) 40.dp else 44.dp
 
     Dialog(
         onDismissRequest = onDismissRequest,
@@ -587,9 +601,9 @@ fun RabbitDialog(
     ) {
         Surface(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 28.dp)
-                .widthIn(max = 360.dp),
+                .padding(horizontal = 24.dp, vertical = if (isLandscape) 12.dp else 24.dp)
+                .widthIn(max = maxDialogWidth)
+                .fillMaxWidth(),
             shape = RoundedCornerShape(RabbitRadius.Xl),
             color = surfaceColor,
             tonalElevation = 0.dp,
@@ -600,7 +614,8 @@ fun RabbitDialog(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(20.dp),
+                        .verticalScroll(rememberScrollState())
+                        .padding(contentPad),
                 ) {
                 Text(
                     text = title,
@@ -609,7 +624,7 @@ fun RabbitDialog(
                     color = titleColor,
                 )
                 if (!message.isNullOrBlank()) {
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(if (isLandscape) 6.dp else 8.dp))
                     Text(
                         text = message,
                         fontSize = 14.sp,
@@ -618,10 +633,10 @@ fun RabbitDialog(
                     )
                 }
                 if (content != null) {
-                    Spacer(modifier = Modifier.height(if (!message.isNullOrBlank()) 12.dp else 10.dp))
+                    Spacer(modifier = Modifier.height(if (!message.isNullOrBlank()) (if (isLandscape) 10.dp else 12.dp) else 10.dp))
                     content()
                 }
-                Spacer(modifier = Modifier.height(20.dp))
+                Spacer(modifier = Modifier.height(if (isLandscape) 14.dp else 20.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -630,7 +645,7 @@ fun RabbitDialog(
                         Box(
                             modifier = Modifier
                                 .weight(1f)
-                                .height(44.dp)
+                                .height(buttonHeight)
                                 .clip(RoundedCornerShape(RabbitRadius.Md))
                                 .background(fieldColor)
                                 .border(1.dp, borderColor, RoundedCornerShape(RabbitRadius.Md))
@@ -649,7 +664,7 @@ fun RabbitDialog(
                     Box(
                         modifier = Modifier
                             .weight(1f)
-                            .height(44.dp)
+                            .height(buttonHeight)
                             .clip(RoundedCornerShape(RabbitRadius.Md))
                             .alpha(if (confirmEnabled) 1f else 0.42f)
                             .background(confirmContainer)

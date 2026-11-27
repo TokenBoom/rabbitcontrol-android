@@ -113,7 +113,7 @@ android {
     }
 
     androidResources {
-        localeFilters += listOf("zh", "zh-rCN", "zh-rHK", "zh-rTW", "en")
+        localeFilters += listOf("en", "zh", "zh-rCN", "zh-rTW", "zh-rHK", "b+zh+Hant")
     }
 
     packaging {

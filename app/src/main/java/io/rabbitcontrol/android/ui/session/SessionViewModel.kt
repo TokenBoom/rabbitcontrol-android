@@ -20,11 +20,18 @@ import io.rabbitcontrol.android.core.session.ActiveSessionState
 import io.rabbitcontrol.android.core.session.ClipboardSyncBridge
 import io.rabbitcontrol.android.core.session.SessionManager
 import io.rabbitcontrol.android.session.Core
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+
+enum class RemoteKeyboardMode {
+    Hidden,
+    SystemIme,
+    VirtualFull,
+}
 
 class SessionViewModel(
     private val sessionManager: SessionManager,
@@ -43,8 +50,24 @@ class SessionViewModel(
     private val _stickyModifiers = MutableStateFlow(0)
     val stickyModifiers: StateFlow<Int> = _stickyModifiers.asStateFlow()
 
+    private val _keyboardMode = MutableStateFlow(RemoteKeyboardMode.Hidden)
+    val keyboardMode: StateFlow<RemoteKeyboardMode> = _keyboardMode.asStateFlow()
+
     private val _keyboardBarVisible = MutableStateFlow(false)
     val keyboardBarVisible: StateFlow<Boolean> = _keyboardBarVisible.asStateFlow()
+
+    private var preferredKeyboardMode: RemoteKeyboardMode = RemoteKeyboardMode.SystemIme
+
+    private val keyActionQueue = Channel<suspend () -> Unit>(Channel.UNLIMITED)
+    private val virtualKeyPressTimestamps = mutableMapOf<Int, Long>()
+
+    init {
+        viewModelScope.launch {
+            for (action in keyActionQueue) {
+                action()
+            }
+        }
+    }
 
     private val _drawerOpen = MutableStateFlow(false)
     val drawerOpen: StateFlow<Boolean> = _drawerOpen.asStateFlow()
@@ -67,16 +90,30 @@ class SessionViewModel(
     }
 
     override fun onCleared() {
+        keyActionQueue.close()
         sessionManager.setMediaDiagnosticsVisible(false)
         super.onCleared()
     }
 
     fun toggleKeyboardBar() {
-        _keyboardBarVisible.value = !_keyboardBarVisible.value
+        val next = if (_keyboardMode.value == RemoteKeyboardMode.Hidden) {
+            preferredKeyboardMode
+        } else {
+            RemoteKeyboardMode.Hidden
+        }
+        setKeyboardMode(next)
     }
 
     fun setKeyboardBarVisible(visible: Boolean) {
-        _keyboardBarVisible.value = visible
+        setKeyboardMode(if (visible) preferredKeyboardMode else RemoteKeyboardMode.Hidden)
+    }
+
+    fun setKeyboardMode(mode: RemoteKeyboardMode) {
+        if (mode != RemoteKeyboardMode.Hidden) {
+            preferredKeyboardMode = mode
+        }
+        _keyboardMode.value = mode
+        _keyboardBarVisible.value = mode != RemoteKeyboardMode.Hidden
     }
 
     fun setTouchMode(mode: TouchInputMode) = prefsStore.update { it.copy(touchMode = mode) }
@@ -154,53 +191,153 @@ class SessionViewModel(
         val cur = _stickyModifiers.value
         if (cur == 0) return
         _stickyModifiers.value = 0
-        if ((cur and ScancodeMapper.MOD_LEFT_CTRL) != 0) Core.sendKey(ScancodeMapper.SC_LEFT_CTRL, false, 0)
-        if ((cur and ScancodeMapper.MOD_LEFT_SHIFT) != 0) Core.sendKey(ScancodeMapper.SC_LEFT_SHIFT, false, 0)
-        if ((cur and ScancodeMapper.MOD_LEFT_ALT) != 0) Core.sendKey(ScancodeMapper.SC_LEFT_ALT, false, 0)
-        if ((cur and ScancodeMapper.MOD_LEFT_GUI) != 0) Core.sendKey(ScancodeMapper.SC_LEFT_GUI, false, 0)
+        keyActionQueue.trySend {
+            releaseModifierBits(cur)
+        }
     }
 
     fun tapKey(scancode: Int, extraModBit: Int = 0, extraModScancode: Int? = null) {
-        val mods = _stickyModifiers.value or extraModBit
-        if (extraModScancode != null && (extraModBit and _stickyModifiers.value) == 0) {
-            Core.sendKey(extraModScancode, true, mods)
+        val sticky = _stickyModifiers.value
+        if (sticky != 0) _stickyModifiers.value = 0
+        val extraBit = extraModBit or (extraModScancode?.let(ScancodeMapper::modifierBitForScancode) ?: 0)
+        keyActionQueue.trySend {
+            val needExtra = extraModScancode != null && (extraBit and sticky) == 0
+            val mods = sticky or extraBit
+            if (needExtra && extraModScancode != null) {
+                Core.sendKey(extraModScancode, true, mods)
+                delay(18L)
+            }
+            Core.sendKey(scancode, true, mods)
+            delay(28L)
+            Core.sendKey(scancode, false, mods)
+            if (needExtra && extraModScancode != null) {
+                delay(18L)
+                Core.sendKey(extraModScancode, false, sticky)
+            }
+            if (sticky != 0) {
+                delay(18L)
+                releaseModifierBits(sticky)
+            }
         }
-        Core.sendKey(scancode, true, mods)
-        Core.sendKey(scancode, false, mods)
-        if (extraModScancode != null && (extraModBit and _stickyModifiers.value) == 0) {
-            Core.sendKey(extraModScancode, false, _stickyModifiers.value)
-        }
-        consumeStickyModifiers()
     }
 
     fun sendKeyCombo(scancode: Int, modBits: Int) {
-        val mods = _stickyModifiers.value or modBits
-        consumeStickyModifiers()
-        viewModelScope.launch {
-            val pressedMods = mutableListOf<Int>()
-            fun pressIf(bit: Int, sc: Int) {
-                if ((mods and bit) != 0) {
+        val sticky = _stickyModifiers.value
+        if (sticky != 0) _stickyModifiers.value = 0
+        val mods = sticky or modBits
+        keyActionQueue.trySend {
+            val newlyPressed = mutableListOf<Int>()
+            fun pressExtra(bit: Int, sc: Int) {
+                if ((modBits and bit) != 0 && (sticky and bit) == 0) {
                     Core.sendKey(sc, true, mods)
-                    pressedMods.add(sc)
+                    newlyPressed.add(sc)
                 }
             }
-            pressIf(ScancodeMapper.MOD_LEFT_CTRL, ScancodeMapper.SC_LEFT_CTRL)
-            pressIf(ScancodeMapper.MOD_LEFT_SHIFT, ScancodeMapper.SC_LEFT_SHIFT)
-            pressIf(ScancodeMapper.MOD_LEFT_ALT, ScancodeMapper.SC_LEFT_ALT)
-            pressIf(ScancodeMapper.MOD_LEFT_GUI, ScancodeMapper.SC_LEFT_GUI)
+            pressExtra(ScancodeMapper.MOD_LEFT_CTRL, ScancodeMapper.SC_LEFT_CTRL)
+            pressExtra(ScancodeMapper.MOD_RIGHT_CTRL, ScancodeMapper.SC_RIGHT_CTRL)
+            pressExtra(ScancodeMapper.MOD_LEFT_SHIFT, ScancodeMapper.SC_LEFT_SHIFT)
+            pressExtra(ScancodeMapper.MOD_RIGHT_SHIFT, ScancodeMapper.SC_RIGHT_SHIFT)
+            pressExtra(ScancodeMapper.MOD_LEFT_ALT, ScancodeMapper.SC_LEFT_ALT)
+            pressExtra(ScancodeMapper.MOD_RIGHT_ALT, ScancodeMapper.SC_RIGHT_ALT)
+            pressExtra(ScancodeMapper.MOD_LEFT_GUI, ScancodeMapper.SC_LEFT_GUI)
+            pressExtra(ScancodeMapper.MOD_RIGHT_GUI, ScancodeMapper.SC_RIGHT_GUI)
 
-            if (pressedMods.isNotEmpty()) delay(20L)
+            if (newlyPressed.isNotEmpty()) delay(20L)
             Core.sendKey(scancode, true, mods)
             delay(35L)
             Core.sendKey(scancode, false, mods)
 
-            if (pressedMods.isNotEmpty()) {
+            if (newlyPressed.isNotEmpty() || sticky != 0) {
                 delay(20L)
-                pressedMods.asReversed().forEach { sc ->
-                    Core.sendKey(sc, false, 0)
+                newlyPressed.asReversed().forEach { sc ->
+                    Core.sendKey(sc, false, sticky)
+                }
+                if (sticky != 0) {
+                    releaseModifierBits(sticky)
                 }
             }
         }
+    }
+
+    fun sendAsciiText(text: String) {
+        if (text.isEmpty()) return
+        val sticky = _stickyModifiers.value
+        if (sticky != 0) _stickyModifiers.value = 0
+        keyActionQueue.trySend {
+            for (ch in text) {
+                val mapped = ScancodeMapper.asciiToScancode(ch) ?: continue
+                val (sc, needsShift) = mapped
+                val shiftAlreadyActive = (sticky and (ScancodeMapper.MOD_LEFT_SHIFT or ScancodeMapper.MOD_RIGHT_SHIFT)) != 0
+                val pressShift = needsShift && !shiftAlreadyActive
+                val mods = sticky or if (needsShift) ScancodeMapper.MOD_LEFT_SHIFT else 0
+                if (pressShift) {
+                    Core.sendKey(ScancodeMapper.SC_LEFT_SHIFT, true, mods)
+                    delay(14L)
+                }
+                Core.sendKey(sc, true, mods)
+                delay(16L)
+                Core.sendKey(sc, false, mods)
+                if (pressShift) {
+                    delay(14L)
+                    Core.sendKey(ScancodeMapper.SC_LEFT_SHIFT, false, sticky)
+                }
+                delay(12L)
+            }
+            if (sticky != 0) {
+                delay(14L)
+                releaseModifierBits(sticky)
+            }
+        }
+    }
+
+    fun pressVirtualKey(scancode: Int) {
+        val now = System.currentTimeMillis()
+        virtualKeyPressTimestamps[scancode] = now
+        val mods = _stickyModifiers.value
+        keyActionQueue.trySend {
+            Core.sendKey(scancode, true, mods)
+        }
+    }
+
+    fun repeatVirtualKey(scancode: Int) {
+        val mods = _stickyModifiers.value
+        keyActionQueue.trySend {
+            Core.sendKey(scancode, true, mods)
+        }
+    }
+
+    fun releaseVirtualKey(scancode: Int) {
+        val downAt = virtualKeyPressTimestamps.remove(scancode) ?: 0L
+        val elapsed = System.currentTimeMillis() - downAt
+        val remainingHoldMs = (24L - elapsed).coerceAtLeast(0L)
+        val sticky = _stickyModifiers.value
+        val shouldConsume = sticky != 0 && !ScancodeMapper.isModifierScancode(scancode)
+        if (shouldConsume) _stickyModifiers.value = 0
+        keyActionQueue.trySend {
+            if (remainingHoldMs > 0L) delay(remainingHoldMs)
+            Core.sendKey(scancode, false, sticky)
+            if (shouldConsume) {
+                delay(18L)
+                releaseModifierBits(sticky)
+            }
+        }
+    }
+
+    fun sendPasteShortcut() {
+        val isMac = ScancodeMapper.isMacOsTarget(sessionState.value.deviceOs)
+        val modBit = if (isMac) ScancodeMapper.MOD_LEFT_GUI else ScancodeMapper.MOD_LEFT_CTRL
+        sendKeyCombo(0x2F, modBit)
+    }
+
+    private fun releaseModifierBits(bits: Int) {
+        if ((bits and ScancodeMapper.MOD_LEFT_CTRL) != 0) Core.sendKey(ScancodeMapper.SC_LEFT_CTRL, false, 0)
+        if ((bits and ScancodeMapper.MOD_RIGHT_CTRL) != 0) Core.sendKey(ScancodeMapper.SC_RIGHT_CTRL, false, 0)
+        if ((bits and ScancodeMapper.MOD_LEFT_SHIFT) != 0) Core.sendKey(ScancodeMapper.SC_LEFT_SHIFT, false, 0)
+        if ((bits and ScancodeMapper.MOD_RIGHT_SHIFT) != 0) Core.sendKey(ScancodeMapper.SC_RIGHT_SHIFT, false, 0)
+        if ((bits and ScancodeMapper.MOD_LEFT_ALT) != 0) Core.sendKey(ScancodeMapper.SC_LEFT_ALT, false, 0)
+        if ((bits and ScancodeMapper.MOD_RIGHT_ALT) != 0) Core.sendKey(ScancodeMapper.SC_RIGHT_ALT, false, 0)
+        if ((bits and ScancodeMapper.MOD_LEFT_GUI) != 0) Core.sendKey(ScancodeMapper.SC_LEFT_GUI, false, 0)
+        if ((bits and ScancodeMapper.MOD_RIGHT_GUI) != 0) Core.sendKey(ScancodeMapper.SC_RIGHT_GUI, false, 0)
     }
 
     fun executeShortcutKey(action: QuickActionKind) {

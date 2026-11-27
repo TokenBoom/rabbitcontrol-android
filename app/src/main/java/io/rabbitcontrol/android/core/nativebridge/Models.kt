@@ -1,6 +1,8 @@
 package io.rabbitcontrol.android.core.nativebridge
 
 import androidx.compose.runtime.Immutable
+import io.rabbitcontrol.android.R
+import io.rabbitcontrol.android.core.i18n.AppStrings
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -27,8 +29,12 @@ data class ServerConfigModel(
         if (!hasCustomPorts) return null
         val parts = buildList {
             if (apiPort != DEFAULT_API_PORT) add("API $apiPort")
-            if (signalPort != DEFAULT_SIGNAL_PORT) add("信令 $signalPort")
-            if (relayPort != DEFAULT_RELAY_PORT) add("中继 $relayPort")
+            if (signalPort != DEFAULT_SIGNAL_PORT) {
+                add(AppStrings.get(R.string.port_summary_signal, "信令 $signalPort", signalPort))
+            }
+            if (relayPort != DEFAULT_RELAY_PORT) {
+                add(AppStrings.get(R.string.port_summary_relay, "中继 $relayPort", relayPort))
+            }
         }
         return parts.joinToString(" · ")
     }

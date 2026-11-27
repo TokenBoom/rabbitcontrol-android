@@ -4,6 +4,9 @@ import android.util.Base64
 import androidx.compose.ui.text.AnnotatedString
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import io.rabbitcontrol.android.R
+import io.rabbitcontrol.android.core.i18n.AppStrings
+import io.rabbitcontrol.android.core.i18n.NativeErrorLocalizer
 import io.rabbitcontrol.android.core.nativebridge.TerminalSessionSummary
 import io.rabbitcontrol.android.core.session.ActiveSessionState
 import io.rabbitcontrol.android.core.session.SessionManager
@@ -218,11 +221,17 @@ class TerminalViewModel(
             is TerminalToolEvent.SessionList -> _sessions.value = ev.sessions
             is TerminalToolEvent.Opened -> {
                 if (!ev.ok) {
-                    _error.value = ev.error ?: "创建终端失败"
+                    _error.value = ev.error?.let(NativeErrorLocalizer::localize)
+                        ?: AppStrings.get(R.string.term_err_create, "创建终端失败")
                     return
                 }
                 buffers.getOrPut(ev.termId) { AnsiTerminalBuffer(cols, rows) }
-                val tab = TerminalTabState(ev.termId, ev.name.ifBlank { "终端 ${ev.termId}" }, ev.title, ev.cwd)
+                val tab = TerminalTabState(
+                    ev.termId,
+                    ev.name.ifBlank { AppStrings.get(R.string.term_default_tab_name, "终端 ${ev.termId}", ev.termId) },
+                    ev.title,
+                    ev.cwd,
+                )
                 _openTabs.value = (_openTabs.value.filterNot { it.termId == ev.termId } + tab)
                 if (ev.attached) {
                     _activeTermId.value = ev.termId
@@ -232,13 +241,19 @@ class TerminalViewModel(
             }
             is TerminalToolEvent.Attached -> {
                 if (!ev.ok) {
-                    _error.value = ev.error ?: "附着终端失败"
+                    _error.value = ev.error?.let(NativeErrorLocalizer::localize)
+                        ?: AppStrings.get(R.string.term_err_attach, "附着终端失败")
                     return
                 }
                 val buf = buffers.getOrPut(ev.termId) { AnsiTerminalBuffer(cols, rows) }
                 buf.clear()
                 ev.session?.let { s ->
-                    val tab = TerminalTabState(s.termId, s.name.ifBlank { "终端 ${s.termId}" }, s.title, s.cwd)
+                    val tab = TerminalTabState(
+                        s.termId,
+                        s.name.ifBlank { AppStrings.get(R.string.term_default_tab_name, "终端 ${s.termId}", s.termId) },
+                        s.title,
+                        s.cwd,
+                    )
                     _openTabs.value = (_openTabs.value.filterNot { it.termId == s.termId } + tab)
                 }
                 _activeTermId.value = ev.termId
@@ -266,10 +281,11 @@ class TerminalViewModel(
                     }
                     refreshSessions()
                 } else {
-                    _error.value = ev.error ?: "重命名失败"
+                    _error.value = ev.error?.let(NativeErrorLocalizer::localize)
+                        ?: AppStrings.get(R.string.term_err_rename, "重命名失败")
                 }
             }
-            is TerminalToolEvent.Error -> _error.value = ev.message
+            is TerminalToolEvent.Error -> _error.value = NativeErrorLocalizer.localize(ev.message)
         }
     }
 

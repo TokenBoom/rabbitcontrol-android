@@ -59,16 +59,19 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.rabbitcontrol.android.R
 import io.rabbitcontrol.android.core.data.KeyMapState
 import io.rabbitcontrol.android.core.data.QuickActionKind
 import io.rabbitcontrol.android.core.data.VirtualKeyItem
 import io.rabbitcontrol.android.core.data.VirtualKeyKind
+import io.rabbitcontrol.android.core.i18n.AppStrings
 import io.rabbitcontrol.android.core.input.ScancodeMapper
 import io.rabbitcontrol.android.session.Core
 import io.rabbitcontrol.android.ui.theme.RabbitElevation
@@ -193,9 +196,9 @@ fun SessionKeyMappingOverlay(
                                 }
                             }
                         }
-                        SessionKeyChip("+ 添加") { showAddDialog = true }
+                        SessionKeyChip(stringResource(R.string.km_add_btn)) { showAddDialog = true }
                         IconButton(onClick = onResetProfile, modifier = Modifier.size(36.dp)) {
-                            Icon(Icons.Rounded.Refresh, "重置方案", tint = SessionPalette.muted, modifier = Modifier.size(18.dp))
+                            Icon(Icons.Rounded.Refresh, stringResource(R.string.km_cd_reset), tint = SessionPalette.muted, modifier = Modifier.size(18.dp))
                         }
                         Row(
                             modifier = Modifier
@@ -208,11 +211,11 @@ fun SessionKeyMappingOverlay(
                         ) {
                             Icon(Icons.Rounded.Check, null, tint = Color.White, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("完成", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            Text(stringResource(R.string.common_done), color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                         }
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("透明度", color = SessionPalette.muted, fontSize = 11.sp)
+                        Text(stringResource(R.string.cp_opacity), color = SessionPalette.muted, fontSize = 11.sp)
                         Spacer(modifier = Modifier.width(8.dp))
                         Slider(
                             value = keymapState.opacity,
@@ -254,13 +257,13 @@ fun SessionKeyMappingOverlay(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         Text(selectedItem.label, color = SessionPalette.text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                        SessionKeyChip("小", highlighted = selectedItem.sizeDp <= smallSize + 2) {
+                        SessionKeyChip(stringResource(R.string.common_small), highlighted = selectedItem.sizeDp <= smallSize + 2) {
                             onResizeItem(selectedItem.id, smallSize)
                         }
-                        SessionKeyChip("中", highlighted = selectedItem.sizeDp in (smallSize + 3)..(largeSize - 3)) {
+                        SessionKeyChip(stringResource(R.string.common_medium), highlighted = selectedItem.sizeDp in (smallSize + 3)..(largeSize - 3)) {
                             onResizeItem(selectedItem.id, medSize)
                         }
-                        SessionKeyChip("大", highlighted = selectedItem.sizeDp >= largeSize - 2) {
+                        SessionKeyChip(stringResource(R.string.common_large), highlighted = selectedItem.sizeDp >= largeSize - 2) {
                             onResizeItem(selectedItem.id, largeSize)
                         }
                         Box(
@@ -274,13 +277,13 @@ fun SessionKeyMappingOverlay(
                                 },
                             contentAlignment = Alignment.Center,
                         ) {
-                            Icon(Icons.Rounded.DeleteOutline, "删除按键", tint = SessionPalette.dangerText, modifier = Modifier.size(18.dp))
+                            Icon(Icons.Rounded.DeleteOutline, stringResource(R.string.km_cd_delete), tint = SessionPalette.dangerText, modifier = Modifier.size(18.dp))
                         }
                     }
                 }
             } else {
                 Text(
-                    "拖动按键调整位置 · 点击按键可调整大小或删除",
+                    stringResource(R.string.km_editor_tip),
                     color = SessionPalette.text.copy(alpha = 0.85f),
                     fontSize = 12.sp,
                     modifier = Modifier
@@ -345,7 +348,10 @@ private fun LiveVirtualKeyButton(
                     pressed = true
                     view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                     when (item.kind) {
-                        VirtualKeyKind.Key -> Core.sendKey(item.scancode, true, item.modifiers)
+                        VirtualKeyKind.Key -> {
+                            pressModifiersForVirtualItem(item)
+                            Core.sendKey(item.scancode, true, item.modifiers)
+                        }
                         VirtualKeyKind.MouseButton -> Core.sendMouseButton(item.mouseButton, true)
                         VirtualKeyKind.MouseWheel -> Core.sendMouseWheel(item.wheelDelta, false)
                         VirtualKeyKind.QuickAction -> item.actionKind?.let { currentAction(it) }
@@ -370,9 +376,37 @@ private fun LiveVirtualKeyButton(
     }
 }
 
+private fun virtualItemModifierScancodes(item: VirtualKeyItem): List<Int> {
+    if (item.modifiers == 0) return emptyList()
+    val sc = mutableListOf<Int>()
+    fun addIf(bit: Int, code: Int) {
+        if ((item.modifiers and bit) != 0 && item.scancode != code) sc.add(code)
+    }
+    addIf(ScancodeMapper.MOD_LEFT_CTRL, ScancodeMapper.SC_LEFT_CTRL)
+    addIf(ScancodeMapper.MOD_RIGHT_CTRL, ScancodeMapper.SC_RIGHT_CTRL)
+    addIf(ScancodeMapper.MOD_LEFT_SHIFT, ScancodeMapper.SC_LEFT_SHIFT)
+    addIf(ScancodeMapper.MOD_RIGHT_SHIFT, ScancodeMapper.SC_RIGHT_SHIFT)
+    addIf(ScancodeMapper.MOD_LEFT_ALT, ScancodeMapper.SC_LEFT_ALT)
+    addIf(ScancodeMapper.MOD_RIGHT_ALT, ScancodeMapper.SC_RIGHT_ALT)
+    addIf(ScancodeMapper.MOD_LEFT_GUI, ScancodeMapper.SC_LEFT_GUI)
+    addIf(ScancodeMapper.MOD_RIGHT_GUI, ScancodeMapper.SC_RIGHT_GUI)
+    return sc
+}
+
+private fun pressModifiersForVirtualItem(item: VirtualKeyItem) {
+    virtualItemModifierScancodes(item).forEach { modSc ->
+        Core.sendKey(modSc, true, item.modifiers)
+    }
+}
+
 private fun releaseVirtualItem(item: VirtualKeyItem) {
     when (item.kind) {
-        VirtualKeyKind.Key -> Core.sendKey(item.scancode, false, 0)
+        VirtualKeyKind.Key -> {
+            Core.sendKey(item.scancode, false, item.modifiers)
+            virtualItemModifierScancodes(item).asReversed().forEach { modSc ->
+                Core.sendKey(modSc, false, 0)
+            }
+        }
         VirtualKeyKind.MouseButton -> Core.sendMouseButton(item.mouseButton, false)
         else -> Unit
     }
@@ -557,33 +591,46 @@ private fun AddVirtualKeyDialog(
 ) {
     val idPrefix = remember { System.currentTimeMillis() }
     val groups = remember {
+        val leftLbl = AppStrings.get(R.string.qa_left_click_short, "左键")
+        val rightLbl = AppStrings.get(R.string.qa_right_click_short, "右键")
+        val midLbl = AppStrings.get(R.string.qa_middle_click_short, "中键")
+        val scrollUpLbl = AppStrings.get(R.string.qa_scroll_up_short, "上滚")
+        val scrollDownLbl = AppStrings.get(R.string.qa_scroll_down_short, "下滚")
+        val dpadShortLbl = AppStrings.get(R.string.preset_dpad_short, "方向")
+        val desktopShortLbl = AppStrings.get(R.string.qa_show_desktop_short, "桌面")
+        val copyLbl = AppStrings.get(R.string.qa_copy, "复制")
+        val pasteLbl = AppStrings.get(R.string.qa_paste, "粘贴")
+        val undoLbl = AppStrings.get(R.string.qa_undo, "撤销")
+        val shotShortLbl = AppStrings.get(R.string.qa_screenshot_short, "截屏")
+        val zoomInShortLbl = AppStrings.get(R.string.qa_zoom_in_short, "放大")
+        val zoomOutShortLbl = AppStrings.get(R.string.qa_zoom_out_short, "缩小")
         listOf(
-            "摇杆与方向" to listOf(
-                KeyPresetCatalogItem("WASD 摇杆") { id ->
+            AppStrings.get(R.string.km_cat_stick, "摇杆与方向") to listOf(
+                KeyPresetCatalogItem(AppStrings.get(R.string.km_item_wasd, "WASD 摇杆")) { id ->
                     VirtualKeyItem(id, "WASD", VirtualKeyKind.DpadWasd, xNorm = 0.20f, yNorm = 0.65f, sizeDp = 128)
                 },
-                KeyPresetCatalogItem("方向键摇杆") { id ->
-                    VirtualKeyItem(id, "方向", VirtualKeyKind.DpadArrows, xNorm = 0.20f, yNorm = 0.65f, sizeDp = 124)
+                KeyPresetCatalogItem(AppStrings.get(R.string.km_item_dpad, "方向键摇杆")) { id ->
+                    VirtualKeyItem(id, dpadShortLbl, VirtualKeyKind.DpadArrows, xNorm = 0.20f, yNorm = 0.65f, sizeDp = 124)
                 },
             ),
-            "鼠标与滚轮" to listOf(
-                KeyPresetCatalogItem("左键") { id ->
-                    VirtualKeyItem(id, "左键", VirtualKeyKind.MouseButton, mouseButton = 0, xNorm = 0.50f, yNorm = 0.50f, sizeDp = 56)
+            AppStrings.get(R.string.km_cat_mouse, "鼠标与滚轮") to listOf(
+                KeyPresetCatalogItem(leftLbl) { id ->
+                    VirtualKeyItem(id, leftLbl, VirtualKeyKind.MouseButton, mouseButton = 0, xNorm = 0.50f, yNorm = 0.50f, sizeDp = 56)
                 },
-                KeyPresetCatalogItem("右键") { id ->
-                    VirtualKeyItem(id, "右键", VirtualKeyKind.MouseButton, mouseButton = 1, xNorm = 0.58f, yNorm = 0.50f, sizeDp = 54)
+                KeyPresetCatalogItem(rightLbl) { id ->
+                    VirtualKeyItem(id, rightLbl, VirtualKeyKind.MouseButton, mouseButton = 1, xNorm = 0.58f, yNorm = 0.50f, sizeDp = 54)
                 },
-                KeyPresetCatalogItem("中键") { id ->
-                    VirtualKeyItem(id, "中键", VirtualKeyKind.MouseButton, mouseButton = 2, xNorm = 0.50f, yNorm = 0.50f, sizeDp = 52)
+                KeyPresetCatalogItem(midLbl) { id ->
+                    VirtualKeyItem(id, midLbl, VirtualKeyKind.MouseButton, mouseButton = 2, xNorm = 0.50f, yNorm = 0.50f, sizeDp = 52)
                 },
-                KeyPresetCatalogItem("上滚") { id ->
-                    VirtualKeyItem(id, "上滚", VirtualKeyKind.MouseWheel, wheelDelta = 3, xNorm = 0.50f, yNorm = 0.50f, sizeDp = 50)
+                KeyPresetCatalogItem(AppStrings.get(R.string.qa_scroll_up, "上滚")) { id ->
+                    VirtualKeyItem(id, scrollUpLbl, VirtualKeyKind.MouseWheel, wheelDelta = 3, xNorm = 0.50f, yNorm = 0.50f, sizeDp = 50)
                 },
-                KeyPresetCatalogItem("下滚") { id ->
-                    VirtualKeyItem(id, "下滚", VirtualKeyKind.MouseWheel, wheelDelta = -3, xNorm = 0.50f, yNorm = 0.50f, sizeDp = 50)
+                KeyPresetCatalogItem(AppStrings.get(R.string.qa_scroll_down, "下滚")) { id ->
+                    VirtualKeyItem(id, scrollDownLbl, VirtualKeyKind.MouseWheel, wheelDelta = -3, xNorm = 0.50f, yNorm = 0.50f, sizeDp = 50)
                 },
             ),
-            "常用按键" to listOf(
+            AppStrings.get(R.string.km_cat_common, "常用按键") to listOf(
                 KeyPresetCatalogItem("Space") { id -> VirtualKeyItem(id, "Space", VirtualKeyKind.Key, scancode = ScancodeMapper.SC_SPACE, xNorm = 0.50f, yNorm = 0.50f, sizeDp = 58) },
                 KeyPresetCatalogItem("Shift") { id -> VirtualKeyItem(id, "Shift", VirtualKeyKind.Key, scancode = ScancodeMapper.SC_LEFT_SHIFT, modifiers = ScancodeMapper.MOD_LEFT_SHIFT, xNorm = 0.50f, yNorm = 0.50f, sizeDp = 54) },
                 KeyPresetCatalogItem("Ctrl") { id -> VirtualKeyItem(id, "Ctrl", VirtualKeyKind.Key, scancode = ScancodeMapper.SC_LEFT_CTRL, modifiers = ScancodeMapper.MOD_LEFT_CTRL, xNorm = 0.50f, yNorm = 0.50f, sizeDp = 52) },
@@ -602,14 +649,14 @@ private fun AddVirtualKeyDialog(
                 KeyPresetCatalogItem("2") { id -> VirtualKeyItem(id, "2", VirtualKeyKind.Key, scancode = 0x03, xNorm = 0.50f, yNorm = 0.50f, sizeDp = 48) },
                 KeyPresetCatalogItem("3") { id -> VirtualKeyItem(id, "3", VirtualKeyKind.Key, scancode = 0x04, xNorm = 0.50f, yNorm = 0.50f, sizeDp = 48) },
             ),
-            "快捷组合操作" to listOf(
-                KeyPresetCatalogItem("显示桌面") { id -> VirtualKeyItem(id, "桌面", VirtualKeyKind.QuickAction, actionKind = QuickActionKind.ShowDesktop, xNorm = 0.50f, yNorm = 0.50f, sizeDp = 54) },
-                KeyPresetCatalogItem("复制") { id -> VirtualKeyItem(id, "复制", VirtualKeyKind.QuickAction, actionKind = QuickActionKind.Copy, xNorm = 0.50f, yNorm = 0.50f, sizeDp = 54) },
-                KeyPresetCatalogItem("粘贴") { id -> VirtualKeyItem(id, "粘贴", VirtualKeyKind.QuickAction, actionKind = QuickActionKind.Paste, xNorm = 0.50f, yNorm = 0.50f, sizeDp = 54) },
-                KeyPresetCatalogItem("撤销") { id -> VirtualKeyItem(id, "撤销", VirtualKeyKind.QuickAction, actionKind = QuickActionKind.Undo, xNorm = 0.50f, yNorm = 0.50f, sizeDp = 54) },
-                KeyPresetCatalogItem("截屏") { id -> VirtualKeyItem(id, "截屏", VirtualKeyKind.QuickAction, actionKind = QuickActionKind.Screenshot, xNorm = 0.50f, yNorm = 0.50f, sizeDp = 54) },
-                KeyPresetCatalogItem("放大") { id -> VirtualKeyItem(id, "放大", VirtualKeyKind.QuickAction, actionKind = QuickActionKind.ZoomIn, xNorm = 0.50f, yNorm = 0.50f, sizeDp = 52) },
-                KeyPresetCatalogItem("缩小") { id -> VirtualKeyItem(id, "缩小", VirtualKeyKind.QuickAction, actionKind = QuickActionKind.ZoomOut, xNorm = 0.50f, yNorm = 0.50f, sizeDp = 52) },
+            AppStrings.get(R.string.km_cat_shortcuts, "快捷组合操作") to listOf(
+                KeyPresetCatalogItem(AppStrings.get(R.string.qa_show_desktop, "显示桌面")) { id -> VirtualKeyItem(id, desktopShortLbl, VirtualKeyKind.QuickAction, actionKind = QuickActionKind.ShowDesktop, xNorm = 0.50f, yNorm = 0.50f, sizeDp = 54) },
+                KeyPresetCatalogItem(copyLbl) { id -> VirtualKeyItem(id, copyLbl, VirtualKeyKind.QuickAction, actionKind = QuickActionKind.Copy, xNorm = 0.50f, yNorm = 0.50f, sizeDp = 54) },
+                KeyPresetCatalogItem(pasteLbl) { id -> VirtualKeyItem(id, pasteLbl, VirtualKeyKind.QuickAction, actionKind = QuickActionKind.Paste, xNorm = 0.50f, yNorm = 0.50f, sizeDp = 54) },
+                KeyPresetCatalogItem(undoLbl) { id -> VirtualKeyItem(id, undoLbl, VirtualKeyKind.QuickAction, actionKind = QuickActionKind.Undo, xNorm = 0.50f, yNorm = 0.50f, sizeDp = 54) },
+                KeyPresetCatalogItem(AppStrings.get(R.string.qa_screenshot, "截屏")) { id -> VirtualKeyItem(id, shotShortLbl, VirtualKeyKind.QuickAction, actionKind = QuickActionKind.Screenshot, xNorm = 0.50f, yNorm = 0.50f, sizeDp = 54) },
+                KeyPresetCatalogItem(AppStrings.get(R.string.qa_zoom_in, "放大")) { id -> VirtualKeyItem(id, zoomInShortLbl, VirtualKeyKind.QuickAction, actionKind = QuickActionKind.ZoomIn, xNorm = 0.50f, yNorm = 0.50f, sizeDp = 52) },
+                KeyPresetCatalogItem(AppStrings.get(R.string.qa_zoom_out, "缩小")) { id -> VirtualKeyItem(id, zoomOutShortLbl, VirtualKeyKind.QuickAction, actionKind = QuickActionKind.ZoomOut, xNorm = 0.50f, yNorm = 0.50f, sizeDp = 52) },
             ),
         )
     }
@@ -647,14 +694,14 @@ private fun AddVirtualKeyDialog(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        "添加虚拟按键",
+                        stringResource(R.string.km_add_dialog_title),
                         color = SessionPalette.text,
                         fontSize = 17.sp,
                         fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.weight(1f),
                     )
                     IconButton(onClick = onDismiss, modifier = Modifier.size(44.dp)) {
-                        Icon(Icons.Rounded.Close, "关闭", tint = SessionPalette.text)
+                        Icon(Icons.Rounded.Close, stringResource(R.string.common_close), tint = SessionPalette.text)
                     }
                 }
                 Spacer(modifier = Modifier.height(8.dp))

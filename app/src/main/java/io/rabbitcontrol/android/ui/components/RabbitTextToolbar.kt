@@ -31,6 +31,7 @@ import androidx.compose.ui.platform.LocalTextToolbar
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.TextToolbar
 import androidx.compose.ui.platform.TextToolbarStatus
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
@@ -41,6 +42,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
+import io.rabbitcontrol.android.R
 import io.rabbitcontrol.android.ui.theme.LocalRabbitPalette
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.roundToInt
@@ -170,13 +172,19 @@ private fun RabbitTextToolbarPopup(
     val horizontalMarginPx = with(density) { 12.dp.roundToPx() }
     val topSafeMarginPx = effectiveStatusBarTopPx + with(density) { 8.dp.roundToPx() }
 
-    val actions = remember(state) {
+    val cutLabel = stringResource(R.string.toolbar_cut)
+    val copyLabel = stringResource(R.string.toolbar_copy)
+    val pasteLabel = stringResource(R.string.toolbar_paste)
+    val selectAllLabel = stringResource(R.string.toolbar_select_all)
+    val autofillLabel = stringResource(R.string.toolbar_autofill)
+
+    val actions = remember(state, cutLabel, copyLabel, pasteLabel, selectAllLabel, autofillLabel) {
         buildList {
-            state.onCut?.let { add(ToolbarActionItem("剪切", hideOnInvoke = true, onClick = it)) }
-            state.onCopy?.let { add(ToolbarActionItem("复制", hideOnInvoke = true, onClick = it)) }
-            state.onPaste?.let { add(ToolbarActionItem("粘贴", hideOnInvoke = true, onClick = it)) }
-            state.onSelectAll?.let { add(ToolbarActionItem("全选", hideOnInvoke = false, onClick = it)) }
-            state.onAutofill?.let { add(ToolbarActionItem("自动填充", hideOnInvoke = true, onClick = it)) }
+            state.onCut?.let { add(ToolbarActionItem(cutLabel, hideOnInvoke = true, onClick = it)) }
+            state.onCopy?.let { add(ToolbarActionItem(copyLabel, hideOnInvoke = true, onClick = it)) }
+            state.onPaste?.let { add(ToolbarActionItem(pasteLabel, hideOnInvoke = true, onClick = it)) }
+            state.onSelectAll?.let { add(ToolbarActionItem(selectAllLabel, hideOnInvoke = false, onClick = it)) }
+            state.onAutofill?.let { add(ToolbarActionItem(autofillLabel, hideOnInvoke = true, onClick = it)) }
         }
     }
     if (actions.isEmpty()) return

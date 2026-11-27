@@ -7,8 +7,11 @@ import android.os.Build
 import android.util.DisplayMetrics
 import android.util.Log
 import android.view.WindowManager
+import io.rabbitcontrol.android.R
 import io.rabbitcontrol.android.core.data.AccountRepository
 import io.rabbitcontrol.android.core.data.InteractionPrefsStore
+import io.rabbitcontrol.android.core.i18n.AppStrings
+import io.rabbitcontrol.android.core.i18n.NativeErrorLocalizer
 import io.rabbitcontrol.android.core.nativebridge.NativeRuntimeBootstrap
 import io.rabbitcontrol.android.session.Core
 import kotlinx.coroutines.CoroutineScope
@@ -133,7 +136,8 @@ class HostManager(
                     enabled = false,
                     starting = false,
                     listening = false,
-                    lastError = err.message ?: "启动被控服务失败",
+                    lastError = err.message?.let { NativeErrorLocalizer.localize(it) }
+                        ?: AppStrings.get(R.string.host_err_start_failed, "启动被控服务失败"),
                 )
             }
         }

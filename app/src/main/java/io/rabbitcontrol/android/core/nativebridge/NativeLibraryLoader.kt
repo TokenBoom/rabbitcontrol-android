@@ -3,6 +3,8 @@ package io.rabbitcontrol.android.core.nativebridge
 import android.content.Context
 import android.util.Log
 import io.rabbitcontrol.android.BuildConfig
+import io.rabbitcontrol.android.R
+import io.rabbitcontrol.android.core.i18n.AppStrings
 import io.rabbitcontrol.android.core.update.CoreAbiArtifact
 import io.rabbitcontrol.android.core.update.CoreManifest
 import io.rabbitcontrol.android.core.update.CoreManifestVerifier
@@ -94,7 +96,11 @@ internal object NativeLibraryLoader {
                             Log.e(TAG, "Integrity mismatch for dynamic core v${entry.version}")
                             s.blacklistAndFallback(
                                 version = entry.version,
-                                reason = "内核 v${entry.version} 完整性校验失败，已自动回退",
+                                reason = AppStrings.get(
+                                    R.string.core_fallback_integrity,
+                                    "内核 v${entry.version} 完整性校验失败，已自动回退",
+                                    entry.version,
+                                ),
                                 builtInVersion = BuildConfig.BUNDLED_CORE_VERSION,
                                 supportedAbi = BuildConfig.CORE_ABI_VERSION,
                             )
@@ -104,7 +110,11 @@ internal object NativeLibraryLoader {
                             Log.e(TAG, "Failed to enforce read-only permissions on ${soFile.absolutePath}")
                             s.blacklistAndFallback(
                                 version = entry.version,
-                                reason = "内核 v${entry.version} 权限设置失败，已自动回退",
+                                reason = AppStrings.get(
+                                    R.string.core_fallback_perms,
+                                    "内核 v${entry.version} 权限设置失败，已自动回退",
+                                    entry.version,
+                                ),
                                 builtInVersion = BuildConfig.BUNDLED_CORE_VERSION,
                                 supportedAbi = BuildConfig.CORE_ABI_VERSION,
                             )
@@ -131,7 +141,11 @@ internal object NativeLibraryLoader {
                             Log.e(TAG, "System.load failed for dynamic core v${entry.version}", t)
                             s.blacklistAndFallback(
                                 version = entry.version,
-                                reason = "内核 v${entry.version} 加载失败，已自动回退",
+                                reason = AppStrings.get(
+                                    R.string.core_fallback_load,
+                                    "内核 v${entry.version} 加载失败，已自动回退",
+                                    entry.version,
+                                ),
                                 builtInVersion = BuildConfig.BUNDLED_CORE_VERSION,
                                 supportedAbi = BuildConfig.CORE_ABI_VERSION,
                             )
@@ -176,7 +190,12 @@ internal object NativeLibraryLoader {
         val dynamic = loadedDynamicEntry
         val s = store
         if (dynamic != null && nativeAbi > 0 && nativeAbi != BuildConfig.CORE_ABI_VERSION) {
-            val reason = "内核 ABI 不兼容（需要 v${BuildConfig.CORE_ABI_VERSION}，实际 v$nativeAbi），下次重启将自动恢复"
+            val reason = AppStrings.get(
+                R.string.core_fallback_abi,
+                "内核 ABI 不兼容（需要 v${BuildConfig.CORE_ABI_VERSION}，实际 v$nativeAbi），下次重启将自动恢复",
+                BuildConfig.CORE_ABI_VERSION,
+                nativeAbi,
+            )
             s?.blacklistAndFallback(
                 version = dynamic.version,
                 reason = reason,
@@ -210,7 +229,11 @@ internal object NativeLibraryLoader {
 
     fun onRuntimeInitFailed(err: Throwable) {
         val dynamic = loadedDynamicEntry ?: return
-        val reason = "内核 v${dynamic.version} 初始化失败，下次启动将自动回滚"
+        val reason = AppStrings.get(
+            R.string.core_fallback_init,
+            "内核 v${dynamic.version} 初始化失败，下次启动将自动回滚",
+            dynamic.version,
+        )
         Log.e(TAG, reason, err)
         store?.blacklistAndFallback(
             version = dynamic.version,

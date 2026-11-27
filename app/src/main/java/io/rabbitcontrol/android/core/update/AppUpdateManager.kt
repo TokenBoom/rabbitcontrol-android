@@ -5,6 +5,8 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
 import androidx.core.content.FileProvider
+import io.rabbitcontrol.android.R
+import io.rabbitcontrol.android.core.i18n.AppStrings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -133,7 +135,8 @@ fun pickBestApkAsset(assets: JSONArray?): Triple<String, String, Long>? {
 }
 
 fun cleanReleaseNotes(raw: String): String {
-    if (raw.isBlank()) return "暂无更新说明"
+    val emptyFallback = AppStrings.get(R.string.update_no_notes, "暂无更新说明")
+    if (raw.isBlank()) return emptyFallback
     val lines = raw
         .replace("\r\n", "\n")
         .split('\n')
@@ -153,7 +156,7 @@ fun cleanReleaseNotes(raw: String): String {
     return lines.joinToString("\n")
         .replace(Regex("\n{3,}"), "\n\n")
         .trim()
-        .ifBlank { "暂无更新说明" }
+        .ifBlank { emptyFallback }
 }
 
 internal fun extractApkFromExpandedAssetsHtml(html: String): Pair<String, String>? {
@@ -173,7 +176,7 @@ internal fun extractReleaseNotesFromTagHtml(html: String): String {
         .find(html)
         ?.groupValues
         ?.getOrNull(1)
-        ?: return "暂无更新说明"
+        ?: return AppStrings.get(R.string.update_no_notes, "暂无更新说明")
     val plain = bodyMatch
         .replace(Regex("""<li[^>]*>"""), "\n• ")
         .replace(Regex("""<(p|br|h[1-6]|div)[^>]*>"""), "\n")
@@ -255,10 +258,20 @@ class AppUpdateManager(
                     if (force) {
                         val msg = when (err) {
                             is HttpStatusException -> when (err.code) {
-                                403, 429 -> "GitHub 接口请求受限，请稍后再试"
-                                else -> "检查更新失败（HTTP ${err.code}）"
+                                403, 429 -> AppStrings.get(
+                                    R.string.update_err_rate_limit,
+                                    "GitHub 接口请求受限，请稍后再试",
+                                )
+                                else -> AppStrings.get(
+                                    R.string.update_err_http_check,
+                                    "检查更新失败（HTTP ${err.code}）",
+                                    err.code,
+                                )
                             }
-                            else -> "网络连接失败，请检查网络或代理设置"
+                            else -> AppStrings.get(
+                                R.string.update_err_network,
+                                "网络连接失败，请检查网络或代理设置",
+                            )
                         }
                         _state.value = _state.value.copy(checkStatus = UpdateCheckStatus.Error(msg))
                     }
@@ -270,7 +283,12 @@ class AppUpdateManager(
         val apkUrl = release.apkUrl
         if (apkUrl.isNullOrBlank()) {
             _state.value = _state.value.copy(
-                downloadState = UpdateDownloadState.Error("该版本未提供 APK 安装包，请前往浏览器查看"),
+                downloadState = UpdateDownloadState.Error(
+                    AppStrings.get(
+                        R.string.update_err_no_apk,
+                        "该版本未提供 APK 安装包，请前往浏览器查看",
+                    ),
+                ),
             )
             return
         }
@@ -297,7 +315,10 @@ class AppUpdateManager(
                 conn = openFollowingRedirects(apkUrl, accept = "application/octet-stream")
                 val code = conn.responseCode
                 if (code !in 200..299) {
-                    throw HttpStatusException(code, "下载失败（HTTP $code）")
+                    throw HttpStatusException(
+                        code,
+                        AppStrings.get(R.string.update_err_http_dl, "下载失败（HTTP $code）", code),
+                    )
                 }
                 val contentLength = conn.contentLengthLong.let { len ->
                     if (len > 0L) len else release.apkSizeBytes
@@ -338,7 +359,9 @@ class AppUpdateManager(
 
                 if (targetFile.exists()) targetFile.delete()
                 if (!partFile.renameTo(targetFile)) {
-                    throw IllegalStateException("安装包保存失败")
+                    throw IllegalStateException(
+                        AppStrings.get(R.string.update_err_save, "安装包保存失败"),
+                    )
                 }
 
                 val canInstall = context.packageManager.canRequestPackageInstalls()
@@ -356,8 +379,15 @@ class AppUpdateManager(
             } catch (e: Exception) {
                 runCatching { partFile.delete() }
                 val msg = when (e) {
-                    is HttpStatusException -> "下载失败（HTTP ${e.code}）"
-                    else -> e.message?.takeIf { it.isNotBlank() } ?: "下载安装包失败，可尝试浏览器下载"
+                    is HttpStatusException -> AppStrings.get(
+                        R.string.update_err_http_dl,
+                        "下载失败（HTTP ${e.code}）",
+                        e.code,
+                    )
+                    else -> e.message?.takeIf { it.isNotBlank() } ?: AppStrings.get(
+                        R.string.update_err_dl_fallback,
+                        "下载安装包失败，可尝试浏览器下载",
+                    )
                 }
                 _state.value = _state.value.copy(downloadState = UpdateDownloadState.Error(msg))
             } finally {
@@ -380,7 +410,9 @@ class AppUpdateManager(
         val file = File(apkPath)
         if (!file.exists()) {
             _state.value = _state.value.copy(
-                downloadState = UpdateDownloadState.Error("安装包文件已清理，请重新下载"),
+                downloadState = UpdateDownloadState.Error(
+                    AppStrings.get(R.string.update_err_cleaned, "安装包文件已清理，请重新下载"),
+                ),
             )
             return false
         }
@@ -517,13 +549,20 @@ class AppUpdateManager(
             if (code in listOf(301, 302, 303, 307, 308)) {
                 val location = conn.getHeaderField("Location")
                 conn.disconnect()
-                if (location.isNullOrBlank()) throw HttpStatusException(code, "重定向地址为空")
+                if (location.isNullOrBlank()) {
+                    throw HttpStatusException(
+                        code,
+                        AppStrings.get(R.string.update_err_empty_redirect, "重定向地址为空"),
+                    )
+                }
                 currentUrl = URL(URL(currentUrl), location).toString()
             } else {
                 return conn
             }
         }
-        throw IllegalStateException("重定向次数过多")
+        throw IllegalStateException(
+            AppStrings.get(R.string.update_err_too_many_redirects, "重定向次数过多"),
+        )
     }
 
     companion object {

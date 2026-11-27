@@ -6,6 +6,8 @@ import android.media.MediaCodecList
 import android.media.MediaFormat
 import android.os.Build
 import android.view.Surface
+import io.rabbitcontrol.android.R
+import io.rabbitcontrol.android.core.i18n.AppStrings
 import java.io.Closeable
 
 /** Single media-thread owner. Only compressed access units enter the codec. */
@@ -20,7 +22,9 @@ internal class AvcDecoder private constructor(
         val index = codec.dequeueInputBuffer(0)
         if (index < 0) return false
         val buffer = checkNotNull(codec.getInputBuffer(index))
-        require(accessUnit.size <= buffer.remaining()) { "压缩帧超出解码器输入容量" }
+        require(accessUnit.size <= buffer.remaining()) {
+            AppStrings.get(R.string.preview_err_capacity, "压缩帧超出解码器输入容量")
+        }
         buffer.put(accessUnit)
         codec.queueInputBuffer(index, 0, accessUnit.size, ptsUs, 0)
         return true
@@ -72,15 +76,27 @@ internal class AvcDecoder private constructor(
                         codec = MediaCodec.createByCodecName(entry.name)
                         codec.configure(format, surface, null, 0)
                         codec.start()
-                        val path = if (entry.isHardwareAccelerated) "硬解" else "软件解码"
-                        return AvcDecoder(codec, "${entry.name} · $path" + if (low) " · 低延迟" else "")
+                        val path = if (entry.isHardwareAccelerated) {
+                            AppStrings.get(R.string.preview_codec_hw, "硬解")
+                        } else {
+                            AppStrings.get(R.string.preview_codec_sw, "软件解码")
+                        }
+                        val lowSuffix = if (low) {
+                            " · ${AppStrings.get(R.string.preview_codec_low_latency, "低延迟")}"
+                        } else {
+                            ""
+                        }
+                        return AvcDecoder(codec, "${entry.name} · $path$lowSuffix")
                     } catch (e: Exception) {
                         failure = e
                         codec?.release()
                     }
                 }
             }
-            throw IllegalStateException("设备无法解码此规格的 H.264 画面", failure)
+            throw IllegalStateException(
+                AppStrings.get(R.string.preview_err_unsupported, "设备无法解码此规格的 H.264 画面"),
+                failure,
+            )
         }
     }
 }

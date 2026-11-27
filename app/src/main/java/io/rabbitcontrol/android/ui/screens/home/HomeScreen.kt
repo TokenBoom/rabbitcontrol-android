@@ -46,6 +46,7 @@ import androidx.compose.material.icons.rounded.Devices
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.LaptopMac
 import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.Person
@@ -90,7 +91,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
@@ -105,8 +108,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.rabbitcontrol.android.R
 import io.rabbitcontrol.android.core.data.AppThemeMode
 import io.rabbitcontrol.android.core.data.rememberWallpaperImage
+import io.rabbitcontrol.android.core.i18n.AppLanguageMode
+import io.rabbitcontrol.android.core.i18n.AppLocaleManager
+import io.rabbitcontrol.android.core.i18n.AppStrings
 import io.rabbitcontrol.android.core.nativebridge.RemoteDevice
 import io.rabbitcontrol.android.core.session.SessionStatus
 import io.rabbitcontrol.android.core.update.AppUpdateManager
@@ -179,18 +186,22 @@ fun HomeScreen(
 
     hostState.pendingApproval?.let { req ->
         RabbitDialog(
-            title = "收到远程协助请求",
+            title = stringResource(R.string.home_host_req_title),
             onDismissRequest = { viewModel.respondHostApproval(req.generation, false) },
-            dismissLabel = "拒绝",
+            dismissLabel = stringResource(R.string.home_host_req_reject),
             onDismissAction = { viewModel.respondHostApproval(req.generation, false) },
-            confirmLabel = "允许控制",
+            confirmLabel = stringResource(R.string.home_host_req_allow),
             onConfirm = { viewModel.respondHostApproval(req.generation, true) },
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("来源地址：${req.remoteAddr}", fontSize = 14.sp, color = palette.muted)
-                Text("请求画面：${req.requestedRes} @ ${req.requestedFps}fps", fontSize = 14.sp, color = palette.muted)
+                Text(stringResource(R.string.home_host_req_addr, req.remoteAddr), fontSize = 14.sp, color = palette.muted)
+                Text(stringResource(R.string.home_host_req_stream, req.requestedRes, req.requestedFps), fontSize = 14.sp, color = palette.muted)
                 Text(
-                    text = if (req.passwordVerified) "临时验证码已通过校验" else "未经过密码校验，请确认是否本人或受信任协助者",
+                    text = if (req.passwordVerified) {
+                        stringResource(R.string.home_host_req_verified)
+                    } else {
+                        stringResource(R.string.home_host_req_unverified)
+                    },
                     fontSize = 13.sp,
                     color = if (req.passwordVerified) palette.success else palette.warning,
                 )
@@ -200,10 +211,10 @@ fun HomeScreen(
 
     if (!kickedNotice.isNullOrBlank()) {
         RabbitDialog(
-            title = "服务器连接已断开",
+            title = stringResource(R.string.home_kicked_title),
             message = kickedNotice.orEmpty(),
             onDismissRequest = viewModel::dismissKicked,
-            confirmLabel = "知道了",
+            confirmLabel = stringResource(R.string.common_got_it),
             onConfirm = viewModel::dismissKicked,
         )
     }
@@ -224,12 +235,13 @@ fun HomeScreen(
                             HomeTab.Assist -> Icons.Rounded.SettingsRemote
                             HomeTab.Me -> Icons.Rounded.Person
                         }
+                        val tabLabel = stringResource(tab.labelRes)
                         NavigationBarItem(
                             selected = selected,
                             onClick = { viewModel.selectTab(tab) },
                             icon = {
                                 Box {
-                                    Icon(icon, contentDescription = tab.label)
+                                    Icon(icon, contentDescription = tabLabel)
                                     if (tab == HomeTab.Me && (updateState.hasUpdate || coreUpdateState.hasUpdate)) {
                                         Box(
                                             modifier = Modifier
@@ -242,7 +254,7 @@ fun HomeScreen(
                                     }
                                 }
                             },
-                            label = { Text(tab.label, fontSize = 11.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal) },
+                            label = { Text(tabLabel, fontSize = 11.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal) },
                             colors = NavigationBarItemDefaults.colors(
                                 selectedIconColor = palette.primaryText,
                                 selectedTextColor = palette.primaryText,
@@ -264,7 +276,11 @@ fun HomeScreen(
             if (activeSession.status is SessionStatus.Streaming || activeSession.status is SessionStatus.Connecting) {
                 ActiveSessionBanner(
                     deviceName = activeSession.deviceName.ifBlank { activeSession.targetId },
-                    subtitle = if (activeSession.watchOnly) "观看模式运行中" else "远控会话运行中",
+                    subtitle = if (activeSession.watchOnly) {
+                        stringResource(R.string.home_banner_watch_running)
+                    } else {
+                        stringResource(R.string.home_banner_control_running)
+                    },
                     onClick = onReturnToDesktop,
                 )
             }
@@ -324,7 +340,7 @@ private fun ActiveSessionBanner(deviceName: String, subtitle: String, onClick: (
                     .background(Color.White.copy(alpha = 0.18f))
                     .padding(horizontal = 10.dp, vertical = 5.dp),
             ) {
-                Text("回到桌面", color = Color.White, fontWeight = FontWeight.Medium, fontSize = 12.sp)
+                Text(stringResource(R.string.home_return_desktop), color = Color.White, fontWeight = FontWeight.Medium, fontSize = 12.sp)
             }
         }
     }
@@ -388,7 +404,7 @@ private fun DevicesTab(
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text(
-                            "我的设备",
+                            stringResource(R.string.tab_devices),
                             fontSize = 24.sp,
                             fontWeight = FontWeight.SemiBold,
                             letterSpacing = (-0.3).sp,
@@ -408,8 +424,13 @@ private fun DevicesTab(
                             ) {
                                 Icon(Icons.Rounded.Dns, null, tint = palette.primaryText, modifier = Modifier.size(14.dp))
                                 Spacer(modifier = Modifier.width(6.dp))
+                                val countSuffix = if (servers.size > 1) {
+                                    stringResource(R.string.home_server_count_suffix, servers.size)
+                                } else {
+                                    ""
+                                }
                                 Text(
-                                    text = "${server!!.displayName}${if (servers.size > 1) " · ${servers.size}台" else ""}",
+                                    text = "${server!!.displayName}$countSuffix",
                                     fontSize = 12.sp,
                                     lineHeight = 16.sp,
                                     color = palette.text,
@@ -419,7 +440,7 @@ private fun DevicesTab(
                                     style = CompactCenteredTextStyle,
                                 )
                                 Spacer(modifier = Modifier.width(3.dp))
-                                Icon(Icons.Rounded.KeyboardArrowDown, "切换服务器", tint = palette.muted, modifier = Modifier.size(16.dp))
+                                Icon(Icons.Rounded.KeyboardArrowDown, stringResource(R.string.auth_switch_server), tint = palette.muted, modifier = Modifier.size(16.dp))
                             }
                         }
                     }
@@ -430,12 +451,12 @@ private fun DevicesTab(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             DeviceFilterChip(
-                                label = "全部 ${devices.size}",
+                                label = stringResource(R.string.home_filter_all, devices.size),
                                 selected = !onlineOnly,
                                 onClick = { if (onlineOnly) viewModel.toggleOnlineOnly() },
                             )
                             DeviceFilterChip(
-                                label = "在线 ${online.size}",
+                                label = stringResource(R.string.home_filter_online, online.size),
                                 selected = onlineOnly,
                                 onClick = { if (!onlineOnly) viewModel.toggleOnlineOnly() },
                             )
@@ -448,30 +469,30 @@ private fun DevicesTab(
                 item {
                     RabbitCard(modifier = Modifier.fillMaxWidth()) {
                         Text(
-                            if (restoring) "正在恢复账号…" else "登录后查看设备",
+                            if (restoring) stringResource(R.string.home_restoring_account) else stringResource(R.string.home_login_prompt_title),
                             fontSize = 17.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = palette.text,
                         )
                         Spacer(modifier = Modifier.height(6.dp))
-                        Text("登录 RabbitControl 账号后，将自动同步你的电脑设备并开启免密快连。", color = palette.muted, fontSize = 14.sp)
+                        Text(stringResource(R.string.home_login_prompt_desc), color = palette.muted, fontSize = 14.sp)
                         if (!restoring) {
                             Spacer(modifier = Modifier.height(16.dp))
                             if (server == null) {
                                 RabbitPrimaryButton(
-                                    label = "连接服务器并登录",
+                                    label = stringResource(R.string.home_connect_and_login),
                                     onClick = { onOpenAuth(AuthStep.Server, false) },
                                     modifier = Modifier.fillMaxWidth(),
                                 )
                             } else {
                                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                                     RabbitPrimaryButton(
-                                        label = "登录",
+                                        label = stringResource(R.string.auth_sign_in),
                                         onClick = { onOpenAuth(AuthStep.Login, false) },
                                         modifier = Modifier.weight(1f),
                                     )
                                     RabbitSecondaryButton(
-                                        label = "注册新账号",
+                                        label = stringResource(R.string.home_register_new),
                                         onClick = { onOpenAuth(AuthStep.Register, false) },
                                         modifier = Modifier.weight(1f),
                                     )
@@ -481,7 +502,7 @@ private fun DevicesTab(
                                     onClick = { onOpenAuth(AuthStep.Server, true) },
                                     modifier = Modifier.align(Alignment.CenterHorizontally),
                                 ) {
-                                    Text("切换或添加服务器", fontSize = 13.sp, color = palette.primaryText)
+                                    Text(stringResource(R.string.home_switch_or_add_server), fontSize = 13.sp, color = palette.primaryText)
                                 }
                             }
                         }
@@ -490,12 +511,12 @@ private fun DevicesTab(
             } else if (profile?.needsPassword == true) {
                 item {
                     RabbitCard(modifier = Modifier.fillMaxWidth()) {
-                        Text("请先修改初始密码", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
+                        Text(stringResource(R.string.home_change_pw_title), fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
                         Spacer(modifier = Modifier.height(6.dp))
-                        Text("首次登录需要设置新密码，完成后即可查看和远控你的设备。", color = palette.muted, fontSize = 14.sp)
+                        Text(stringResource(R.string.home_change_pw_desc), color = palette.muted, fontSize = 14.sp)
                         Spacer(modifier = Modifier.height(16.dp))
                         RabbitPrimaryButton(
-                            label = "设置新密码",
+                            label = stringResource(R.string.auth_password_title),
                             onClick = { onOpenAuth(AuthStep.Password, false) },
                             modifier = Modifier.fillMaxWidth(),
                         )
@@ -512,7 +533,8 @@ private fun DevicesTab(
                         enter = fadeIn() + expandVertically(),
                         exit = fadeOut() + shrinkVertically(),
                     ) {
-                        val (errTitle, errSub) = remember(lastErrorText) {
+                        val currentConfig = LocalConfiguration.current
+                        val (errTitle, errSub) = remember(lastErrorText, currentConfig) {
                             formatConnectionError(lastErrorText)
                         }
                         RabbitCard(
@@ -566,7 +588,7 @@ private fun DevicesTab(
                                     contentAlignment = Alignment.Center,
                                 ) {
                                     Text(
-                                        text = "重试",
+                                        text = stringResource(R.string.common_retry),
                                         fontSize = 12.sp,
                                         fontWeight = FontWeight.Medium,
                                         color = palette.text,
@@ -581,9 +603,9 @@ private fun DevicesTab(
                     item {
                         RabbitEmptyState(
                             icon = Icons.Rounded.Devices,
-                            title = "暂无已绑定设备",
-                            description = "在电脑端登录同一 RabbitControl 账号后，设备会自动出现在这里。",
-                            actionLabel = "刷新设备",
+                            title = stringResource(R.string.home_empty_devices_title),
+                            description = stringResource(R.string.home_empty_devices_desc),
+                            actionLabel = stringResource(R.string.home_refresh_devices),
                             onAction = viewModel::refreshDevices,
                         )
                     }
@@ -594,7 +616,7 @@ private fun DevicesTab(
                 if (online.isNotEmpty()) {
                     if (showGroupHeaders) {
                         item {
-                            RabbitSectionHeader(title = "在线设备 · ${online.size}")
+                            RabbitSectionHeader(title = stringResource(R.string.home_section_online, online.size))
                         }
                     }
                     items(online, key = { it.id }) { dev ->
@@ -606,7 +628,7 @@ private fun DevicesTab(
                 if (!onlineOnly && offline.isNotEmpty()) {
                     if (showGroupHeaders) {
                         item {
-                            RabbitSectionHeader(title = "离线设备 · ${offline.size}")
+                            RabbitSectionHeader(title = stringResource(R.string.home_section_offline, offline.size))
                         }
                     }
                     items(offline, key = { it.id }) { dev ->
@@ -630,7 +652,7 @@ private fun DevicesTab(
                     .padding(horizontal = RabbitSpacing.Xl, vertical = RabbitSpacing.Sm),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Text("切换服务器", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
+                Text(stringResource(R.string.home_switch_server_sheet), fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
                 servers.forEach { srv ->
                     val isActive = srv.id == server?.id
                     val email = savedEmails[srv.id]
@@ -655,7 +677,7 @@ private fun DevicesTab(
                         Spacer(modifier = Modifier.width(10.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(srv.displayName, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
-                            Text(email ?: "未登录", fontSize = 12.sp, color = palette.muted)
+                            Text(email ?: stringResource(R.string.home_not_signed_in), fontSize = 12.sp, color = palette.muted)
                         }
                         if (isActive) {
                             Icon(Icons.Rounded.Check, null, tint = palette.primaryText, modifier = Modifier.size(18.dp))
@@ -663,7 +685,7 @@ private fun DevicesTab(
                     }
                 }
                 RabbitSecondaryButton(
-                    label = "管理 / 添加新服务器",
+                    label = stringResource(R.string.home_manage_add_server),
                     onClick = {
                         showServerSheet = false
                         onOpenAuth(AuthStep.Server, true)
@@ -716,16 +738,17 @@ private fun formatConnectionError(raw: String): Pair<String, String> {
         lower.contains("timeout") ||
         lower.contains("connect")
     ) {
-        "无法连接服务器" to "网络波动或代理异常，连接恢复后将自动消失"
+        AppStrings.get(R.string.home_err_cannot_connect, "无法连接服务器") to
+            AppStrings.get(R.string.home_err_network_hint, "网络波动或代理异常，连接恢复后将自动消失")
     } else {
-        "刷新设备失败" to raw.trim()
+        AppStrings.get(R.string.home_err_refresh_failed, "刷新设备失败") to raw.trim()
     }
 }
 
 private fun formatDeviceOs(raw: String): String {
     val normalized = raw.trim().lowercase()
     return when {
-        normalized.isEmpty() -> "桌面设备"
+        normalized.isEmpty() -> AppStrings.get(R.string.home_device_default_name, "桌面设备")
         normalized.contains("mac") || normalized.contains("darwin") -> "macOS"
         normalized.contains("win") -> "Windows"
         normalized.contains("linux") -> "Linux"
@@ -749,10 +772,10 @@ private fun DeviceCard(device: RemoteDevice, thumbnail: ImageBitmap?, onClick: (
     val palette = LocalRabbitPalette.current
     val online = (device.online || device.busy) && !device.disabled
     val (statusLabel, dotColor) = when {
-        device.disabled -> "已停用" to Color(0xFF9E9E9E)
-        device.busy -> "会话中" to Color(0xFF60A5FA)
-        device.online -> "在线" to Color(0xFF34D399)
-        else -> "离线" to Color(0xFF9E9E9E)
+        device.disabled -> stringResource(R.string.home_status_disabled) to Color(0xFF9E9E9E)
+        device.busy -> stringResource(R.string.home_status_busy) to Color(0xFF60A5FA)
+        device.online -> stringResource(R.string.home_status_online) to Color(0xFF34D399)
+        else -> stringResource(R.string.home_status_offline) to Color(0xFF9E9E9E)
     }
     RabbitCard(
         onClick = onClick,
@@ -896,7 +919,7 @@ private fun DeviceCard(device: RemoteDevice, thumbnail: ImageBitmap?, onClick: (
                                 modifier = Modifier.size(14.dp),
                             )
                             Text(
-                                text = if (device.busy) "返回控制" else "连接桌面",
+                                text = if (device.busy) stringResource(R.string.home_btn_resume_control) else stringResource(R.string.home_btn_connect_desktop),
                                 fontSize = 11.sp,
                                 lineHeight = 14.sp,
                                 fontWeight = FontWeight.Medium,
@@ -907,7 +930,7 @@ private fun DeviceCard(device: RemoteDevice, thumbnail: ImageBitmap?, onClick: (
                         }
                     } else {
                         Text(
-                            text = if (device.disabled) "已停用" else "当前离线",
+                            text = if (device.disabled) stringResource(R.string.home_status_disabled) else stringResource(R.string.home_btn_offline),
                             fontSize = 11.sp,
                             lineHeight = 14.sp,
                             color = palette.muted.copy(alpha = 0.8f),
@@ -936,9 +959,15 @@ private fun DeviceCard(device: RemoteDevice, thumbnail: ImageBitmap?, onClick: (
     }
 }
 
-private enum class AssistQuickTab(val label: String) {
-    Recent("最近连接"),
-    Favorites("我的收藏"),
+private enum class AssistQuickTab(
+    val labelRes: Int,
+    private val defaultLabel: String,
+) {
+    Recent(R.string.home_assist_recent, "最近连接"),
+    Favorites(R.string.home_assist_favorites, "我的收藏");
+
+    val label: String
+        get() = AppStrings.get(labelRes, defaultLabel)
 }
 
 private class DeviceCodeVisualTransformation : VisualTransformation {
@@ -1006,7 +1035,7 @@ private fun AssistTab(
                 .widthIn(max = 540.dp),
             verticalArrangement = Arrangement.spacedBy(RabbitSpacing.Lg),
         ) {
-            Text("远程协助", fontSize = 24.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
+            Text(stringResource(R.string.tab_assist), fontSize = 24.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
 
             RabbitCard(modifier = Modifier.fillMaxWidth()) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1021,8 +1050,8 @@ private fun AssistTab(
                     }
                     Spacer(modifier = Modifier.width(12.dp))
                     Column {
-                        Text("远控伙伴设备", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
-                        Text("输入对方 9 位数字设备码发起远控", fontSize = 12.sp, color = palette.muted)
+                        Text(stringResource(R.string.home_assist_card_title), fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
+                        Text(stringResource(R.string.home_assist_card_sub), fontSize = 12.sp, color = palette.muted)
                     }
                 }
 
@@ -1030,8 +1059,8 @@ private fun AssistTab(
                 RabbitTextField(
                     value = input,
                     onValueChange = { viewModel.updateAssistInput(it) },
-                    label = "9 位设备码",
-                    placeholder = "例如 604 928 235",
+                    label = stringResource(R.string.home_assist_code_label),
+                    placeholder = stringResource(R.string.home_assist_code_hint),
                     keyboardType = KeyboardType.Number,
                     visualTransformation = remember { DeviceCodeVisualTransformation() },
                     textStyle = TextStyle(
@@ -1047,7 +1076,7 @@ private fun AssistTab(
                             ) {
                                 Icon(
                                     imageVector = Icons.Rounded.Close,
-                                    contentDescription = "清空",
+                                    contentDescription = stringResource(R.string.common_clear),
                                     tint = palette.muted,
                                     modifier = Modifier.size(18.dp),
                                 )
@@ -1059,20 +1088,22 @@ private fun AssistTab(
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
+                val invalidCodeMsg = stringResource(R.string.home_assist_invalid_code)
+                val partnerOs = stringResource(R.string.home_assist_partner_os)
                 RabbitPrimaryButton(
-                    label = "开始远控",
+                    label = stringResource(R.string.home_assist_start),
                     enabled = input.isNotBlank(),
                     onClick = {
                         val parsed = viewModel.parseDeviceCode(input)
                         if (parsed == null) {
-                            RabbitToast.error("请输入有效的 9 位数字设备码")
+                            RabbitToast.error(invalidCodeMsg)
                             return@RabbitPrimaryButton
                         }
                         viewModel.recordTarget(parsed)
                         val matched = devices.firstOrNull { it.id == parsed } ?: RemoteDevice(
                             id = parsed,
                             name = parsed.chunked(3).joinToString(" "),
-                            os = "伙伴设备",
+                            os = partnerOs,
                             online = true,
                             busy = false,
                             disabled = false,
@@ -1085,7 +1116,7 @@ private fun AssistTab(
 
             // Inline Quick Connect (Recent & Favorites)
             val list = if (quickTab == AssistQuickTab.Recent) validRecent else validFavorites
-            RabbitSectionHeader(title = "快速填充")
+            RabbitSectionHeader(title = stringResource(R.string.home_assist_quick_fill))
             RabbitSegmentedControl(
                 options = AssistQuickTab.entries,
                 selected = quickTab,
@@ -1101,7 +1132,11 @@ private fun AssistTab(
             ) {
                 if (list.isEmpty()) {
                     Text(
-                        text = if (quickTab == AssistQuickTab.Recent) "暂无最近连接记录" else "暂无收藏设备",
+                        text = if (quickTab == AssistQuickTab.Recent) {
+                            stringResource(R.string.home_assist_empty_recent)
+                        } else {
+                            stringResource(R.string.home_assist_empty_fav)
+                        },
                         color = palette.muted,
                         fontSize = 13.sp,
                         modifier = Modifier
@@ -1136,7 +1171,7 @@ private fun AssistTab(
                             ) {
                                 Icon(
                                     imageVector = if (fav) Icons.Rounded.Star else Icons.Rounded.StarOutline,
-                                    contentDescription = "收藏",
+                                    contentDescription = stringResource(R.string.home_cd_favorite),
                                     tint = if (fav) palette.primaryText else palette.muted,
                                     modifier = Modifier.size(20.dp),
                                 )
@@ -1163,6 +1198,8 @@ private fun ProfileTab(
 ) {
     val palette = LocalRabbitPalette.current
     val context = LocalContext.current
+    @Suppress("UNUSED_VARIABLE")
+    val currentConfig = LocalConfiguration.current
     val versionName = remember { getAppVersionName(context) }
 
     val profile by viewModel.profile.collectAsStateWithLifecycle()
@@ -1171,11 +1208,20 @@ private fun ProfileTab(
     val signal by viewModel.signalStatus.collectAsStateWithLifecycle()
     val prefs by viewModel.prefs.collectAsStateWithLifecycle()
     val hostState by viewModel.hostState.collectAsStateWithLifecycle()
+    val languageMode by AppLocaleManager.mode.collectAsStateWithLifecycle()
 
     var showThemeSheet by remember { mutableStateOf(false) }
+    var showLanguageSheet by remember { mutableStateOf(false) }
     var showVersionDialog by remember { mutableStateOf(false) }
     var showCoreDialog by remember { mutableStateOf(false) }
     var showLogoutConfirm by remember { mutableStateOf(false) }
+
+    val currentLangLabel = when (languageMode) {
+        AppLanguageMode.System -> stringResource(R.string.lang_follow_system)
+        AppLanguageMode.SimplifiedChinese -> stringResource(R.string.lang_simplified_chinese)
+        AppLanguageMode.TraditionalChinese -> stringResource(R.string.lang_traditional_chinese)
+        AppLanguageMode.English -> stringResource(R.string.lang_english)
+    }
 
     Column(
         modifier = Modifier
@@ -1184,7 +1230,7 @@ private fun ProfileTab(
             .padding(horizontal = RabbitSpacing.Lg, vertical = RabbitSpacing.Md),
         verticalArrangement = Arrangement.spacedBy(RabbitSpacing.Md),
     ) {
-        Text("我的", fontSize = 24.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
+        Text(stringResource(R.string.tab_me), fontSize = 24.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
 
         // Card 1: Account & Signal Overview
         RabbitCard(modifier = Modifier.fillMaxWidth()) {
@@ -1201,23 +1247,23 @@ private fun ProfileTab(
                 Spacer(modifier = Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        profile?.name?.ifBlank { profile?.email } ?: "未登录",
+                        profile?.name?.ifBlank { profile?.email } ?: stringResource(R.string.home_not_signed_in),
                         fontSize = 16.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = palette.text,
                     )
                     Text(
-                        profile?.email ?: "登录后同步设备与免密自控证书",
+                        profile?.email ?: stringResource(R.string.home_profile_signin_sub),
                         fontSize = 12.sp,
                         color = palette.muted,
                     )
                 }
                 if (profile == null) {
                     TextButton(onClick = { onOpenAuth(AuthStep.Login, false) }) {
-                        Text("登录", color = palette.primaryText)
+                        Text(stringResource(R.string.auth_sign_in), color = palette.primaryText)
                     }
                     TextButton(onClick = { onOpenAuth(AuthStep.Register, false) }) {
-                        Text("注册", color = palette.primaryText)
+                        Text(stringResource(R.string.auth_sign_up), color = palette.primaryText)
                     }
                 }
             }
@@ -1237,10 +1283,13 @@ private fun ProfileTab(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     val sigText = when (signal.state) {
-                        "connected" -> "信令在线 · 本机码 ${signal.deviceIdFormatted ?: "-"}"
-                        "connecting", "reconnecting" -> "信令连接中…"
-                        "error" -> "信令异常：${signal.lastError ?: "重连中"}"
-                        else -> "信令未启动"
+                        "connected" -> stringResource(R.string.home_signal_online, signal.deviceIdFormatted ?: "-")
+                        "connecting", "reconnecting" -> stringResource(R.string.home_signal_connecting)
+                        "error" -> stringResource(
+                            R.string.home_signal_error,
+                            signal.lastError ?: stringResource(R.string.home_signal_reconnecting),
+                        )
+                        else -> stringResource(R.string.home_signal_idle)
                     }
                     Text(sigText, fontSize = 12.sp, color = palette.muted)
                 }
@@ -1255,25 +1304,25 @@ private fun ProfileTab(
             val srvTrailing = if (server != null) {
                 if (servers.size > 1) "${server?.displayName} (${servers.size})" else server?.displayName.orEmpty()
             } else {
-                "未配置"
+                stringResource(R.string.home_menu_not_configured)
             }
             ProfileMenuRow(
                 icon = Icons.Rounded.Dns,
-                title = "服务器管理",
+                title = stringResource(R.string.home_menu_servers),
                 trailingText = srvTrailing,
                 onClick = { onOpenAuth(AuthStep.Server, true) },
             )
             HorizontalDivider(color = palette.line, thickness = 1.dp)
 
             val (hostLabel, hostTone) = when {
-                hostState.connectedPeer != null -> "远控中" to StatusTone.Primary
-                hostState.enabled -> "等待连接" to StatusTone.Success
-                hostState.starting -> "启动中" to StatusTone.Warning
-                else -> "已关闭" to StatusTone.Muted
+                hostState.connectedPeer != null -> stringResource(R.string.home_host_controlling) to StatusTone.Primary
+                hostState.enabled -> stringResource(R.string.home_host_waiting) to StatusTone.Success
+                hostState.starting -> stringResource(R.string.home_host_starting) to StatusTone.Warning
+                else -> stringResource(R.string.home_host_off) to StatusTone.Muted
             }
             ProfileMenuRow(
                 icon = Icons.Rounded.ScreenShare,
-                title = "手机被控端",
+                title = stringResource(R.string.home_menu_host_mode),
                 trailingContent = { RabbitStatusPill(label = hostLabel, tone = hostTone) },
                 onClick = { onOpenProfileRoute("settings/host") },
             )
@@ -1281,7 +1330,7 @@ private fun ProfileTab(
 
             ProfileMenuRow(
                 icon = Icons.Rounded.Tune,
-                title = "远控默认设置",
+                title = stringResource(R.string.home_menu_interaction),
                 trailingText = prefs.touchMode.label,
                 onClick = { onOpenProfileRoute("settings/interaction") },
             )
@@ -1289,16 +1338,24 @@ private fun ProfileTab(
 
             ProfileMenuRow(
                 icon = Icons.Rounded.DarkMode,
-                title = "外观主题",
+                title = stringResource(R.string.home_menu_theme),
                 trailingText = prefs.themeMode.label,
                 onClick = { showThemeSheet = true },
             )
             HorizontalDivider(color = palette.line, thickness = 1.dp)
 
             ProfileMenuRow(
+                icon = Icons.Rounded.Language,
+                title = stringResource(R.string.home_menu_language),
+                trailingText = currentLangLabel,
+                onClick = { showLanguageSheet = true },
+            )
+            HorizontalDivider(color = palette.line, thickness = 1.dp)
+
+            ProfileMenuRow(
                 icon = Icons.Rounded.PlayArrow,
-                title = "画面与手势校验",
-                trailingText = "离线诊断",
+                title = stringResource(R.string.home_menu_preview_check),
+                trailingText = stringResource(R.string.home_menu_preview_trailing),
                 onClick = onOpenPreviewCheck,
             )
         }
@@ -1311,7 +1368,7 @@ private fun ProfileTab(
             val newVer = updateState.availableRelease?.versionName
             ProfileMenuRow(
                 icon = Icons.Rounded.SystemUpdate,
-                title = "版本更新",
+                title = stringResource(R.string.home_menu_app_update),
                 trailingText = if (newVer == null) "v$versionName" else null,
                 trailingContent = if (newVer != null) {
                     {
@@ -1330,7 +1387,7 @@ private fun ProfileTab(
                                     .background(Color(0xFFE53935)),
                             )
                             Text(
-                                text = "新版本 v$newVer",
+                                text = stringResource(R.string.home_badge_new_app, newVer),
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = palette.danger,
@@ -1356,9 +1413,15 @@ private fun ProfileTab(
             val loadedCore = coreUpdateState.loadedCore
             ProfileMenuRow(
                 icon = Icons.Rounded.Memory,
-                title = "内核更新",
+                title = stringResource(R.string.home_menu_core_update),
                 trailingText = if (newCoreVer == null && loadedCore.pendingRestartVersion == null) {
-                    "v${loadedCore.version} · ${if (loadedCore.isDynamic) "已更新" else "内置"}"
+                    "v${loadedCore.version} · ${
+                        if (loadedCore.isDynamic) {
+                            stringResource(R.string.home_core_dynamic)
+                        } else {
+                            stringResource(R.string.home_core_builtin)
+                        }
+                    }"
                 } else {
                     null
                 },
@@ -1380,7 +1443,11 @@ private fun ProfileTab(
                                     .background(if (isPending) palette.primary else Color(0xFFE53935)),
                             )
                             Text(
-                                text = if (isPending) "待重启生效" else "新内核 v$newCoreVer",
+                                text = if (isPending) {
+                                    stringResource(R.string.home_badge_pending_restart)
+                                } else {
+                                    stringResource(R.string.home_badge_new_core, newCoreVer.orEmpty())
+                                },
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = if (isPending) palette.primaryText else palette.danger,
@@ -1405,7 +1472,7 @@ private fun ProfileTab(
             HorizontalDivider(color = palette.line, thickness = 1.dp)
             ProfileMenuRow(
                 icon = Icons.Rounded.Info,
-                title = "关于我们",
+                title = stringResource(R.string.home_menu_about),
                 onClick = { onOpenProfileRoute("settings/about") },
             )
         }
@@ -1423,7 +1490,7 @@ private fun ProfileTab(
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        text = "退出登录",
+                        text = stringResource(R.string.home_logout),
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Medium,
                         color = palette.danger,
@@ -1450,8 +1517,8 @@ private fun ProfileTab(
                     .padding(bottom = 20.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Text("外观主题", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
-                Text("远控桌面会话始终保持深色沉浸画布", fontSize = 12.sp, color = palette.muted)
+                Text(stringResource(R.string.home_menu_theme), fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
+                Text(stringResource(R.string.home_theme_sheet_sub), fontSize = 12.sp, color = palette.muted)
                 Spacer(modifier = Modifier.height(2.dp))
                 AppThemeMode.entries.forEach { mode ->
                     val selected = prefs.themeMode == mode
@@ -1475,6 +1542,67 @@ private fun ProfileTab(
                     ) {
                         Text(
                             text = mode.label,
+                            fontSize = 14.sp,
+                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                            color = palette.text,
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (selected) {
+                            Icon(Icons.Rounded.Check, null, tint = palette.primaryText, modifier = Modifier.size(18.dp))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showLanguageSheet) {
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
+            onDismissRequest = { showLanguageSheet = false },
+            sheetState = sheetState,
+            containerColor = palette.surface,
+            tonalElevation = 0.dp,
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(horizontal = RabbitSpacing.Xl)
+                    .padding(bottom = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(stringResource(R.string.home_menu_language), fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
+                Text(stringResource(R.string.home_language_sheet_sub), fontSize = 12.sp, color = palette.muted)
+                Spacer(modifier = Modifier.height(2.dp))
+                AppLanguageMode.entries.forEach { lang ->
+                    val selected = languageMode == lang
+                    val label = when (lang) {
+                        AppLanguageMode.System -> stringResource(R.string.lang_follow_system)
+                        AppLanguageMode.SimplifiedChinese -> stringResource(R.string.lang_simplified_chinese)
+                        AppLanguageMode.TraditionalChinese -> stringResource(R.string.lang_traditional_chinese)
+                        AppLanguageMode.English -> stringResource(R.string.lang_english)
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .defaultMinSize(minHeight = 52.dp)
+                            .clip(RoundedCornerShape(RabbitRadius.Md))
+                            .background(if (selected) palette.primarySoft else palette.field)
+                            .border(
+                                1.dp,
+                                if (selected) palette.primary else palette.line,
+                                RoundedCornerShape(RabbitRadius.Md),
+                            )
+                            .clickable {
+                                showLanguageSheet = false
+                                AppLocaleManager.setLanguageMode(context, lang)
+                            }
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = label,
                             fontSize = 14.sp,
                             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
                             color = palette.text,
@@ -1523,11 +1651,11 @@ private fun ProfileTab(
 
     if (showLogoutConfirm) {
         RabbitDialog(
-            title = "退出登录",
-            message = "退出后需重新登录以同步你的设备与远控凭证。",
+            title = stringResource(R.string.home_logout),
+            message = stringResource(R.string.home_logout_confirm_msg),
             onDismissRequest = { showLogoutConfirm = false },
-            dismissLabel = "取消",
-            confirmLabel = "退出登录",
+            dismissLabel = stringResource(R.string.common_cancel),
+            confirmLabel = stringResource(R.string.home_logout),
             destructive = true,
             onConfirm = {
                 showLogoutConfirm = false

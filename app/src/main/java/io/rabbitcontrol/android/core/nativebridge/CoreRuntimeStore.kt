@@ -1,5 +1,7 @@
 package io.rabbitcontrol.android.core.nativebridge
 
+import io.rabbitcontrol.android.R
+import io.rabbitcontrol.android.core.i18n.AppStrings
 import io.rabbitcontrol.android.core.update.CoreAbiArtifact
 import io.rabbitcontrol.android.core.update.CoreManifest
 import io.rabbitcontrol.android.core.update.compareSemVer
@@ -166,7 +168,11 @@ class CoreRuntimeStore(
             state = applyBlacklistAndFallback(
                 state = state,
                 badVersion = stuckVer,
-                reason = "内核 v$stuckVer 连续启动失败，已自动回滚",
+                reason = AppStrings.get(
+                    R.string.core_fallback_crash_loop,
+                    "内核 v$stuckVer 连续启动失败，已自动回滚",
+                    stuckVer,
+                ),
                 builtInVersion = builtInVersion,
                 supportedAbi = supportedAbi,
             )
@@ -202,7 +208,11 @@ class CoreRuntimeStore(
         val fallbackState = applyBlacklistAndFallback(
             state = state,
             badVersion = candidateVer,
-            reason = state.lastFallbackReason ?: "内核 v$candidateVer 文件校验无效，已自动回退",
+            reason = state.lastFallbackReason ?: AppStrings.get(
+                R.string.core_fallback_corrupt,
+                "内核 v$candidateVer 文件校验无效，已自动回退",
+                candidateVer,
+            ),
             builtInVersion = builtInVersion,
             supportedAbi = supportedAbi,
         )

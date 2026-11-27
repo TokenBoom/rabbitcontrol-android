@@ -2,8 +2,11 @@ package io.rabbitcontrol.android
 
 import android.app.Activity
 import android.app.Application
+import android.content.Context
+import android.content.res.Configuration
 import android.os.Bundle
 import io.rabbitcontrol.android.core.data.AccountRepository
+import io.rabbitcontrol.android.core.i18n.AppLocaleManager
 import io.rabbitcontrol.android.core.nativebridge.NativeLibraryLoader
 import io.rabbitcontrol.android.core.nativebridge.NativeRuntimeBootstrap
 import io.rabbitcontrol.android.di.dataModule
@@ -14,8 +17,13 @@ import org.koin.android.ext.koin.androidContext
 import org.koin.core.context.startKoin
 
 class RabbitControlApp : Application() {
+    override fun attachBaseContext(base: Context) {
+        super.attachBaseContext(AppLocaleManager.wrapContext(base))
+    }
+
     override fun onCreate() {
         super.onCreate()
+        AppLocaleManager.init(this)
         NativeLibraryLoader.bindApplication(this)
         // Kick off hardware decoder probing & Rust runtime initialization off the UI thread
         NativeRuntimeBootstrap.startAsync(this)
@@ -26,6 +34,11 @@ class RabbitControlApp : Application() {
         }
 
         registerForegroundTracker()
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        AppLocaleManager.refreshLocalizedContext(this, newConfig)
     }
 
     private fun registerForegroundTracker() {

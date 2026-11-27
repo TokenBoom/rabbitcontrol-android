@@ -1,7 +1,10 @@
 package io.rabbitcontrol.android.core.data
 
 import android.content.Context
+import androidx.annotation.StringRes
 import androidx.compose.runtime.Immutable
+import io.rabbitcontrol.android.R
+import io.rabbitcontrol.android.core.i18n.AppStrings
 import io.rabbitcontrol.android.core.input.ScancodeMapper
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -9,50 +12,64 @@ import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONArray
 import org.json.JSONObject
 
-enum class QuickActionCategory(val label: String) {
-    Zoom("缩放"),
-    System("系统"),
-    Edit("编辑"),
-    Mouse("鼠标"),
-    Mode("模式"),
-    Other("其他"),
+enum class QuickActionCategory(
+    @StringRes val labelRes: Int,
+    private val defaultLabel: String,
+) {
+    Zoom(R.string.qa_cat_zoom, "缩放"),
+    System(R.string.qa_cat_system, "系统"),
+    Edit(R.string.qa_cat_edit, "编辑"),
+    Mouse(R.string.qa_cat_mouse, "鼠标"),
+    Mode(R.string.qa_cat_mode, "模式"),
+    Other(R.string.qa_cat_other, "其他");
+
+    val label: String
+        get() = AppStrings.get(labelRes, defaultLabel)
 }
 
 enum class QuickActionKind(
-    val label: String,
-    val shortLabel: String,
+    @StringRes val labelRes: Int,
+    private val defaultLabel: String,
+    @StringRes val shortLabelRes: Int,
+    private val defaultShortLabel: String,
     val category: QuickActionCategory,
 ) {
-    ZoomIn("放大画面", "放大", QuickActionCategory.Zoom),
-    ZoomOut("缩小画面", "缩小", QuickActionCategory.Zoom),
-    ResetZoom("重置缩放", "1:1", QuickActionCategory.Zoom),
-    ShowDesktop("显示桌面", "显示桌面", QuickActionCategory.System),
-    AllWindows("展示所有窗口", "所有窗口", QuickActionCategory.System),
-    SwitchWindow("切换窗口", "切换窗口", QuickActionCategory.System),
-    Screenshot("截屏", "截屏", QuickActionCategory.System),
-    TaskManager("任务管理/强退", "任务管理", QuickActionCategory.System),
-    LockScreen("锁定远端屏幕", "锁屏", QuickActionCategory.System),
-    Copy("复制", "复制", QuickActionCategory.Edit),
-    Paste("粘贴", "粘贴", QuickActionCategory.Edit),
-    Undo("撤销", "撤销", QuickActionCategory.Edit),
-    SelectAll("全选", "全选", QuickActionCategory.Edit),
-    Enter("回车", "回车", QuickActionCategory.Edit),
-    Escape("Esc 键", "Esc", QuickActionCategory.Edit),
-    LeftClick("鼠标左键", "左键", QuickActionCategory.Mouse),
-    RightClick("鼠标右键", "右键", QuickActionCategory.Mouse),
-    MiddleClick("鼠标中键", "中键", QuickActionCategory.Mouse),
-    HoldRightClick("按住右键模式", "右键模式", QuickActionCategory.Mouse),
-    HoldDrag("按住拖动模式", "拖动模式", QuickActionCategory.Mouse),
-    DragLock("锁定拖动切换", "锁定拖动", QuickActionCategory.Mouse),
-    ScrollUp("向上滚动", "上滚", QuickActionCategory.Mouse),
-    ScrollDown("向下滚动", "下滚", QuickActionCategory.Mouse),
-    ToggleKeyboard("展开/收起键盘", "键盘", QuickActionCategory.Mode),
-    ToggleTouchMode("触控/直点切换", "触控切换", QuickActionCategory.Mode),
-    ToggleMute("静音切换", "静音", QuickActionCategory.Mode),
-    ToggleHud("性能 HUD 切换", "HUD", QuickActionCategory.Mode),
-    ToggleKeymap("按键映射开关", "按键映射", QuickActionCategory.Mode),
-    ToggleOrientation("横竖屏切换", "横竖屏", QuickActionCategory.Mode),
-    Empty("空槽位 (点击配置)", "自定义", QuickActionCategory.Other),
+    ZoomIn(R.string.qa_zoom_in, "放大画面", R.string.qa_zoom_in_short, "放大", QuickActionCategory.Zoom),
+    ZoomOut(R.string.qa_zoom_out, "缩小画面", R.string.qa_zoom_out_short, "缩小", QuickActionCategory.Zoom),
+    ResetZoom(R.string.qa_reset_zoom, "重置缩放", R.string.qa_reset_zoom_short, "1:1", QuickActionCategory.Zoom),
+    ShowDesktop(R.string.qa_show_desktop, "显示桌面", R.string.qa_show_desktop_short, "显示桌面", QuickActionCategory.System),
+    AllWindows(R.string.qa_all_windows, "展示所有窗口", R.string.qa_all_windows_short, "所有窗口", QuickActionCategory.System),
+    SwitchWindow(R.string.qa_switch_window, "切换窗口", R.string.qa_switch_window_short, "切换窗口", QuickActionCategory.System),
+    Screenshot(R.string.qa_screenshot, "截屏", R.string.qa_screenshot_short, "截屏", QuickActionCategory.System),
+    TaskManager(R.string.qa_task_mgr, "任务管理/强退", R.string.qa_task_mgr_short, "任务管理", QuickActionCategory.System),
+    LockScreen(R.string.qa_lock_screen, "锁定远端屏幕", R.string.qa_lock_screen_short, "锁屏", QuickActionCategory.System),
+    Copy(R.string.qa_copy, "复制", R.string.qa_copy, "复制", QuickActionCategory.Edit),
+    Paste(R.string.qa_paste, "粘贴", R.string.qa_paste, "粘贴", QuickActionCategory.Edit),
+    Undo(R.string.qa_undo, "撤销", R.string.qa_undo, "撤销", QuickActionCategory.Edit),
+    SelectAll(R.string.qa_select_all, "全选", R.string.qa_select_all, "全选", QuickActionCategory.Edit),
+    Enter(R.string.qa_enter, "回车", R.string.qa_enter, "回车", QuickActionCategory.Edit),
+    Escape(R.string.qa_escape, "Esc 键", R.string.qa_escape_short, "Esc", QuickActionCategory.Edit),
+    LeftClick(R.string.qa_left_click, "鼠标左键", R.string.qa_left_click_short, "左键", QuickActionCategory.Mouse),
+    RightClick(R.string.qa_right_click, "鼠标右键", R.string.qa_right_click_short, "右键", QuickActionCategory.Mouse),
+    MiddleClick(R.string.qa_middle_click, "鼠标中键", R.string.qa_middle_click_short, "中键", QuickActionCategory.Mouse),
+    HoldRightClick(R.string.qa_hold_right, "按住右键模式", R.string.qa_hold_right_short, "右键模式", QuickActionCategory.Mouse),
+    HoldDrag(R.string.qa_hold_drag, "按住拖动模式", R.string.qa_hold_drag_short, "拖动模式", QuickActionCategory.Mouse),
+    DragLock(R.string.qa_drag_lock, "锁定拖动切换", R.string.qa_drag_lock_short, "锁定拖动", QuickActionCategory.Mouse),
+    ScrollUp(R.string.qa_scroll_up, "向上滚动", R.string.qa_scroll_up_short, "上滚", QuickActionCategory.Mouse),
+    ScrollDown(R.string.qa_scroll_down, "向下滚动", R.string.qa_scroll_down_short, "下滚", QuickActionCategory.Mouse),
+    ToggleKeyboard(R.string.qa_toggle_kbd, "展开/收起键盘", R.string.qa_toggle_kbd_short, "键盘", QuickActionCategory.Mode),
+    ToggleTouchMode(R.string.qa_toggle_touch, "触控/直点切换", R.string.qa_toggle_touch_short, "触控切换", QuickActionCategory.Mode),
+    ToggleMute(R.string.qa_toggle_mute, "静音切换", R.string.qa_toggle_mute_short, "静音", QuickActionCategory.Mode),
+    ToggleHud(R.string.qa_toggle_hud, "性能 HUD 切换", R.string.qa_toggle_hud_short, "HUD", QuickActionCategory.Mode),
+    ToggleKeymap(R.string.qa_toggle_keymap, "按键映射开关", R.string.qa_toggle_keymap_short, "按键映射", QuickActionCategory.Mode),
+    ToggleOrientation(R.string.qa_toggle_orient, "横竖屏切换", R.string.qa_toggle_orient_short, "横竖屏", QuickActionCategory.Mode),
+    Empty(R.string.qa_empty, "空槽位 (点击配置)", R.string.qa_empty_short, "自定义", QuickActionCategory.Other);
+
+    val label: String
+        get() = AppStrings.get(labelRes, defaultLabel)
+
+    val shortLabel: String
+        get() = AppStrings.get(shortLabelRes, defaultShortLabel)
 }
 
 @Immutable
@@ -116,7 +133,7 @@ data class KeyMapState(
 fun defaultKeyMapProfiles(): List<KeyMapProfile> = listOf(
     KeyMapProfile(
         id = "wasd",
-        name = "WASD 键位",
+        name = AppStrings.get(R.string.preset_wasd_name, "WASD 键位"),
         items = listOf(
             VirtualKeyItem(
                 id = "wasd_pad",
@@ -183,7 +200,7 @@ fun defaultKeyMapProfiles(): List<KeyMapProfile> = listOf(
             ),
             VirtualKeyItem(
                 id = "wasd_lmb",
-                label = "左键",
+                label = AppStrings.get(R.string.qa_left_click_short, "左键"),
                 kind = VirtualKeyKind.MouseButton,
                 mouseButton = 0,
                 xNorm = 0.73f,
@@ -192,7 +209,7 @@ fun defaultKeyMapProfiles(): List<KeyMapProfile> = listOf(
             ),
             VirtualKeyItem(
                 id = "wasd_rmb",
-                label = "右键",
+                label = AppStrings.get(R.string.qa_right_click_short, "右键"),
                 kind = VirtualKeyKind.MouseButton,
                 mouseButton = 1,
                 xNorm = 0.63f,
@@ -203,11 +220,11 @@ fun defaultKeyMapProfiles(): List<KeyMapProfile> = listOf(
     ),
     KeyMapProfile(
         id = "office",
-        name = "办公快捷",
+        name = AppStrings.get(R.string.preset_office_name, "办公快捷"),
         items = listOf(
             VirtualKeyItem(
                 id = "off_pad",
-                label = "方向",
+                label = AppStrings.get(R.string.preset_dpad_short, "方向"),
                 kind = VirtualKeyKind.DpadArrows,
                 xNorm = 0.14f,
                 yNorm = 0.72f,
@@ -224,7 +241,7 @@ fun defaultKeyMapProfiles(): List<KeyMapProfile> = listOf(
             ),
             VirtualKeyItem(
                 id = "off_copy",
-                label = "复制",
+                label = AppStrings.get(R.string.qa_copy, "复制"),
                 kind = VirtualKeyKind.QuickAction,
                 actionKind = QuickActionKind.Copy,
                 xNorm = 0.87f,
@@ -233,7 +250,7 @@ fun defaultKeyMapProfiles(): List<KeyMapProfile> = listOf(
             ),
             VirtualKeyItem(
                 id = "off_paste",
-                label = "粘贴",
+                label = AppStrings.get(R.string.qa_paste, "粘贴"),
                 kind = VirtualKeyKind.QuickAction,
                 actionKind = QuickActionKind.Paste,
                 xNorm = 0.87f,
@@ -242,7 +259,7 @@ fun defaultKeyMapProfiles(): List<KeyMapProfile> = listOf(
             ),
             VirtualKeyItem(
                 id = "off_undo",
-                label = "撤销",
+                label = AppStrings.get(R.string.qa_undo, "撤销"),
                 kind = VirtualKeyKind.QuickAction,
                 actionKind = QuickActionKind.Undo,
                 xNorm = 0.75f,
@@ -251,7 +268,7 @@ fun defaultKeyMapProfiles(): List<KeyMapProfile> = listOf(
             ),
             VirtualKeyItem(
                 id = "off_enter",
-                label = "回车",
+                label = AppStrings.get(R.string.qa_enter, "回车"),
                 kind = VirtualKeyKind.Key,
                 scancode = ScancodeMapper.SC_ENTER,
                 xNorm = 0.86f,
@@ -262,11 +279,11 @@ fun defaultKeyMapProfiles(): List<KeyMapProfile> = listOf(
     ),
     KeyMapProfile(
         id = "arrows",
-        name = "方向与确认",
+        name = AppStrings.get(R.string.preset_arrows_name, "方向与确认"),
         items = listOf(
             VirtualKeyItem(
                 id = "arr_pad",
-                label = "方向",
+                label = AppStrings.get(R.string.preset_dpad_short, "方向"),
                 kind = VirtualKeyKind.DpadArrows,
                 xNorm = 0.15f,
                 yNorm = 0.72f,

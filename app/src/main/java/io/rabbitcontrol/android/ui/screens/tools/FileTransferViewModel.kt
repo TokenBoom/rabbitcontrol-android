@@ -10,6 +10,9 @@ import android.provider.OpenableColumns
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import io.rabbitcontrol.android.R
+import io.rabbitcontrol.android.core.i18n.AppStrings
+import io.rabbitcontrol.android.core.i18n.NativeErrorLocalizer
 import io.rabbitcontrol.android.core.nativebridge.FileTransferItem
 import io.rabbitcontrol.android.core.nativebridge.RemoteFileEntry
 import io.rabbitcontrol.android.core.nativebridge.toFileTransferItem
@@ -55,8 +58,14 @@ class FileTransferViewModel(
     private val _loading = MutableStateFlow(false)
     val loading: StateFlow<Boolean> = _loading.asStateFlow()
 
-    private val _notice = MutableStateFlow<String?>(null)
-    val notice: StateFlow<String?> = _notice.asStateFlow()
+    data class Notice(
+        val message: String,
+        val isError: Boolean = false,
+        val isSuccess: Boolean = false,
+    )
+
+    private val _notice = MutableStateFlow<Notice?>(null)
+    val notice: StateFlow<Notice?> = _notice.asStateFlow()
 
     init {
         viewModelScope.launch {
@@ -89,7 +98,7 @@ class FileTransferViewModel(
             if (!path.isNullOrBlank()) req.put("path", path)
             sessionManager.callTool(req).onFailure {
                 _loading.value = false
-                _notice.value = it.message
+                it.message?.let { m -> _notice.value = Notice(NativeErrorLocalizer.localize(m), isError = true) }
             }
         }
     }
@@ -106,7 +115,7 @@ class FileTransferViewModel(
         val clean = name.trim()
         if (clean.isEmpty()) return
         if (_currentPath.value.isBlank()) {
-            _notice.value = "请先等待远端目录加载完成"
+            _notice.value = Notice(AppStrings.get(R.string.ft_err_wait_dir, "请先等待远端目录加载完成"), isError = true)
             return
         }
         viewModelScope.launch {
@@ -115,7 +124,9 @@ class FileTransferViewModel(
                     .put("action", "file_mkdir_remote")
                     .put("parent", _currentPath.value)
                     .put("name", clean),
-            ).onFailure { _notice.value = it.message }
+            ).onFailure {
+                it.message?.let { m -> _notice.value = Notice(NativeErrorLocalizer.localize(m), isError = true) }
+            }
         }
     }
 
@@ -129,9 +140,14 @@ class FileTransferViewModel(
                     .put("remotePath", entry.path)
                     .put("localDir", localTargetDir),
             ).onSuccess {
-                _notice.value = "已加入下载队列: ${entry.name}"
+                _notice.value = Notice(
+                    AppStrings.get(R.string.ft_notice_queued_dl, "已加入下载队列: ${entry.name}", entry.name),
+                    isSuccess = true,
+                )
                 refreshTransfers()
-            }.onFailure { _notice.value = it.message }
+            }.onFailure {
+                it.message?.let { m -> _notice.value = Notice(NativeErrorLocalizer.localize(m), isError = true) }
+            }
         }
     }
 
@@ -139,7 +155,7 @@ class FileTransferViewModel(
         if (uris.isEmpty()) return
         val remoteDir = _currentPath.value
         if (remoteDir.isBlank()) {
-            _notice.value = "请先等待远端目录加载完成"
+            _notice.value = Notice(AppStrings.get(R.string.ft_err_wait_dir, "请先等待远端目录加载完成"), isError = true)
             return
         }
         viewModelScope.launch {
@@ -147,7 +163,7 @@ class FileTransferViewModel(
             for (uri in uris) {
                 val staged = withContext(Dispatchers.IO) { copyUriToStaging(uri) }
                 if (staged == null) {
-                    _notice.value = "无法读取所选文件"
+                    _notice.value = Notice(AppStrings.get(R.string.ft_err_read_file, "无法读取所选文件"), isError = true)
                 } else {
                     sessionManager.callTool(
                         JSONObject()
@@ -155,11 +171,16 @@ class FileTransferViewModel(
                             .put("localPath", staged.absolutePath)
                             .put("remoteDir", remoteDir),
                     ).onSuccess { count++ }
-                        .onFailure { _notice.value = it.message }
+                        .onFailure {
+                            it.message?.let { m -> _notice.value = Notice(NativeErrorLocalizer.localize(m), isError = true) }
+                        }
                 }
             }
             if (count > 0) {
-                _notice.value = "已加入 $count 个上传任务"
+                _notice.value = Notice(
+                    AppStrings.get(R.string.ft_notice_queued_ul, "已加入 $count 个上传任务", count),
+                    isSuccess = true,
+                )
                 refreshTransfers()
             }
         }
@@ -200,7 +221,7 @@ class FileTransferViewModel(
             is FileToolEvent.RemoteDir -> {
                 _loading.value = false
                 if (!ev.error.isNullOrBlank()) {
-                    _notice.value = ev.error
+                    _notice.value = Notice(NativeErrorLocalizer.localize(ev.error), isError = true)
                 } else {
                     _currentPath.value = ev.path
                     _entries.value = ev.entries.sortedWith(
@@ -210,7 +231,13 @@ class FileTransferViewModel(
             }
             is FileToolEvent.MkdirResult -> {
                 if (ev.ok) listRemoteDir(_currentPath.value)
-                else _notice.value = ev.error ?: "创建目录失败"
+                else {
+                    _notice.value = Notice(
+                        ev.error?.let(NativeErrorLocalizer::localize)
+                            ?: AppStrings.get(R.string.ft_err_mkdir_failed, "创建目录失败"),
+                        isError = true,
+                    )
+                }
             }
             is FileToolEvent.TransferUpdated -> {
                 val item = ev.item
@@ -234,9 +261,23 @@ class FileTransferViewModel(
                             val exported = exportToPublicDownloads(src, item.fileName)
                             if (exported) {
                                 runCatching { src.delete() }
-                                _notice.value = "已保存至 Downloads/RabbitControl/${item.fileName}"
+                                _notice.value = Notice(
+                                    AppStrings.get(
+                                        R.string.ft_notice_saved_downloads,
+                                        "已保存至 Downloads/RabbitControl/${item.fileName}",
+                                        item.fileName,
+                                    ),
+                                    isSuccess = true,
+                                )
                             } else {
-                                _notice.value = "已下载至 ${src.absolutePath}"
+                                _notice.value = Notice(
+                                    AppStrings.get(
+                                        R.string.ft_notice_saved_path,
+                                        "已下载至 ${src.absolutePath}",
+                                        src.absolutePath,
+                                    ),
+                                    isSuccess = true,
+                                )
                             }
                         }
                     }

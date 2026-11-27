@@ -1,5 +1,7 @@
 package io.rabbitcontrol.android.core.update
 
+import io.rabbitcontrol.android.R
+import io.rabbitcontrol.android.core.i18n.AppStrings
 import org.json.JSONObject
 
 data class CoreAbiArtifact(
@@ -26,25 +28,33 @@ data class CoreManifest(
         fun parse(rawJson: String): CoreManifest {
             val obj = JSONObject(rawJson)
             val schemaVersion = obj.optInt("schemaVersion", 1)
-            require(schemaVersion == 1) { "不支持的清单格式版本: $schemaVersion" }
+            require(schemaVersion == 1) {
+                AppStrings.get(R.string.core_err_dl_or_verify, "不支持的清单格式版本: $schemaVersion")
+            }
 
             val coreVersion = obj.optString("coreVersion", "").trim()
                 .removePrefix("v")
                 .removePrefix("V")
-            require(coreVersion.isNotBlank() && isSafeSegment(coreVersion)) { "无效的内核版本号" }
+            require(coreVersion.isNotBlank() && isSafeSegment(coreVersion)) {
+                AppStrings.get(R.string.core_err_dl_or_verify, "无效的内核版本号")
+            }
 
             val tagName = obj.optString("tagName", "core-v$coreVersion").trim()
                 .ifBlank { "core-v$coreVersion" }
             val coreGitSha = obj.optString("coreGitSha", "unknown").trim().ifBlank { "unknown" }
             val abiVersion = obj.optInt("abiVersion", 0)
-            require(abiVersion > 0) { "无效的 ABI 版本: $abiVersion" }
+            require(abiVersion > 0) {
+                AppStrings.get(R.string.core_err_dl_or_verify, "无效的 ABI 版本: $abiVersion")
+            }
 
             val minAppVersion = obj.optString("minAppVersion", "0.2.0").trim().ifBlank { "0.2.0" }
             val publishedAt = obj.optString("publishedAt", "").trim()
             val releaseNotes = cleanReleaseNotes(obj.optString("releaseNotes", ""))
 
             val abisObj = obj.optJSONObject("abis")
-                ?: throw IllegalArgumentException("清单缺少 abis 字段")
+                ?: throw IllegalArgumentException(
+                    AppStrings.get(R.string.core_err_dl_or_verify, "清单缺少 abis 字段"),
+                )
             val abis = LinkedHashMap<String, CoreAbiArtifact>()
             val keys = abisObj.keys()
             while (keys.hasNext()) {
@@ -53,10 +63,10 @@ data class CoreManifest(
                 val fileName = item.optString("fileName", "").trim()
                 val sha256 = item.optString("sha256", "").trim().lowercase()
                 val sizeBytes = item.optLong("sizeBytes", 0L)
-                require(abi.isNotBlank()) { "ABI 名称为空" }
-                require(isSafeSingleFileName(fileName)) { "非法文件名: $fileName" }
-                require(SHA256_REGEX.matches(sha256)) { "非法 SHA-256 摘要: $sha256" }
-                require(sizeBytes > 0L) { "非法文件大小: $sizeBytes" }
+                require(abi.isNotBlank()) { "ABI is blank" }
+                require(isSafeSingleFileName(fileName)) { "Invalid fileName: $fileName" }
+                require(SHA256_REGEX.matches(sha256)) { "Invalid SHA-256: $sha256" }
+                require(sizeBytes > 0L) { "Invalid sizeBytes: $sizeBytes" }
                 abis[abi] = CoreAbiArtifact(
                     abi = abi,
                     fileName = fileName,
@@ -64,7 +74,9 @@ data class CoreManifest(
                     sizeBytes = sizeBytes,
                 )
             }
-            require(abis.isNotEmpty()) { "清单未包含任何可用架构产物" }
+            require(abis.isNotEmpty()) {
+                AppStrings.get(R.string.core_err_dl_or_verify, "清单未包含任何可用架构产物")
+            }
 
             return CoreManifest(
                 schemaVersion = schemaVersion,

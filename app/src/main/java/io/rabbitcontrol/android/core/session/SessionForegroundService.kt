@@ -11,11 +11,16 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import io.rabbitcontrol.android.R
+import io.rabbitcontrol.android.core.i18n.AppLocaleManager
 import io.rabbitcontrol.android.ui.session.SessionActivity
 import org.koin.android.ext.android.inject
 
 class SessionForegroundService : Service() {
     private val sessionManager: SessionManager by inject()
+
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(AppLocaleManager.wrapContext(newBase))
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -27,8 +32,10 @@ class SessionForegroundService : Service() {
                 return START_NOT_STICKY
             }
         }
-        val title = intent?.getStringExtra(EXTRA_TITLE) ?: "正在远控桌面"
-        val subtitle = intent?.getStringExtra(EXTRA_SUBTITLE) ?: "保持高刷连接与工具通道活跃"
+        val title = intent?.getStringExtra(EXTRA_TITLE)
+            ?: getString(R.string.session_notif_title_default)
+        val subtitle = intent?.getStringExtra(EXTRA_SUBTITLE)
+            ?: getString(R.string.session_notif_subtitle_default)
         ensureChannel()
         val notification = buildNotification(title, subtitle)
         if (Build.VERSION.SDK_INT >= 34) {
@@ -48,10 +55,10 @@ class SessionForegroundService : Service() {
         if (mgr.getNotificationChannel(CHANNEL_ID) == null) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "远程控制会话",
+                getString(R.string.session_notif_channel),
                 NotificationManager.IMPORTANCE_LOW,
             ).apply {
-                description = "保持远程桌面、文件传输、终端和端口映射在后台持续运行"
+                description = getString(R.string.session_notif_channel_desc)
                 setShowBadge(false)
             }
             mgr.createNotificationChannel(channel)
@@ -83,7 +90,13 @@ class SessionForegroundService : Service() {
             .setContentText(subtitle)
             .setOngoing(true)
             .setContentIntent(openPi)
-            .addAction(Notification.Action.Builder(null, "断开连接", disconnectPi).build())
+            .addAction(
+                Notification.Action.Builder(
+                    null,
+                    getString(R.string.session_notif_disconnect),
+                    disconnectPi,
+                ).build(),
+            )
             .build()
     }
 

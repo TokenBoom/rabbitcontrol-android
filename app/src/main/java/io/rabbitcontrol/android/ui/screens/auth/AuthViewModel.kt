@@ -2,7 +2,9 @@ package io.rabbitcontrol.android.ui.screens.auth
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import io.rabbitcontrol.android.R
 import io.rabbitcontrol.android.core.data.AccountRepository
+import io.rabbitcontrol.android.core.i18n.AppStrings
 import io.rabbitcontrol.android.core.nativebridge.ServerConfigModel
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -165,7 +167,11 @@ class AuthViewModel(
         val trimmed = raw.trim()
         if (trimmed.isEmpty()) return Result.success(defaultPort)
         val parsed = trimmed.toIntOrNull()?.takeIf { it in 1..65535 }
-            ?: return Result.failure(IllegalArgumentException("$label 需为 1–65535 之间的数字"))
+            ?: return Result.failure(
+                IllegalArgumentException(
+                    AppStrings.get(R.string.auth_err_port_range, "$label 需为 1–65535 之间的数字", label),
+                ),
+            )
         return Result.success(parsed)
     }
 
@@ -187,14 +193,26 @@ class AuthViewModel(
         val host = _ui.value.serverAddress.trim()
         val name = _ui.value.serverName.trim()
         if (host.isEmpty()) {
-            _ui.value = _ui.value.copy(error = "请输入服务器地址")
+            _ui.value = _ui.value.copy(error = AppStrings.get(R.string.auth_err_enter_address, "请输入服务器地址"))
             return
         }
-        val apiPort = parseOptionalPort(_ui.value.apiPort, ServerConfigModel.DEFAULT_API_PORT, "API 端口")
+        val apiPort = parseOptionalPort(
+            _ui.value.apiPort,
+            ServerConfigModel.DEFAULT_API_PORT,
+            AppStrings.get(R.string.auth_api_port_label, "API 端口"),
+        )
             .getOrElse { _ui.value = _ui.value.copy(error = it.message); return }
-        val signalPort = parseOptionalPort(_ui.value.signalPort, ServerConfigModel.DEFAULT_SIGNAL_PORT, "信令端口")
+        val signalPort = parseOptionalPort(
+            _ui.value.signalPort,
+            ServerConfigModel.DEFAULT_SIGNAL_PORT,
+            AppStrings.get(R.string.auth_signal_port_label, "信令端口"),
+        )
             .getOrElse { _ui.value = _ui.value.copy(error = it.message); return }
-        val relayPort = parseOptionalPort(_ui.value.relayPort, ServerConfigModel.DEFAULT_RELAY_PORT, "中继端口")
+        val relayPort = parseOptionalPort(
+            _ui.value.relayPort,
+            ServerConfigModel.DEFAULT_RELAY_PORT,
+            AppStrings.get(R.string.auth_relay_port_label, "中继端口"),
+        )
             .getOrElse { _ui.value = _ui.value.copy(error = it.message); return }
 
         if (editing != null && !needsReprobeForEdit(editing)) {
@@ -228,14 +246,26 @@ class AuthViewModel(
         val host = _ui.value.serverAddress.trim()
         val name = _ui.value.serverName.trim()
         if (host.isEmpty()) {
-            _ui.value = _ui.value.copy(error = "请输入服务器地址")
+            _ui.value = _ui.value.copy(error = AppStrings.get(R.string.auth_err_enter_address, "请输入服务器地址"))
             return
         }
-        val apiPort = parseOptionalPort(_ui.value.apiPort, ServerConfigModel.DEFAULT_API_PORT, "API 端口")
+        val apiPort = parseOptionalPort(
+            _ui.value.apiPort,
+            ServerConfigModel.DEFAULT_API_PORT,
+            AppStrings.get(R.string.auth_api_port_label, "API 端口"),
+        )
             .getOrElse { _ui.value = _ui.value.copy(error = it.message); return }
-        val signalPort = parseOptionalPort(_ui.value.signalPort, ServerConfigModel.DEFAULT_SIGNAL_PORT, "信令端口")
+        val signalPort = parseOptionalPort(
+            _ui.value.signalPort,
+            ServerConfigModel.DEFAULT_SIGNAL_PORT,
+            AppStrings.get(R.string.auth_signal_port_label, "信令端口"),
+        )
             .getOrElse { _ui.value = _ui.value.copy(error = it.message); return }
-        val relayPort = parseOptionalPort(_ui.value.relayPort, ServerConfigModel.DEFAULT_RELAY_PORT, "中继端口")
+        val relayPort = parseOptionalPort(
+            _ui.value.relayPort,
+            ServerConfigModel.DEFAULT_RELAY_PORT,
+            AppStrings.get(R.string.auth_relay_port_label, "中继端口"),
+        )
             .getOrElse { _ui.value = _ui.value.copy(error = it.message); return }
         val apiPortOverride = if (_ui.value.apiPort.isNotBlank()) apiPort else null
         probeServerInternal(host = host, name = name, apiPortOverride = apiPortOverride, signalPort = signalPort, relayPort = relayPort)
@@ -442,11 +472,11 @@ class AuthViewModel(
         val email = _ui.value.email.trim()
         val pwd = _ui.value.password
         if (email.isEmpty()) {
-            _ui.value = _ui.value.copy(error = "请输入邮箱")
+            _ui.value = _ui.value.copy(error = AppStrings.get(R.string.auth_err_enter_email, "请输入邮箱"))
             return
         }
         if (pwd.isEmpty()) {
-            _ui.value = _ui.value.copy(error = "请输入密码")
+            _ui.value = _ui.value.copy(error = AppStrings.get(R.string.auth_err_enter_password, "请输入密码"))
             return
         }
         _ui.value = _ui.value.copy(busy = true, error = null)
@@ -471,7 +501,9 @@ class AuthViewModel(
 
     fun register(onCompleted: () -> Unit) {
         if (!_ui.value.allowRegistration) {
-            _ui.value = _ui.value.copy(error = "管理员已关闭自助注册，请联系管理员开通")
+            _ui.value = _ui.value.copy(
+                error = AppStrings.get(R.string.err_auth_reg_disabled, "管理员已关闭自助注册，请联系管理员开通"),
+            )
             return
         }
         val email = _ui.value.email.trim()
@@ -479,15 +511,21 @@ class AuthViewModel(
         val pwd = _ui.value.password
         val confirm = _ui.value.registerConfirmPassword
         if (email.isEmpty() || !email.contains('@')) {
-            _ui.value = _ui.value.copy(error = "请输入有效的邮箱地址")
+            _ui.value = _ui.value.copy(
+                error = AppStrings.get(R.string.auth_err_invalid_email, "请输入有效的邮箱地址"),
+            )
             return
         }
         if (pwd.length < 8) {
-            _ui.value = _ui.value.copy(error = "密码长度至少 8 位")
+            _ui.value = _ui.value.copy(
+                error = AppStrings.get(R.string.err_auth_password_min_len, "密码长度至少 8 位"),
+            )
             return
         }
         if (pwd != confirm) {
-            _ui.value = _ui.value.copy(error = "两次输入的密码不一致")
+            _ui.value = _ui.value.copy(
+                error = AppStrings.get(R.string.auth_err_pw_mismatch, "两次输入的密码不一致"),
+            )
             return
         }
         _ui.value = _ui.value.copy(busy = true, error = null)
@@ -515,11 +553,15 @@ class AuthViewModel(
         val next = _ui.value.newPassword
         val confirm = _ui.value.confirmPassword
         if (cur.isEmpty() || next.isEmpty()) {
-            _ui.value = _ui.value.copy(error = "请输入当前密码和新密码")
+            _ui.value = _ui.value.copy(
+                error = AppStrings.get(R.string.auth_err_enter_both_pws, "请输入当前密码和新密码"),
+            )
             return
         }
         if (next != confirm) {
-            _ui.value = _ui.value.copy(error = "两次输入的新密码不一致")
+            _ui.value = _ui.value.copy(
+                error = AppStrings.get(R.string.auth_err_new_pw_mismatch, "两次输入的新密码不一致"),
+            )
             return
         }
         _ui.value = _ui.value.copy(busy = true, error = null)

@@ -1,32 +1,59 @@
 package io.rabbitcontrol.android.core.data
 
 import android.content.Context
+import androidx.annotation.StringRes
 import androidx.compose.runtime.Immutable
+import io.rabbitcontrol.android.R
+import io.rabbitcontrol.android.core.i18n.AppStrings
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-enum class TouchInputMode(val label: String) {
-    Trackpad("精密触控板"),
-    DirectTouch("直点触控"),
+enum class TouchInputMode(
+    @StringRes val labelRes: Int,
+    private val defaultLabel: String,
+) {
+    Trackpad(R.string.touch_mode_trackpad, "精密触控板"),
+    DirectTouch(R.string.touch_mode_direct, "直点触控");
+
+    val label: String
+        get() = AppStrings.get(labelRes, defaultLabel)
 }
 
-enum class OrientationPreference(val label: String) {
-    AutoSensor("自动旋转"),
-    LandscapeFirst("锁定横屏"),
-    PortraitTrackpad("锁定竖屏"),
+enum class OrientationPreference(
+    @StringRes val labelRes: Int,
+    private val defaultLabel: String,
+) {
+    AutoSensor(R.string.orientation_auto, "自动旋转"),
+    LandscapeFirst(R.string.orientation_landscape, "锁定横屏"),
+    PortraitTrackpad(R.string.orientation_portrait, "锁定竖屏");
+
+    val label: String
+        get() = AppStrings.get(labelRes, defaultLabel)
 }
 
-enum class PortraitLayoutMode(val label: String) {
-    Auto("智能"),
-    Fullscreen("竖屏全屏"),
-    SplitTrackpad("触控板分屏"),
+enum class PortraitLayoutMode(
+    @StringRes val labelRes: Int,
+    private val defaultLabel: String,
+) {
+    Auto(R.string.portrait_layout_auto, "智能"),
+    Fullscreen(R.string.portrait_layout_fullscreen, "竖屏全屏"),
+    SplitTrackpad(R.string.portrait_layout_split, "触控板分屏");
+
+    val label: String
+        get() = AppStrings.get(labelRes, defaultLabel)
 }
 
-enum class AppThemeMode(val label: String) {
-    System("跟随系统"),
-    Light("浅色"),
-    Dark("深色"),
+enum class AppThemeMode(
+    @StringRes val labelRes: Int,
+    private val defaultLabel: String,
+) {
+    System(R.string.theme_system, "跟随系统"),
+    Light(R.string.theme_light, "浅色"),
+    Dark(R.string.theme_dark, "深色");
+
+    val label: String
+        get() = AppStrings.get(labelRes, defaultLabel)
 }
 
 @Immutable

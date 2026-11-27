@@ -1,5 +1,7 @@
 package io.rabbitcontrol.android.ui.session
 
+import io.rabbitcontrol.android.R
+import io.rabbitcontrol.android.core.i18n.AppStrings
 import io.rabbitcontrol.android.core.nativebridge.DisplayPresetModel
 
 data class ResolutionPresetSelection(
@@ -10,7 +12,16 @@ data class ResolutionPresetSelection(
 private val PREFERRED_COMMON_WIDTHS = intArrayOf(3840, 2560, 1920, 1512, 1280, 1728, 1440)
 
 fun formatCompactPresetLabel(preset: DisplayPresetModel): String {
-    return if (preset.isNative) "${preset.width}×${preset.height} 原生" else "${preset.width}×${preset.height}"
+    return if (preset.isNative) {
+        AppStrings.get(
+            R.string.session_res_native,
+            "${preset.width}×${preset.height} 原生",
+            preset.width,
+            preset.height,
+        )
+    } else {
+        "${preset.width}×${preset.height}"
+    }
 }
 
 /**

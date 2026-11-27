@@ -12,6 +12,7 @@ import android.util.DisplayMetrics
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import io.rabbitcontrol.android.core.i18n.AppLocaleManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -22,6 +23,10 @@ import kotlin.math.hypot
  * text editing, and screen locking when this Android phone acts as a remote-controlled host.
  */
 class RabbitAccessibilityService : AccessibilityService() {
+
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(AppLocaleManager.wrapContext(newBase))
+    }
 
     private var cursorX = 540f
     private var cursorY = 1200f

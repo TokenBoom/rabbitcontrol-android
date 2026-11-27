@@ -62,6 +62,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -128,9 +129,10 @@ fun AuthScreen(
         }
     }
 
+    val regDisabledToast = stringResource(R.string.auth_reg_disabled_toast)
     LaunchedEffect(state.step, state.allowRegistration) {
         if (state.step == AuthStep.Register && !state.allowRegistration) {
-            RabbitToast.warning("管理员已关闭自助注册，请联系管理员开通")
+            RabbitToast.warning(regDisabledToast)
         }
     }
 
@@ -185,7 +187,7 @@ fun AuthScreen(
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                            contentDescription = "返回",
+                            contentDescription = stringResource(R.string.common_back),
                             tint = palette.text,
                         )
                     }
@@ -222,7 +224,7 @@ fun AuthScreen(
                             )
                             Icon(
                                 imageVector = Icons.Rounded.KeyboardArrowDown,
-                                contentDescription = "切换服务器",
+                                contentDescription = stringResource(R.string.auth_switch_server),
                                 tint = palette.muted,
                                 modifier = Modifier.size(16.dp),
                             )
@@ -233,15 +235,15 @@ fun AuthScreen(
             }
         } else {
             val (topTitle, topSubtitle) = when (state.step) {
-                AuthStep.Server -> "服务器管理" to if (servers.isNotEmpty()) {
-                    "共 ${servers.size} 台 · 点击切换服务器"
+                AuthStep.Server -> stringResource(R.string.auth_server_mgmt_title) to if (servers.isNotEmpty()) {
+                    stringResource(R.string.auth_server_mgmt_sub_count, servers.size)
                 } else {
-                    "连接控制服务端以同步设备"
+                    stringResource(R.string.auth_server_mgmt_sub_empty)
                 }
-                AuthStep.Trust -> "确认服务器指纹" to (state.candidateServer?.let { srv ->
+                AuthStep.Trust -> stringResource(R.string.auth_trust_title) to (state.candidateServer?.let { srv ->
                     if (srv.apiPort != ServerConfigModel.DEFAULT_API_PORT) "${srv.address} · API ${srv.apiPort}" else srv.address
                 } ?: "")
-                AuthStep.Password -> "设置新密码" to "首次登录需修改初始密码"
+                AuthStep.Password -> stringResource(R.string.auth_password_title) to stringResource(R.string.auth_password_sub)
                 else -> "" to ""
             }
 
@@ -256,6 +258,7 @@ fun AuthScreen(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
+                            val probeAllFailedMsg = stringResource(R.string.auth_probe_all_failed)
                             Row(
                                 modifier = Modifier
                                     .height(34.dp)
@@ -265,11 +268,25 @@ fun AuthScreen(
                                     .clickable(enabled = !anyTesting) {
                                         viewModel.testAllServers { ok, total ->
                                             if (ok == total) {
-                                                RabbitToast.success("测速完成 · $ok/$total 台可用")
+                                                RabbitToast.success(
+                                                    io.rabbitcontrol.android.core.i18n.AppStrings.get(
+                                                        R.string.auth_probe_summary,
+                                                        "测速完成 · $ok/$total 台可用",
+                                                        ok,
+                                                        total,
+                                                    ),
+                                                )
                                             } else if (ok > 0) {
-                                                RabbitToast.warning("测速完成 · $ok/$total 台可用")
+                                                RabbitToast.warning(
+                                                    io.rabbitcontrol.android.core.i18n.AppStrings.get(
+                                                        R.string.auth_probe_summary,
+                                                        "测速完成 · $ok/$total 台可用",
+                                                        ok,
+                                                        total,
+                                                    ),
+                                                )
                                             } else {
-                                                RabbitToast.error("全部服务器连接失败，请检查网络")
+                                                RabbitToast.error(probeAllFailedMsg)
                                             }
                                         }
                                     }
@@ -292,7 +309,7 @@ fun AuthScreen(
                                     )
                                 }
                                 Text(
-                                    text = if (anyTesting) "测速中" else "测速",
+                                    text = if (anyTesting) stringResource(R.string.auth_probing) else stringResource(R.string.auth_probe),
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Medium,
                                     color = palette.text,
@@ -314,7 +331,7 @@ fun AuthScreen(
                                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                             ) {
                                 Icon(Icons.Rounded.Add, null, tint = palette.primaryText, modifier = Modifier.size(16.dp))
-                                Text("添加", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = palette.primaryText)
+                                Text(stringResource(R.string.common_add), fontSize = 12.sp, fontWeight = FontWeight.Medium, color = palette.primaryText)
                             }
                         }
                     }
@@ -388,7 +405,7 @@ fun AuthScreen(
                                                         modifier = Modifier.weight(1f, fill = false),
                                                     )
                                                     if (isActive) {
-                                                        RabbitStatusPill(label = "当前", tone = StatusTone.Primary)
+                                                        RabbitStatusPill(label = stringResource(R.string.auth_current_badge), tone = StatusTone.Primary)
                                                     }
                                                 }
                                                 if (srv.name.isNotBlank()) {
@@ -415,7 +432,7 @@ fun AuthScreen(
                                                 }
                                                 Spacer(modifier = Modifier.height(2.dp))
                                                 Text(
-                                                    text = email ?: "点击登录此服务器",
+                                                    text = email ?: stringResource(R.string.auth_tap_to_login),
                                                     fontSize = 12.sp,
                                                     color = if (email != null) palette.muted else palette.primaryText,
                                                     maxLines = 1,
@@ -445,7 +462,7 @@ fun AuthScreen(
                                                                 strokeWidth = 1.6.dp,
                                                             )
                                                             Text(
-                                                                text = "正在测试连通性…",
+                                                                text = stringResource(R.string.auth_testing_conn),
                                                                 fontSize = 12.sp,
                                                                 color = palette.muted,
                                                             )
@@ -453,19 +470,19 @@ fun AuthScreen(
                                                     }
                                                     is ServerTestState.Reachable -> {
                                                         val (label, tone) = when {
-                                                            !testState.healthy -> "服务异常 · ${testState.latencyMs} ms" to StatusTone.Warning
-                                                            testState.latencyMs < 150 -> "延迟 ${testState.latencyMs} ms" to StatusTone.Success
-                                                            testState.latencyMs <= 400 -> "延迟 ${testState.latencyMs} ms" to StatusTone.Warning
-                                                            else -> "延迟 ${testState.latencyMs} ms" to StatusTone.Danger
+                                                            !testState.healthy -> stringResource(R.string.auth_status_abnormal, testState.latencyMs) to StatusTone.Warning
+                                                            testState.latencyMs < 150 -> stringResource(R.string.auth_status_latency, testState.latencyMs) to StatusTone.Success
+                                                            testState.latencyMs <= 400 -> stringResource(R.string.auth_status_latency, testState.latencyMs) to StatusTone.Warning
+                                                            else -> stringResource(R.string.auth_status_latency, testState.latencyMs) to StatusTone.Danger
                                                         }
                                                         RabbitStatusPill(label = label, tone = tone)
                                                     }
                                                     is ServerTestState.Failed -> {
-                                                        RabbitStatusPill(label = "连接失败", tone = StatusTone.Danger)
+                                                        RabbitStatusPill(label = stringResource(R.string.auth_status_failed), tone = StatusTone.Danger)
                                                     }
                                                     null -> {
                                                         Text(
-                                                            text = "未测速",
+                                                            text = stringResource(R.string.auth_status_untested),
                                                             fontSize = 11.sp,
                                                             color = palette.muted,
                                                         )
@@ -487,9 +504,23 @@ fun AuthScreen(
                                                                 when (res) {
                                                                     is ServerTestState.Reachable -> {
                                                                         if (res.healthy) {
-                                                                            RabbitToast.success("${srv.displayName} 连通正常 · ${res.latencyMs} ms")
+                                                                            RabbitToast.success(
+                                                                                io.rabbitcontrol.android.core.i18n.AppStrings.get(
+                                                                                    R.string.auth_toast_healthy,
+                                                                                    "${srv.displayName} 连通正常 · ${res.latencyMs} ms",
+                                                                                    srv.displayName,
+                                                                                    res.latencyMs,
+                                                                                ),
+                                                                            )
                                                                         } else {
-                                                                            RabbitToast.warning("${srv.displayName} 服务状态异常 · ${res.latencyMs} ms")
+                                                                            RabbitToast.warning(
+                                                                                io.rabbitcontrol.android.core.i18n.AppStrings.get(
+                                                                                    R.string.auth_toast_unhealthy,
+                                                                                    "${srv.displayName} 服务状态异常 · ${res.latencyMs} ms",
+                                                                                    srv.displayName,
+                                                                                    res.latencyMs,
+                                                                                ),
+                                                                            )
                                                                         }
                                                                     }
                                                                     is ServerTestState.Failed -> {
@@ -505,12 +536,12 @@ fun AuthScreen(
                                                 ) {
                                                     Icon(
                                                         imageVector = Icons.Rounded.NetworkCheck,
-                                                        contentDescription = "测试服务器连通性",
+                                                        contentDescription = stringResource(R.string.auth_cd_test_conn),
                                                         tint = palette.primaryText,
                                                         modifier = Modifier.size(14.dp),
                                                     )
                                                     Text(
-                                                        text = if (isTesting) "测试中" else "测试",
+                                                        text = if (isTesting) stringResource(R.string.auth_testing) else stringResource(R.string.auth_test),
                                                         fontSize = 12.sp,
                                                         fontWeight = FontWeight.Medium,
                                                         color = palette.primaryText,
@@ -526,7 +557,7 @@ fun AuthScreen(
                                                 ) {
                                                     Icon(
                                                         Icons.Rounded.Edit,
-                                                        contentDescription = "编辑服务器",
+                                                        contentDescription = stringResource(R.string.auth_cd_edit_server),
                                                         tint = palette.muted,
                                                         modifier = Modifier.size(17.dp),
                                                     )
@@ -537,7 +568,7 @@ fun AuthScreen(
                                                 ) {
                                                     Icon(
                                                         Icons.Rounded.DeleteOutline,
-                                                        contentDescription = "删除服务器",
+                                                        contentDescription = stringResource(R.string.auth_cd_delete_server),
                                                         tint = palette.muted,
                                                         modifier = Modifier.size(17.dp),
                                                     )
@@ -549,7 +580,7 @@ fun AuthScreen(
                             }
 
                             RabbitSecondaryButton(
-                                label = "添加新服务器",
+                                label = stringResource(R.string.auth_add_new_server),
                                 onClick = {
                                     viewModel.startAddServer()
                                     expandAdvanced = false
@@ -573,14 +604,14 @@ fun AuthScreen(
                                 )
                                 Spacer(modifier = Modifier.height(16.dp))
                                 Text(
-                                    text = "连接服务器",
+                                    text = stringResource(R.string.auth_connect_server),
                                     fontSize = 23.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = palette.text,
                                 )
                                 Spacer(modifier = Modifier.height(6.dp))
                                 Text(
-                                    text = "输入私有或公网服务端地址，默认端口 21118",
+                                    text = stringResource(R.string.auth_connect_server_sub),
                                     fontSize = 13.sp,
                                     color = palette.muted,
                                 )
@@ -601,7 +632,11 @@ fun AuthScreen(
                                     expandAdvanced = expandAdvanced,
                                     onToggleExpandAdvanced = { expandAdvanced = !expandAdvanced },
                                     busy = state.busy,
-                                    submitLabel = if (state.busy) "正在校验服务器…" else "校验并连接",
+                                    submitLabel = if (state.busy) {
+                                        stringResource(R.string.auth_verifying_server)
+                                    } else {
+                                        stringResource(R.string.auth_verify_and_connect)
+                                    },
                                     submitHeight = 50.dp,
                                     onSubmit = { viewModel.probeServer() },
                                 )
@@ -632,7 +667,7 @@ fun AuthScreen(
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                "请核对下面的 CA SHA-256 指纹。确认后，本机只会信任该服务器证书体系。",
+                                stringResource(R.string.auth_trust_hint),
                                 color = palette.muted,
                                 fontSize = 13.sp,
                                 textAlign = TextAlign.Center,
@@ -657,14 +692,14 @@ fun AuthScreen(
                             }
                             Spacer(modifier = Modifier.height(18.dp))
                             RabbitPrimaryButton(
-                                label = if (state.busy) "正在保存…" else "信任并继续",
+                                label = if (state.busy) stringResource(R.string.auth_saving) else stringResource(R.string.auth_trust_and_continue),
                                 busy = state.busy,
                                 onClick = { viewModel.trustAndContinue(onlyServer, onAuthenticated) },
                                 modifier = Modifier.fillMaxWidth(),
                             )
                             Spacer(modifier = Modifier.height(10.dp))
                             RabbitSecondaryButton(
-                                label = "重新输入",
+                                label = stringResource(R.string.auth_reenter),
                                 onClick = {
                                     viewModel.backFromTrust()
                                     if (servers.isNotEmpty()) {
@@ -693,7 +728,7 @@ fun AuthScreen(
                             )
                             Spacer(modifier = Modifier.height(16.dp))
                             Text(
-                                text = if (isLogin) "欢迎使用 RabbitControl" else "创建新账号",
+                                text = if (isLogin) stringResource(R.string.auth_welcome_title) else stringResource(R.string.auth_create_account_title),
                                 fontSize = 23.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = palette.text,
@@ -701,9 +736,9 @@ fun AuthScreen(
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(
                                 text = if (isLogin) {
-                                    "登录账号以同步设备与免密连接"
+                                    stringResource(R.string.auth_welcome_sub)
                                 } else {
-                                    "注册后将自动登录并绑定当前设备"
+                                    stringResource(R.string.auth_create_account_sub)
                                 },
                                 fontSize = 13.sp,
                                 color = palette.muted,
@@ -714,8 +749,8 @@ fun AuthScreen(
                                 RabbitTextField(
                                     value = state.email,
                                     onValueChange = viewModel::updateEmail,
-                                    label = "邮箱",
-                                    placeholder = "请输入邮箱地址",
+                                    label = stringResource(R.string.auth_email_label),
+                                    placeholder = stringResource(R.string.auth_email_hint),
                                     leadingIcon = { Icon(Icons.Rounded.Person, null, tint = palette.muted) },
                                     keyboardType = KeyboardType.Email,
                                 )
@@ -723,14 +758,14 @@ fun AuthScreen(
                                 RabbitTextField(
                                     value = state.password,
                                     onValueChange = viewModel::updatePassword,
-                                    label = "密码",
-                                    placeholder = "请输入密码",
+                                    label = stringResource(R.string.auth_password_label),
+                                    placeholder = stringResource(R.string.auth_password_hint),
                                     leadingIcon = { Icon(Icons.Rounded.Key, null, tint = palette.muted) },
                                     isPassword = true,
                                 )
                                 Spacer(modifier = Modifier.height(24.dp))
                                 RabbitPrimaryButton(
-                                    label = if (state.busy) "正在登录…" else "登录",
+                                    label = if (state.busy) stringResource(R.string.auth_signing_in) else stringResource(R.string.auth_sign_in),
                                     busy = state.busy,
                                     height = 50.dp,
                                     onClick = { viewModel.login(onAuthenticated) },
@@ -739,7 +774,7 @@ fun AuthScreen(
                             } else {
                                 if (!state.allowRegistration) {
                                     Text(
-                                        text = "当前服务器未开放自助注册，请联系管理员开通",
+                                        text = stringResource(R.string.auth_reg_disabled_banner),
                                         color = palette.muted,
                                         fontSize = 12.sp,
                                     )
@@ -748,7 +783,7 @@ fun AuthScreen(
                                 RabbitTextField(
                                     value = state.email,
                                     onValueChange = viewModel::updateEmail,
-                                    label = "邮箱",
+                                    label = stringResource(R.string.auth_email_label),
                                     placeholder = "name@company.com",
                                     leadingIcon = { Icon(Icons.Rounded.Person, null, tint = palette.muted) },
                                     keyboardType = KeyboardType.Email,
@@ -757,16 +792,16 @@ fun AuthScreen(
                                 RabbitTextField(
                                     value = state.displayName,
                                     onValueChange = viewModel::updateDisplayName,
-                                    label = "显示名称（可选）",
-                                    placeholder = "例如 张三的手机",
+                                    label = stringResource(R.string.auth_display_name_label),
+                                    placeholder = stringResource(R.string.auth_display_name_hint),
                                     leadingIcon = { Icon(Icons.Rounded.Badge, null, tint = palette.muted) },
                                 )
                                 Spacer(modifier = Modifier.height(12.dp))
                                 RabbitTextField(
                                     value = state.password,
                                     onValueChange = viewModel::updatePassword,
-                                    label = "密码",
-                                    placeholder = "至少 8 位密码",
+                                    label = stringResource(R.string.auth_password_label),
+                                    placeholder = stringResource(R.string.auth_password_min_hint),
                                     leadingIcon = { Icon(Icons.Rounded.Key, null, tint = palette.muted) },
                                     isPassword = true,
                                 )
@@ -774,14 +809,14 @@ fun AuthScreen(
                                 RabbitTextField(
                                     value = state.registerConfirmPassword,
                                     onValueChange = viewModel::updateRegisterConfirmPassword,
-                                    label = "确认密码",
-                                    placeholder = "再次输入密码",
+                                    label = stringResource(R.string.auth_confirm_password_label),
+                                    placeholder = stringResource(R.string.auth_confirm_password_hint),
                                     leadingIcon = { Icon(Icons.Rounded.Key, null, tint = palette.muted) },
                                     isPassword = true,
                                 )
                                 Spacer(modifier = Modifier.height(24.dp))
                                 RabbitPrimaryButton(
-                                    label = if (state.busy) "正在注册…" else "注册并登录",
+                                    label = if (state.busy) stringResource(R.string.auth_registering) else stringResource(R.string.auth_register_and_login),
                                     busy = state.busy,
                                     enabled = state.allowRegistration,
                                     height = 50.dp,
@@ -797,12 +832,12 @@ fun AuthScreen(
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text(
-                                    text = if (isLogin) "还没有账号？" else "已有账号？",
+                                    text = if (isLogin) stringResource(R.string.auth_no_account_prompt) else stringResource(R.string.auth_has_account_prompt),
                                     fontSize = 13.sp,
                                     color = palette.muted,
                                 )
                                 Text(
-                                    text = if (isLogin) "立即注册" else "去登录",
+                                    text = if (isLogin) stringResource(R.string.auth_go_register) else stringResource(R.string.auth_go_login),
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     color = palette.primaryText,
@@ -820,29 +855,29 @@ fun AuthScreen(
                             RabbitTextField(
                                 value = state.currentPassword,
                                 onValueChange = viewModel::updateCurrentPassword,
-                                label = "当前密码",
-                                placeholder = "当前密码",
+                                label = stringResource(R.string.auth_current_pw_label),
+                                placeholder = stringResource(R.string.auth_current_pw_label),
                                 isPassword = true,
                             )
                             Spacer(modifier = Modifier.height(12.dp))
                             RabbitTextField(
                                 value = state.newPassword,
                                 onValueChange = viewModel::updateNewPassword,
-                                label = "新密码",
-                                placeholder = "新密码",
+                                label = stringResource(R.string.auth_new_pw_label),
+                                placeholder = stringResource(R.string.auth_new_pw_label),
                                 isPassword = true,
                             )
                             Spacer(modifier = Modifier.height(12.dp))
                             RabbitTextField(
                                 value = state.confirmPassword,
                                 onValueChange = viewModel::updateConfirmPassword,
-                                label = "确认新密码",
-                                placeholder = "再次输入新密码",
+                                label = stringResource(R.string.auth_confirm_new_pw_label),
+                                placeholder = stringResource(R.string.auth_confirm_new_pw_hint),
                                 isPassword = true,
                             )
                             Spacer(modifier = Modifier.height(18.dp))
                             RabbitPrimaryButton(
-                                label = if (state.busy) "正在保存…" else "保存新密码",
+                                label = if (state.busy) stringResource(R.string.auth_saving) else stringResource(R.string.auth_save_new_pw),
                                 busy = state.busy,
                                 onClick = { viewModel.changePassword(onAuthenticated) },
                                 modifier = Modifier.fillMaxWidth(),
@@ -859,10 +894,14 @@ fun AuthScreen(
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         val editing = state.editingServer
         val submitText = when {
-            state.busy -> if (editing != null && !viewModel.needsReprobeForEdit(editing)) "正在保存…" else "正在校验服务器…"
-            editing != null && !viewModel.needsReprobeForEdit(editing) -> "保存修改"
-            editing != null -> "重新校验并保存"
-            else -> "校验并添加"
+            state.busy -> if (editing != null && !viewModel.needsReprobeForEdit(editing)) {
+                stringResource(R.string.auth_saving)
+            } else {
+                stringResource(R.string.auth_verifying_server)
+            }
+            editing != null && !viewModel.needsReprobeForEdit(editing) -> stringResource(R.string.auth_save_changes)
+            editing != null -> stringResource(R.string.auth_reverify_and_save)
+            else -> stringResource(R.string.auth_verify_and_add)
         }
         ModalBottomSheet(
             onDismissRequest = { showServerSheet = false },
@@ -886,7 +925,7 @@ fun AuthScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            text = if (editing != null) "编辑服务器" else "添加新服务器",
+                            text = if (editing != null) stringResource(R.string.auth_edit_server) else stringResource(R.string.auth_add_new_server),
                             fontSize = 17.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = palette.text,
@@ -896,10 +935,11 @@ fun AuthScreen(
                             onClick = { showServerSheet = false },
                             modifier = Modifier.size(36.dp),
                         ) {
-                            Icon(Icons.Rounded.Close, "关闭", tint = palette.muted, modifier = Modifier.size(18.dp))
+                            Icon(Icons.Rounded.Close, stringResource(R.string.common_close), tint = palette.muted, modifier = Modifier.size(18.dp))
                         }
                     }
 
+                    val updatedToast = stringResource(R.string.auth_server_updated_toast)
                     ServerFormContent(
                         serverAddress = state.serverAddress,
                         onAddressChange = viewModel::updateServerAddress,
@@ -921,7 +961,7 @@ fun AuthScreen(
                             viewModel.submitServerForm(
                                 onMetadataSaved = {
                                     showServerSheet = false
-                                    RabbitToast.success("服务器设置已更新")
+                                    RabbitToast.success(updatedToast)
                                 },
                             )
                         },
@@ -934,11 +974,11 @@ fun AuthScreen(
 
     pendingDeleteServer?.let { srv ->
         RabbitDialog(
-            title = "移除服务器",
-            message = "确认移除服务器「${srv.displayName}」？该服务器在本机保存的登录凭证也将一并清除。",
+            title = stringResource(R.string.auth_remove_server_title),
+            message = stringResource(R.string.auth_remove_server_msg, srv.displayName),
             onDismissRequest = { pendingDeleteServer = null },
-            dismissLabel = "取消",
-            confirmLabel = "移除",
+            dismissLabel = stringResource(R.string.common_cancel),
+            confirmLabel = stringResource(R.string.common_remove),
             destructive = true,
             onConfirm = {
                 viewModel.removeSavedServer(srv)
@@ -980,16 +1020,16 @@ private fun ServerFormContent(
         RabbitTextField(
             value = serverAddress,
             onValueChange = onAddressChange,
-            label = "服务器地址",
-            placeholder = "主机名或 IP，默认端口 21118",
+            label = stringResource(R.string.address_label),
+            placeholder = stringResource(R.string.api_hint),
             leadingIcon = { Icon(Icons.Rounded.Dns, null, tint = palette.muted) },
             keyboardType = KeyboardType.Uri,
         )
         RabbitTextField(
             value = serverName,
             onValueChange = onNameChange,
-            label = "服务器名称（可选）",
-            placeholder = "例如 公司内网 / 家用电脑",
+            label = stringResource(R.string.auth_server_name_label),
+            placeholder = stringResource(R.string.auth_server_name_hint),
             leadingIcon = { Icon(Icons.AutoMirrored.Rounded.Label, null, tint = palette.muted) },
         )
 
@@ -1002,7 +1042,7 @@ private fun ServerFormContent(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = "高级设置（端口与 CA 指纹）",
+                text = stringResource(R.string.auth_advanced_settings),
                 fontSize = 13.sp,
                 color = palette.muted,
                 modifier = Modifier.weight(1f),
@@ -1023,7 +1063,7 @@ private fun ServerFormContent(
                 RabbitTextField(
                     value = apiPort,
                     onValueChange = onApiPortChange,
-                    label = "API 端口",
+                    label = stringResource(R.string.auth_api_port_label),
                     placeholder = ServerConfigModel.DEFAULT_API_PORT.toString(),
                     keyboardType = KeyboardType.Number,
                     modifier = Modifier.weight(1f),
@@ -1031,7 +1071,7 @@ private fun ServerFormContent(
                 RabbitTextField(
                     value = signalPort,
                     onValueChange = onSignalPortChange,
-                    label = "信令端口",
+                    label = stringResource(R.string.auth_signal_port_label),
                     placeholder = ServerConfigModel.DEFAULT_SIGNAL_PORT.toString(),
                     keyboardType = KeyboardType.Number,
                     modifier = Modifier.weight(1f),
@@ -1039,7 +1079,7 @@ private fun ServerFormContent(
                 RabbitTextField(
                     value = relayPort,
                     onValueChange = onRelayPortChange,
-                    label = "中继端口",
+                    label = stringResource(R.string.auth_relay_port_label),
                     placeholder = ServerConfigModel.DEFAULT_RELAY_PORT.toString(),
                     keyboardType = KeyboardType.Number,
                     modifier = Modifier.weight(1f),
@@ -1048,8 +1088,8 @@ private fun ServerFormContent(
             RabbitTextField(
                 value = caPin,
                 onValueChange = onCaPinChange,
-                label = "手动指定 CA 指纹（可选）",
-                placeholder = "64 位 SHA-256 指纹",
+                label = stringResource(R.string.auth_manual_pin_label),
+                placeholder = stringResource(R.string.pin_hint),
                 leadingIcon = { Icon(Icons.Rounded.Key, null, tint = palette.muted) },
                 singleLine = false,
             )

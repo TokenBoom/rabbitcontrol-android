@@ -49,11 +49,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.rabbitcontrol.android.R
+import io.rabbitcontrol.android.core.i18n.NativeErrorLocalizer
 import io.rabbitcontrol.android.core.session.SessionStatus
 import io.rabbitcontrol.android.ui.components.RabbitCard
 import io.rabbitcontrol.android.ui.components.RabbitDialog
@@ -68,9 +71,9 @@ import io.rabbitcontrol.android.ui.theme.RabbitRadius
 import io.rabbitcontrol.android.ui.theme.RabbitSpacing
 import org.koin.androidx.compose.koinViewModel
 
-private enum class FileTransferTab(val label: String) {
-    Remote("远端文件"),
-    Queue("传输队列"),
+private enum class FileTransferTab(@androidx.annotation.StringRes val labelRes: Int) {
+    Remote(R.string.ft_tab_remote),
+    Queue(R.string.ft_tab_queue),
 }
 
 @Composable
@@ -101,14 +104,12 @@ fun FileTransferScreen(
     }
 
     LaunchedEffect(notice) {
-        val msg = notice
-        if (!msg.isNullOrBlank()) {
+        val current = notice
+        if (current != null && current.message.isNotBlank()) {
             when {
-                msg.contains("失败") || msg.contains("错误") || msg.contains("异常") || msg.contains("无法") ->
-                    RabbitToast.error(msg)
-                msg.contains("已") || msg.contains("成功") || msg.contains("完成") ->
-                    RabbitToast.success(msg)
-                else -> RabbitToast.info(msg)
+                current.isError -> RabbitToast.error(current.message)
+                current.isSuccess -> RabbitToast.success(current.message)
+                else -> RabbitToast.info(current.message)
             }
             viewModel.clearNotice()
         }
@@ -129,7 +130,7 @@ fun FileTransferScreen(
                         hoveredElevation = RabbitElevation.Floating,
                     ),
                 ) {
-                    Icon(Icons.Rounded.UploadFile, "上传文件")
+                    Icon(Icons.Rounded.UploadFile, stringResource(R.string.ft_cd_upload))
                 }
             }
         },
@@ -140,34 +141,39 @@ fun FileTransferScreen(
                 .padding(padding),
         ) {
             RabbitTopBar(
-                title = "文件传输",
+                title = stringResource(R.string.ft_title),
                 subtitle = deviceName,
                 onBack = onBack,
                 actions = {
                     if (selectedTab == FileTransferTab.Remote) {
                         IconButton(onClick = { showMkdirDialog = true }, modifier = Modifier.size(44.dp)) {
-                            Icon(Icons.Rounded.CreateNewFolder, "新建文件夹", tint = palette.text)
+                            Icon(Icons.Rounded.CreateNewFolder, stringResource(R.string.ft_cd_mkdir), tint = palette.text)
                         }
                         IconButton(
                             onClick = { viewModel.listRemoteDir(currentPath.ifBlank { null }) },
                             modifier = Modifier.size(44.dp),
                         ) {
-                            Icon(Icons.Rounded.Refresh, "刷新", tint = palette.text)
+                            Icon(Icons.Rounded.Refresh, stringResource(R.string.common_refresh), tint = palette.text)
                         }
                     } else {
                         IconButton(onClick = viewModel::clearFinished, modifier = Modifier.size(44.dp)) {
-                            Icon(Icons.Rounded.DeleteSweep, "清除已完成", tint = palette.text)
+                            Icon(Icons.Rounded.DeleteSweep, stringResource(R.string.ft_cd_clear_done), tint = palette.text)
                         }
                     }
                 },
             )
 
             Box(modifier = Modifier.padding(horizontal = RabbitSpacing.Lg, vertical = RabbitSpacing.Xs)) {
+                val remoteTabLabel = stringResource(R.string.ft_tab_remote)
+                val queueTabLabel = stringResource(R.string.ft_tab_queue)
                 RabbitSegmentedControl(
                     options = FileTransferTab.entries,
                     selected = selectedTab,
                     labelProvider = {
-                        if (it == FileTransferTab.Queue) "${it.label} (${transfers.size})" else it.label
+                        when (it) {
+                            FileTransferTab.Remote -> remoteTabLabel
+                            FileTransferTab.Queue -> "$queueTabLabel (${transfers.size})"
+                        }
                     },
                     onSelect = { selectedTab = it },
                 )
@@ -189,7 +195,7 @@ fun FileTransferScreen(
                 }
                 is SessionStatus.Error -> {
                     Text(
-                        text = "会话异常: ${st.message}",
+                        text = stringResource(R.string.ft_session_error, NativeErrorLocalizer.localize(st.message)),
                         fontSize = 12.sp,
                         color = palette.danger,
                         modifier = Modifier
@@ -202,7 +208,7 @@ fun FileTransferScreen(
                 }
                 is SessionStatus.Ended -> {
                     Text(
-                        text = "会话已断开: ${st.reason}",
+                        text = stringResource(R.string.ft_session_disconnected, NativeErrorLocalizer.localize(st.reason)),
                         fontSize = 12.sp,
                         color = palette.danger,
                         modifier = Modifier
@@ -232,7 +238,7 @@ fun FileTransferScreen(
                     Icon(Icons.AutoMirrored.Rounded.DriveFileMove, null, tint = palette.primaryText, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = currentPath.ifBlank { "加载远端主目录…" },
+                        text = currentPath.ifBlank { stringResource(R.string.ft_loading_home) },
                         fontSize = 13.sp,
                         color = palette.text,
                         maxLines = 1,
@@ -240,7 +246,7 @@ fun FileTransferScreen(
                         modifier = Modifier.weight(1f),
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("上一级", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = palette.primaryText)
+                    Text(stringResource(R.string.ft_up_dir), fontSize = 12.sp, fontWeight = FontWeight.Medium, color = palette.primaryText)
                 }
                 if (loading) {
                     LinearProgressIndicator(
@@ -263,8 +269,8 @@ fun FileTransferScreen(
                         item {
                             RabbitEmptyState(
                                 icon = Icons.Rounded.Folder,
-                                title = "当前目录为空",
-                                description = "点击右下角上传按钮将手机文件发送到此目录。",
+                                title = stringResource(R.string.ft_empty_dir_title),
+                                description = stringResource(R.string.ft_empty_dir_desc),
                             )
                         }
                     }
@@ -307,7 +313,7 @@ fun FileTransferScreen(
                                     }
                                 }
                                 if (!entry.isDir) {
-                                    Icon(Icons.Rounded.Download, "下载", tint = palette.primaryText, modifier = Modifier.size(20.dp))
+                                    Icon(Icons.Rounded.Download, stringResource(R.string.ft_cd_download), tint = palette.primaryText, modifier = Modifier.size(20.dp))
                                 }
                             }
                         }
@@ -323,8 +329,8 @@ fun FileTransferScreen(
                         item {
                             RabbitEmptyState(
                                 icon = Icons.Rounded.UploadFile,
-                                title = "暂无传输任务",
-                                description = "上传或下载文件时，实时进度会显示在这里。",
+                                title = stringResource(R.string.ft_empty_queue_title),
+                                description = stringResource(R.string.ft_empty_queue_desc),
                             )
                         }
                     }
@@ -334,8 +340,13 @@ fun FileTransferScreen(
                             modifier = Modifier.fillMaxWidth(),
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
+                                val dirLabel = if (item.direction == "upload") {
+                                    stringResource(R.string.ft_dir_upload)
+                                } else {
+                                    stringResource(R.string.ft_dir_download)
+                                }
                                 Text(
-                                    "${if (item.direction == "upload") "上传" else "下载"} · ${item.fileName}",
+                                    "$dirLabel · ${item.fileName}",
                                     fontSize = 14.sp,
                                     fontWeight = FontWeight.Medium,
                                     color = palette.text,
@@ -348,7 +359,7 @@ fun FileTransferScreen(
                                         onClick = { viewModel.cancelTransfer(item.id) },
                                         modifier = Modifier.size(36.dp),
                                     ) {
-                                        Icon(Icons.Rounded.Cancel, "取消", tint = palette.danger, modifier = Modifier.size(18.dp))
+                                        Icon(Icons.Rounded.Cancel, stringResource(R.string.common_cancel), tint = palette.danger, modifier = Modifier.size(18.dp))
                                     }
                                 }
                             }
@@ -361,10 +372,17 @@ fun FileTransferScreen(
                             )
                             Spacer(modifier = Modifier.height(6.dp))
                             val statusStr = when (item.status) {
-                                "done", "completed" -> "已完成"
-                                "failed" -> "失败: ${item.error ?: ""}"
-                                "cancelled" -> "已取消"
-                                else -> "进行中 · ${formatBytes(item.transferredBytes)} / ${formatBytes(item.totalBytes)}"
+                                "done", "completed" -> stringResource(R.string.ft_status_done)
+                                "failed" -> stringResource(
+                                    R.string.ft_status_failed,
+                                    item.error?.let(NativeErrorLocalizer::localize).orEmpty(),
+                                )
+                                "cancelled" -> stringResource(R.string.ft_status_cancelled)
+                                else -> stringResource(
+                                    R.string.ft_status_running,
+                                    formatBytes(item.transferredBytes),
+                                    formatBytes(item.totalBytes),
+                                )
                             }
                             Text(
                                 statusStr,
@@ -380,10 +398,10 @@ fun FileTransferScreen(
 
     if (showMkdirDialog) {
         RabbitDialog(
-            title = "新建远端文件夹",
+            title = stringResource(R.string.ft_mkdir_title),
             onDismissRequest = { showMkdirDialog = false },
-            dismissLabel = "取消",
-            confirmLabel = "创建",
+            dismissLabel = stringResource(R.string.common_cancel),
+            confirmLabel = stringResource(R.string.ft_mkdir_create),
             confirmEnabled = newDirName.isNotBlank(),
             onConfirm = {
                 viewModel.createRemoteDir(newDirName)
@@ -394,7 +412,7 @@ fun FileTransferScreen(
             RabbitTextField(
                 value = newDirName,
                 onValueChange = { newDirName = it },
-                placeholder = "输入文件夹名称",
+                placeholder = stringResource(R.string.ft_mkdir_hint),
             )
         }
     }

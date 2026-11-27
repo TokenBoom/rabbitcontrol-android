@@ -3,7 +3,9 @@ package io.rabbitcontrol.android
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ObjectAnimator
+import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.Color as AndroidColor
 import android.os.Bundle
 import android.view.View
@@ -12,6 +14,12 @@ import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
@@ -25,6 +33,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
@@ -37,6 +46,7 @@ import io.rabbitcontrol.android.core.data.AccountRepository
 import io.rabbitcontrol.android.core.data.AppThemeMode
 import io.rabbitcontrol.android.core.data.DeviceToolKind
 import io.rabbitcontrol.android.core.data.InteractionPrefsStore
+import io.rabbitcontrol.android.core.i18n.AppLocaleManager
 import io.rabbitcontrol.android.core.nativebridge.RemoteDevice
 import io.rabbitcontrol.android.core.session.SessionManager
 import io.rabbitcontrol.android.ui.components.RabbitToastHost
@@ -55,6 +65,9 @@ import io.rabbitcontrol.android.ui.theme.LocalRabbitPalette
 import io.rabbitcontrol.android.ui.theme.RabbitTheme
 import kotlinx.coroutines.launch
 import org.koin.android.ext.android.inject
+import kotlin.math.roundToInt
+
+private val NavSlideEasing = CubicBezierEasing(0.22f, 1f, 0.36f, 1f)
 
 class MainActivity : ComponentActivity() {
     private val accountRepo: AccountRepository by inject()
@@ -62,7 +75,12 @@ class MainActivity : ComponentActivity() {
     private val prefsStore: InteractionPrefsStore by inject()
     private var pendingToolRoute by mutableStateOf<String?>(null)
 
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(AppLocaleManager.wrapContext(newBase))
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
+        AppLocaleManager.refreshLocalizedContext(this)
         val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -139,6 +157,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        AppLocaleManager.refreshLocalizedContext(this, newConfig)
+        super.onConfigurationChanged(newConfig)
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
@@ -196,11 +219,12 @@ private fun RabbitControlNavRoot(
     }
 
     val navController = rememberNavController()
+    val defaultDeviceName = stringResource(R.string.home_device_default_name)
     var selectedDevice by remember {
         mutableStateOf(
             RemoteDevice(
                 id = "",
-                name = "远程设备",
+                name = defaultDeviceName,
                 os = "",
                 online = false,
                 busy = false,
@@ -230,7 +254,43 @@ private fun RabbitControlNavRoot(
         onConsumePendingTool()
     }
 
-    NavHost(navController = navController, startDestination = "home") {
+    NavHost(
+        navController = navController,
+        startDestination = "home",
+        modifier = Modifier
+            .fillMaxSize()
+            .background(palette.canvas),
+        enterTransition = {
+            slideInHorizontally(
+                animationSpec = tween(300, easing = NavSlideEasing),
+                initialOffsetX = { it },
+            )
+        },
+        exitTransition = {
+            slideOutHorizontally(
+                animationSpec = tween(300, easing = NavSlideEasing),
+                targetOffsetX = { -(it * 0.25f).roundToInt() },
+            ) + fadeOut(
+                animationSpec = tween(300, easing = NavSlideEasing),
+                targetAlpha = 0.86f,
+            )
+        },
+        popEnterTransition = {
+            slideInHorizontally(
+                animationSpec = tween(280, easing = NavSlideEasing),
+                initialOffsetX = { -(it * 0.25f).roundToInt() },
+            ) + fadeIn(
+                animationSpec = tween(280, easing = NavSlideEasing),
+                initialAlpha = 0.86f,
+            )
+        },
+        popExitTransition = {
+            slideOutHorizontally(
+                animationSpec = tween(280, easing = NavSlideEasing),
+                targetOffsetX = { it },
+            )
+        },
+    ) {
         composable("home") {
             HomeScreen(
                 onOpenAuth = { step, onlyServer ->

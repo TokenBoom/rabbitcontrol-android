@@ -1,5 +1,8 @@
 package io.rabbitcontrol.android.video
 
+import io.rabbitcontrol.android.R
+import io.rabbitcontrol.android.core.i18n.AppStrings
+
 /** The bundled Annex-B clip has one access unit delimiter per encoded frame.
  * Live sessions receive complete access units from core and need no AUD. */
 internal class MotionClip(bytes: ByteArray) {
@@ -29,7 +32,7 @@ internal class MotionClip(bytes: ByteArray) {
         require(frames.isNotEmpty())
         fun config(type: Int): ByteArray {
             val i = nals.indexOfFirst { it.second == type }
-            require(i >= 0) { "样片缺少 H.264 参数集" }
+            require(i >= 0) { AppStrings.get(R.string.preview_err_missing_sps, "样片缺少 H.264 参数集") }
             return bytes.copyOfRange(nals[i].first, nals.getOrNull(i + 1)?.first ?: bytes.size)
         }
         sps = config(7)
