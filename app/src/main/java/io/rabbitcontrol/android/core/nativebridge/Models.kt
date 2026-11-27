@@ -63,6 +63,7 @@ data class RemoteDevice(
     val busy: Boolean,
     val disabled: Boolean,
     val allowRemoteAssist: Boolean = false,
+    val allowRemoteControl: Boolean = true,
     val wolCapable: Boolean = false,
 )
 
@@ -105,6 +106,7 @@ data class HudSnapshotModel(
 
 @Immutable
 data class MediaDiagnosticsModel(
+    val streamCodec: String = "",
     val codecName: String = "",
     val hardware: Boolean = false,
     val lowLatency: Boolean = false,
@@ -113,6 +115,27 @@ data class MediaDiagnosticsModel(
     val droppedFrames: Long = 0L,
     val surfaceAttached: Boolean = false,
 )
+
+fun normalizeVideoCodecId(raw: String?): String? {
+    val norm = raw?.trim()?.lowercase().orEmpty()
+    if (norm.isEmpty()) return null
+    return when {
+        norm == "h264" || norm == "avc" || norm == "h.264" || norm.contains(".avc.") || norm.contains(".h264.") -> "h264"
+        norm == "hevc" || norm == "h265" || norm == "h.265" || norm.contains("hevc") || norm.contains("h265") -> "hevc"
+        norm == "av1" || norm == "av01" || norm.contains("av1") || norm.contains("av01") -> "av1"
+        else -> null
+    }
+}
+
+fun formatVideoCodecLabel(raw: String?, fallbackCodecName: String? = null): String? {
+    val id = normalizeVideoCodecId(raw) ?: normalizeVideoCodecId(fallbackCodecName) ?: return null
+    return when (id) {
+        "h264" -> "H.264"
+        "hevc" -> "HEVC"
+        "av1" -> "AV1"
+        else -> null
+    }
+}
 
 @Immutable
 data class NegotiatedStreamInfo(
@@ -128,6 +151,62 @@ data class NegotiatedStreamInfo(
 )
 
 @Immutable
+data class HighRefreshAdvisoryModel(
+    val level: String = "optimal",
+    val reason: String = "optimal",
+    val canEnableHevc: Boolean = false,
+    val recommendedWidth: Int? = null,
+    val recommendedHeight: Int? = null,
+)
+
+fun parseHighRefreshAdvisory(obj: JSONObject?): HighRefreshAdvisoryModel? {
+    if (obj == null) return null
+    val level = obj.optString("level").trim().lowercase().ifBlank { "optimal" }
+    val reason = obj.optString("reason").trim().lowercase().ifBlank { "optimal" }
+    val canEnableHevc = obj.optBoolean("can_enable_hevc", obj.optBoolean("canEnableHevc", false))
+    val recWidth = when {
+        obj.has("recommended_width") && !obj.isNull("recommended_width") -> obj.optInt("recommended_width").takeIf { it > 0 }
+        obj.has("recommendedWidth") && !obj.isNull("recommendedWidth") -> obj.optInt("recommendedWidth").takeIf { it > 0 }
+        else -> null
+    }
+    val recHeight = when {
+        obj.has("recommended_height") && !obj.isNull("recommended_height") -> obj.optInt("recommended_height").takeIf { it > 0 }
+        obj.has("recommendedHeight") && !obj.isNull("recommendedHeight") -> obj.optInt("recommendedHeight").takeIf { it > 0 }
+        else -> null
+    }
+    return HighRefreshAdvisoryModel(
+        level = level,
+        reason = reason,
+        canEnableHevc = canEnableHevc,
+        recommendedWidth = recWidth,
+        recommendedHeight = recHeight,
+    )
+}
+
+@Immutable
+data class RemoteDisplayModel(
+    val id: Int,
+    val name: String,
+    val width: Int,
+    val height: Int,
+    val isMain: Boolean = false,
+    val isVirtual: Boolean = false,
+)
+
+@Immutable
+data class PrivacyStateModel(
+    val mode: String = "off",
+    val preset: String = "",
+    val supported: Boolean = true,
+)
+
+@Immutable
+data class HostMuteStateModel(
+    val muted: Boolean = false,
+    val supported: Boolean = true,
+)
+
+@Immutable
 data class DisplayConfigModel(
     val width: Int,
     val height: Int,
@@ -136,6 +215,10 @@ data class DisplayConfigModel(
     val nativeHeight: Int,
     val maxFps: Int,
     val presets: List<DisplayPresetModel>,
+    val codec: String? = null,
+    val supportedCodecs: List<String> = emptyList(),
+    val clientSupportsHevc: Boolean = false,
+    val advisory: HighRefreshAdvisoryModel? = null,
 )
 
 @Immutable
@@ -256,4 +339,62 @@ internal fun JSONArray.toFileEntries(): List<RemoteFileEntry> = List(length()) {
             else -> obj.optLong("modified_unix_sec")
         },
     )
+}
+
+enum class UpnpState {
+    Disabled,
+    Discovering,
+    Mapped,
+    Unavailable;
+
+    companion object {
+        fun fromWire(raw: String?): UpnpState = when (raw?.trim()?.lowercase()) {
+            "discovering" -> Discovering
+            "mapped" -> Mapped
+            "unavailable" -> Unavailable
+            else -> Disabled
+        }
+    }
+}
+
+@Immutable
+data class UpnpStatusModel(
+    val enabled: Boolean = false,
+    val state: UpnpState = UpnpState.Disabled,
+    val externalAddr: String = "",
+    val protocol: String = "",
+    val reason: String = "",
+)
+
+fun formatUpnpProtocol(raw: String?): String {
+    val norm = raw?.trim()?.lowercase().orEmpty()
+    return when (norm) {
+        "upnp_igd_v2" -> "UPnP IGD v2"
+        "upnp_igd_v1", "upnp_igd" -> "UPnP IGD"
+        "nat_pmp", "nat-pmp" -> "NAT-PMP"
+        "" -> "UPnP IGD"
+        else -> raw?.trim().orEmpty()
+    }
+}
+
+fun parseUpnpStatusPayload(rawJson: String?): UpnpStatusModel {
+    val trimmed = rawJson?.trim().orEmpty()
+    if (!trimmed.startsWith("{")) return UpnpStatusModel()
+    return runCatching {
+        val obj = JSONObject(trimmed)
+        val enabled = obj.optBoolean("enabled", false)
+        val stObj = obj.optJSONObject("status")
+        val stateStr = stObj?.optString("state", "disabled")
+        val parsedState = if (!enabled) UpnpState.Disabled else UpnpState.fromWire(stateStr)
+        UpnpStatusModel(
+            enabled = enabled,
+            state = parsedState,
+            externalAddr = stObj?.optString("external_addr")
+                ?.ifBlank { stObj.optString("externalAddr") }
+                ?.takeIf { it != "null" }
+                .orEmpty(),
+            protocol = stObj?.optString("protocol")?.takeIf { it != "null" }.orEmpty(),
+            reason = stObj?.optString("reason")?.takeIf { it != "null" }.orEmpty(),
+        )
+    }.getOrDefault(UpnpStatusModel())
 }

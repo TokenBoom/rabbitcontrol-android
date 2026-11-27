@@ -11,7 +11,7 @@ use rc_client_core::platform::{
 };
 use rc_decode::Decoder;
 use rc_encode::Encoder;
-use rc_pipeline::{CodecCapability, PipelineConfig, PlatformMediaProvider};
+use rc_pipeline::{ChromaSubsampling, CodecCapability, LatencyTier, PipelineConfig, PlatformMediaProvider};
 use rc_render::Renderer;
 use rc_session::ClipboardBackend;
 use rc_types::{Resolution, Result};
@@ -20,9 +20,7 @@ use crate::host_android::{
     self, AndroidCaptureBackend, AndroidInputInjector, AndroidPassthroughEncoder,
 };
 use crate::ndk_audio::AAudioPlayer;
-use crate::ndk_media::{
-    probed_decode_capabilities, supports_hardware_hevc, AndroidSurfaceDecoder, AndroidSurfaceRenderer,
-};
+use crate::ndk_media::{probed_decode_capabilities, AndroidSurfaceDecoder, AndroidSurfaceRenderer};
 
 #[derive(Default)]
 struct ClipboardState {
@@ -94,8 +92,24 @@ impl PlatformMediaProvider for AndroidMediaProvider {
         Some(host_android::host_clock_us())
     }
 
+    // `supports_hevc()` gates host-side HEVC encoding in `host_bridge.rs`. Android's
+    // `HostScreenEncoder` currently emits H.264 Annex-B only, whereas client-side HEVC/AV1
+    // hardware decoding is advertised independently through `decode_capabilities()`.
     fn supports_hevc(&self) -> bool {
-        supports_hardware_hevc()
+        false
+    }
+
+    fn encode_capabilities(&self) -> Vec<CodecCapability> {
+        vec![CodecCapability {
+            codec: rc_encode::Codec::H264,
+            hardware: true,
+            max_width: 3840,
+            max_height: 2160,
+            max_pixel_rate: 280_000_000,
+            screen_content_tools: false,
+            chroma: ChromaSubsampling::Yuv420,
+            latency_tier: LatencyTier::UltraLow,
+        }]
     }
 
     fn decode_capabilities(&self) -> Vec<CodecCapability> {
@@ -107,7 +121,13 @@ impl PlatformMediaProvider for AndroidMediaProvider {
         Ok((Box::new(cap), "mediaprojection"))
     }
 
-    fn create_encoder(&self, _cfg: &PipelineConfig) -> Result<(Box<dyn Encoder>, &'static str)> {
+    fn create_encoder(&self, cfg: &PipelineConfig) -> Result<(Box<dyn Encoder>, &'static str)> {
+        if cfg.codec != rc_encode::Codec::H264 {
+            return Err(rc_types::Error::InvalidConfig(format!(
+                "Android HostScreenEncoder only supports H.264, requested {}",
+                cfg.codec.as_str()
+            )));
+        }
         Ok((Box::new(AndroidPassthroughEncoder), "mediacodec-enc"))
     }
 
@@ -205,4 +225,66 @@ pub fn register_android_hooks() {
             Ok(Box::new(AndroidClipboardBackend))
         }));
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ndk_media::{set_codec_candidates, CodecCandidate};
+    use rc_encode::Codec;
+
+    #[test]
+    fn host_encode_is_h264_only_while_client_decode_advertises_hevc_and_av1() {
+        set_codec_candidates(vec![
+            CodecCandidate {
+                codec: "av1".to_string(),
+                name: "c2.qti.av1.decoder.low_latency".to_string(),
+                hardware: true,
+                low_latency: true,
+                max_width: 4096,
+                max_height: 2176,
+            },
+            CodecCandidate {
+                codec: "hevc".to_string(),
+                name: "c2.qti.hevc.decoder.low_latency".to_string(),
+                hardware: true,
+                low_latency: true,
+                max_width: 4096,
+                max_height: 2176,
+            },
+            CodecCandidate {
+                codec: "h264".to_string(),
+                name: "c2.qti.avc.decoder.low_latency".to_string(),
+                hardware: true,
+                low_latency: true,
+                max_width: 4096,
+                max_height: 2176,
+            },
+        ]);
+
+        let provider = AndroidMediaProvider;
+        assert!(!provider.supports_hevc());
+        let enc_caps = provider.encode_capabilities();
+        assert_eq!(enc_caps.len(), 1);
+        assert_eq!(enc_caps[0].codec, Codec::H264);
+
+        let mut cfg = PipelineConfig::default();
+        cfg.codec = Codec::H264;
+        assert!(provider.create_encoder(&cfg).is_ok());
+
+        cfg.codec = Codec::Hevc;
+        assert!(provider.create_encoder(&cfg).is_err());
+
+        cfg.codec = Codec::Av1;
+        assert!(provider.create_encoder(&cfg).is_err());
+
+        let dec_codecs: Vec<Codec> = provider
+            .decode_capabilities()
+            .into_iter()
+            .map(|c| c.codec)
+            .collect();
+        assert!(dec_codecs.contains(&Codec::Av1));
+        assert!(dec_codecs.contains(&Codec::Hevc));
+        assert!(dec_codecs.contains(&Codec::H264));
+    }
 }

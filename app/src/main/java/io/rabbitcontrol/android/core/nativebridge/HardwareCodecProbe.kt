@@ -7,6 +7,11 @@ import android.os.Build
 import org.json.JSONArray
 import org.json.JSONObject
 
+data class LocalCodecSupport(
+    val hasHardware: Boolean = false,
+    val hasSoftware: Boolean = false,
+)
+
 internal object HardwareCodecProbe {
     private data class CodecTarget(
         val id: String,
@@ -21,6 +26,34 @@ internal object HardwareCodecProbe {
                 add(CodecTarget("av1", MediaFormat.MIMETYPE_VIDEO_AV1))
             }
         }
+
+    @Volatile
+    private var cachedSupport: Map<String, LocalCodecSupport>? = null
+
+    fun supportedCodecCapabilities(): Map<String, LocalCodecSupport> {
+        cachedSupport?.let { return it }
+        val codecs = runCatching {
+            MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.toList()
+        }.getOrDefault(emptyList())
+        val map = LinkedHashMap<String, LocalCodecSupport>()
+        for (target in targets) {
+            val base1080 = MediaFormat.createVideoFormat(target.mime, 1920, 1080)
+            val matched = codecs
+                .filter { !it.isEncoder && !it.isAlias && target.mime in it.supportedTypes }
+                .filter {
+                    runCatching {
+                        it.getCapabilitiesForType(target.mime).isFormatSupported(base1080)
+                    }.getOrDefault(false)
+                }
+            map[target.id] = LocalCodecSupport(
+                hasHardware = matched.any { it.isHardwareAccelerated },
+                hasSoftware = matched.any { !it.isHardwareAccelerated },
+            )
+        }
+        val result = map.toMap()
+        cachedSupport = result
+        return result
+    }
 
     fun probeAvcDecodersJson(): String = probeDecodersJson()
 

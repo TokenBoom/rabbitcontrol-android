@@ -8,6 +8,7 @@ import androidx.compose.runtime.Immutable
 import com.rabbitcontrol.android.error.RcErrorCodes
 import com.rabbitcontrol.android.error.RcUiError
 import io.rabbitcontrol.android.R
+import io.rabbitcontrol.android.core.data.ConnectionModePref
 import io.rabbitcontrol.android.core.data.InteractionPrefsStore
 import io.rabbitcontrol.android.core.data.TargetHistoryStore
 import io.rabbitcontrol.android.core.data.WallpaperCache
@@ -18,18 +19,23 @@ import io.rabbitcontrol.android.core.i18n.NativeErrorLocalizer
 import io.rabbitcontrol.android.core.nativebridge.DisplayConfigModel
 import io.rabbitcontrol.android.core.nativebridge.DisplayPresetModel
 import io.rabbitcontrol.android.core.nativebridge.FileTransferItem
+import io.rabbitcontrol.android.core.nativebridge.HostMuteStateModel
 import io.rabbitcontrol.android.core.nativebridge.HudSnapshotModel
 import io.rabbitcontrol.android.core.nativebridge.MediaDiagnosticsModel
 import io.rabbitcontrol.android.core.nativebridge.NativeRuntimeBootstrap
 import io.rabbitcontrol.android.core.nativebridge.NegotiatedStreamInfo
 import io.rabbitcontrol.android.core.nativebridge.PortMapRule
+import io.rabbitcontrol.android.core.nativebridge.PrivacyStateModel
+import io.rabbitcontrol.android.core.nativebridge.RemoteDisplayModel
 import io.rabbitcontrol.android.core.nativebridge.RemoteFileEntry
 import io.rabbitcontrol.android.core.nativebridge.TerminalSessionSummary
 import io.rabbitcontrol.android.core.nativebridge.ToolPermissionsModel
+import io.rabbitcontrol.android.core.nativebridge.parseHighRefreshAdvisory
 import io.rabbitcontrol.android.core.nativebridge.toFileEntries
 import io.rabbitcontrol.android.core.nativebridge.toFileTransferItem
 import io.rabbitcontrol.android.core.nativebridge.toPortMapRule
 import io.rabbitcontrol.android.session.Core
+import io.rabbitcontrol.android.ui.components.RabbitToast
 import io.rabbitcontrol.android.ui.components.RcErrorHub
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -76,11 +82,17 @@ data class ActiveSessionState(
     val firstFrameSeen: Boolean = false,
     val toolPermissions: ToolPermissionsModel = ToolPermissionsModel(),
     val mediaPaused: Boolean = false,
+    val displays: List<RemoteDisplayModel> = emptyList(),
+    val activeDisplayId: Int = 0,
+    val privacy: PrivacyStateModel = PrivacyStateModel(),
+    val hostMute: HostMuteStateModel = HostMuteStateModel(),
 )
 
 sealed interface FileToolEvent {
     data class RemoteDir(val path: String, val entries: List<RemoteFileEntry>, val error: String?) : FileToolEvent
     data class MkdirResult(val path: String, val ok: Boolean, val error: String?) : FileToolEvent
+    data class DeleteResult(val path: String, val ok: Boolean, val error: String?) : FileToolEvent
+    data class RenameResult(val path: String, val newPath: String?, val ok: Boolean, val error: String?) : FileToolEvent
     data class TransferUpdated(val item: FileTransferItem) : FileToolEvent
 }
 
@@ -169,16 +181,20 @@ class SessionManager(
         forceRelay: Boolean = false,
     ): Result<Unit> = withContext(Dispatchers.IO) {
         val prefs = prefsStore.state.value
+        val effectiveMode = if (forceRelay) ConnectionModePref.TcpRelay else prefs.connectionMode
+        val effectiveForceRelay = forceRelay || effectiveMode == ConnectionModePref.TcpRelay
         lastRequestTarget = targetId
         lastRequestName = deviceName
         lastRequestOs = deviceOs
         lastPassword = password
-        lastForceRelay = forceRelay
+        lastForceRelay = effectiveForceRelay
 
         NativeRuntimeBootstrap.ensureReady(context)
+        Core.setPreferHardwareDecode(prefs.preferHardwareDecode)
         acquireMulticastLock()
         _hud.value = HudSnapshotModel()
         _media.value = MediaDiagnosticsModel()
+        val isDesktopHost = !deviceOs.equals("android", ignoreCase = true)
         _state.value = ActiveSessionState(
             targetId = targetId,
             deviceName = deviceName,
@@ -190,12 +206,15 @@ class SessionManager(
             watchOnly = watchOnly,
             audioMuted = !prefs.audioEnabledDefault,
             clipboardEnabled = prefs.clipboardEnabledDefault,
+            privacy = PrivacyStateModel(supported = isDesktopHost),
+            hostMute = HostMuteStateModel(supported = isDesktopHost),
         )
 
         val req = JSONObject()
             .put("target", targetId)
             .put("watchOnly", watchOnly)
-            .put("forceRelay", forceRelay)
+            .put("forceRelay", effectiveForceRelay)
+            .put("connectionMode", effectiveMode.wireValue)
             .put("encryptConnection", true)
             .put("audioEnabled", prefs.audioEnabledDefault)
             .put("clipboardEnabled", prefs.clipboardEnabledDefault)
@@ -333,6 +352,116 @@ class SessionManager(
         Core.sendSessionCommand(JSONObject().put("type", "request_idr").toString())
     }
 
+    fun setCodec(codec: String) {
+        val normalized = codec.trim().lowercase()
+        if (normalized.isEmpty()) return
+        Log.i("RC_DIAG", "setCodec codec=$normalized")
+        Core.sendSessionCommand(
+            JSONObject().put("type", "set_codec").put("codec", normalized).toString(),
+        )
+    }
+
+    fun setPreferHardwareDecode(preferHardware: Boolean) {
+        prefsStore.update { it.copy(preferHardwareDecode = preferHardware) }
+        Core.setPreferHardwareDecode(preferHardware)
+        val status = _state.value.status
+        if (status is SessionStatus.Streaming || status is SessionStatus.Connecting) {
+            Log.i("RC_DIAG", "setDecodeMode preferHardware=$preferHardware")
+            Core.sendSessionCommand(
+                JSONObject()
+                    .put("type", "set_decode_mode")
+                    .put("preferHardware", preferHardware)
+                    .toString(),
+            )
+        }
+    }
+
+    fun setConnectionMode(mode: ConnectionModePref) {
+        prefsStore.update { it.copy(connectionMode = mode) }
+        val cur = _state.value
+        val active = cur.status is SessionStatus.Streaming ||
+            cur.status is SessionStatus.Connecting ||
+            cur.status is SessionStatus.Reconnecting ||
+            cur.status is SessionStatus.Switching
+        if (active && lastRequestTarget.isNotBlank()) {
+            Log.i("RC_DIAG", "setConnectionMode=${mode.wireValue}; reconnecting immediately")
+            scope.launch {
+                connect(
+                    targetId = lastRequestTarget,
+                    deviceName = lastRequestName,
+                    deviceOs = lastRequestOs,
+                    watchOnly = cur.watchOnly,
+                    password = lastPassword,
+                    forceRelay = mode == ConnectionModePref.TcpRelay,
+                )
+            }
+        }
+    }
+
+    fun setPrivacyMode(
+        mode: String,
+        preset: String = if (mode == "privacy") "preset-1" else "",
+    ) {
+        Core.sendSessionCommand(
+            JSONObject()
+                .put("type", "set_privacy_mode")
+                .put("mode", mode)
+                .put("preset", preset)
+                .toString(),
+        )
+        val cur = _state.value
+        if (cur.privacy.supported) {
+            _state.value = cur.copy(privacy = cur.privacy.copy(mode = mode, preset = preset))
+        }
+    }
+
+    fun setHostMute(muted: Boolean, restoreOnExit: Boolean = true) {
+        Core.sendSessionCommand(
+            JSONObject()
+                .put("type", "set_host_mute")
+                .put("muted", muted)
+                .put("restoreOnExit", restoreOnExit)
+                .toString(),
+        )
+        val cur = _state.value
+        if (cur.hostMute.supported) {
+            _state.value = cur.copy(hostMute = cur.hostMute.copy(muted = muted))
+        }
+    }
+
+    fun listDisplays() {
+        Core.sendSessionCommand(JSONObject().put("type", "list_displays").toString())
+    }
+
+    fun switchDisplay(displayId: Int) {
+        Core.sendSessionCommand(
+            JSONObject()
+                .put("type", "switch_display")
+                .put("displayId", displayId)
+                .toString(),
+        )
+    }
+
+    fun createVirtualDisplay(width: Int, height: Int, hidpi: Boolean) {
+        Core.sendSessionCommand(
+            JSONObject()
+                .put("type", "create_virtual_display")
+                .put("width", width)
+                .put("height", height)
+                .put("hidpi", hidpi)
+                .toString(),
+        )
+    }
+
+    fun removeVirtualDisplay(displayId: Int) {
+        Core.sendSessionCommand(
+            JSONObject()
+                .put("type", "remove_virtual_display")
+                .put("displayId", displayId)
+                .toString(),
+        )
+    }
+
     fun setMediaPaused(paused: Boolean) {
         Core.sendSessionCommand(JSONObject().put("type", "set_media_paused").put("paused", paused).toString())
         _state.value = _state.value.copy(mediaPaused = paused)
@@ -370,6 +499,10 @@ class SessionManager(
             firstFrameSeen = false,
             toolPermissions = ToolPermissionsModel(),
             mediaPaused = false,
+            displays = emptyList(),
+            activeDisplayId = 0,
+            privacy = PrivacyStateModel(supported = false),
+            hostMute = HostMuteStateModel(supported = false),
         )
     }
 
@@ -378,7 +511,8 @@ class SessionManager(
         pollJob = scope.launch {
             while (isActive) {
                 runCatching {
-                    val raw = Core.pollSessionUpdates(mediaDiagnosticsVisible)
+                    val includeMedia = mediaDiagnosticsVisible || prefsStore.state.value.showHud
+                    val raw = Core.pollSessionUpdates(includeMedia)
                     if (raw != null) {
                         val payload = JSONObject(raw)
                         payload.optJSONArray("updates")?.let { updates ->
@@ -398,6 +532,7 @@ class SessionManager(
                             val rendered = m.optLong("renderedFrames", 0L)
                             val cur = _state.value
                             val firstFrame = cur.firstFrameSeen || rendered > 0L
+                            val streamCodec = m.optString("streamCodec")
                             val codecName = m.optString("codecName")
                             val hardware = m.optBoolean("hardware")
                             val lowLatency = m.optBoolean("lowLatency")
@@ -405,6 +540,7 @@ class SessionManager(
                                 _state.value = cur.copy(firstFrameSeen = true)
                             }
                             _media.value = MediaDiagnosticsModel(
+                                streamCodec = streamCodec,
                                 codecName = codecName,
                                 hardware = hardware,
                                 lowLatency = lowLatency,
@@ -477,6 +613,9 @@ class SessionManager(
                     negotiated = neg,
                     targetBitrateBps = _state.value.targetBitrateBps ?: neg.bitrateBps,
                 )
+                if (!_state.value.deviceOs.equals("android", ignoreCase = true)) {
+                    listDisplays()
+                }
                 SessionForegroundService.startOrUpdate(
                     context,
                     title = AppStrings.get(
@@ -518,6 +657,19 @@ class SessionManager(
                 } else {
                     emptyList()
                 }
+                val supportedCodecsArr = data.optJSONArray("supported_codecs")
+                val supportedCodecs = if (supportedCodecsArr != null) {
+                    buildList {
+                        for (idx in 0 until supportedCodecsArr.length()) {
+                            val item = supportedCodecsArr.optString(idx).trim().lowercase()
+                            if (item.isNotEmpty() && item != "null") add(item)
+                        }
+                    }
+                } else {
+                    emptyList()
+                }
+                val codec = data.optString("codec").trim().lowercase().takeIf { it.isNotEmpty() && it != "null" }
+                val advisory = parseHighRefreshAdvisory(data.optJSONObject("advisory"))
                 _state.value = _state.value.copy(
                     displayConfig = DisplayConfigModel(
                         width = data.optInt("width"),
@@ -527,8 +679,69 @@ class SessionManager(
                         nativeHeight = data.optInt("native_height"),
                         maxFps = data.optInt("max_fps"),
                         presets = presets,
+                        codec = codec,
+                        supportedCodecs = supportedCodecs,
+                        clientSupportsHevc = data.optBoolean("client_supports_hevc", false),
+                        advisory = advisory,
                     ),
                 )
+            }
+            "privacy_state" -> if (data != null) {
+                val supported = data.optBoolean("supported", false)
+                _state.value = _state.value.copy(
+                    privacy = PrivacyStateModel(
+                        mode = data.optString("mode", "off").ifBlank { "off" },
+                        preset = data.optString("preset"),
+                        supported = supported,
+                    ),
+                )
+                if (!supported) {
+                    RabbitToast.info(
+                        AppStrings.get(R.string.cp_privacy_unsupported, "当前被控端不支持防窥隐私幕布"),
+                    )
+                }
+            }
+            "host_mute_state" -> if (data != null) {
+                val supported = data.optBoolean("supported", false)
+                _state.value = _state.value.copy(
+                    hostMute = HostMuteStateModel(
+                        muted = data.optBoolean("muted", false),
+                        supported = supported,
+                    ),
+                )
+                if (!supported) {
+                    RabbitToast.info(
+                        AppStrings.get(R.string.cp_host_mute_unsupported, "当前被控端不支持远端系统静音"),
+                    )
+                }
+            }
+            "displays_state" -> if (data != null) {
+                val arr = data.optJSONArray("displays")
+                val list = if (arr != null) {
+                    List(arr.length()) { idx ->
+                        val d = arr.getJSONObject(idx)
+                        RemoteDisplayModel(
+                            id = d.optInt("id"),
+                            name = d.optString("name"),
+                            width = d.optInt("width"),
+                            height = d.optInt("height"),
+                            isMain = d.optBoolean("is_main", false),
+                            isVirtual = d.optBoolean("is_virtual", false),
+                        )
+                    }
+                } else {
+                    emptyList()
+                }
+                _state.value = _state.value.copy(
+                    displays = list,
+                    activeDisplayId = data.optInt("active_display_id", 0),
+                )
+            }
+            "virtual_display_error" -> if (data != null) {
+                val rawMsg = data.optString("message")
+                if (rawMsg.isNotBlank()) {
+                    RabbitToast.error(NativeErrorLocalizer.localize(rawMsg))
+                }
             }
             "wallpaper" -> if (data != null) {
                 val dataUrl = data.optString("data_url")
@@ -659,16 +872,29 @@ class SessionManager(
 
 internal fun parseFileToolEvent(ev: JSONObject): FileToolEvent? {
     val type = ev.optString("type")
+    fun JSONObject.optNonEmpty(key: String): String? =
+        optString(key).takeIf { it.isNotBlank() && it != "null" }
     return when {
         type == "remoteDir" -> FileToolEvent.RemoteDir(
             path = ev.optString("path"),
             entries = ev.optJSONArray("entries")?.toFileEntries() ?: emptyList(),
-            error = ev.optString("error").takeIf { it.isNotBlank() && it != "null" },
+            error = ev.optNonEmpty("error"),
         )
         type == "mkdirResult" -> FileToolEvent.MkdirResult(
             path = ev.optString("path"),
             ok = ev.optBoolean("ok"),
-            error = ev.optString("error").takeIf { it.isNotBlank() && it != "null" },
+            error = ev.optNonEmpty("error"),
+        )
+        type == "deleteResult" -> FileToolEvent.DeleteResult(
+            path = ev.optString("path"),
+            ok = ev.optBoolean("ok"),
+            error = ev.optNonEmpty("error"),
+        )
+        type == "renameResult" -> FileToolEvent.RenameResult(
+            path = ev.optString("path"),
+            newPath = ev.optNonEmpty("newPath") ?: ev.optNonEmpty("new_path"),
+            ok = ev.optBoolean("ok"),
+            error = ev.optNonEmpty("error"),
         )
         type == "transferUpdated" -> FileToolEvent.TransferUpdated(ev.toFileTransferItem())
         ev.has("RemoteDir") -> {
@@ -676,7 +902,7 @@ internal fun parseFileToolEvent(ev: JSONObject): FileToolEvent? {
             FileToolEvent.RemoteDir(
                 path = d.optString("path"),
                 entries = d.optJSONArray("entries")?.toFileEntries() ?: emptyList(),
-                error = d.optString("error").takeIf { it.isNotBlank() && it != "null" },
+                error = d.optNonEmpty("error"),
             )
         }
         ev.has("MkdirResult") -> {
@@ -684,7 +910,24 @@ internal fun parseFileToolEvent(ev: JSONObject): FileToolEvent? {
             FileToolEvent.MkdirResult(
                 path = d.optString("path"),
                 ok = d.optBoolean("ok"),
-                error = d.optString("error").takeIf { it.isNotBlank() && it != "null" },
+                error = d.optNonEmpty("error"),
+            )
+        }
+        ev.has("DeleteResult") -> {
+            val d = ev.getJSONObject("DeleteResult")
+            FileToolEvent.DeleteResult(
+                path = d.optString("path"),
+                ok = d.optBoolean("ok"),
+                error = d.optNonEmpty("error"),
+            )
+        }
+        ev.has("RenameResult") -> {
+            val d = ev.getJSONObject("RenameResult")
+            FileToolEvent.RenameResult(
+                path = d.optString("path"),
+                newPath = d.optNonEmpty("newPath") ?: d.optNonEmpty("new_path"),
+                ok = d.optBoolean("ok"),
+                error = d.optNonEmpty("error"),
             )
         }
         ev.has("TransferUpdated") -> FileToolEvent.TransferUpdated(

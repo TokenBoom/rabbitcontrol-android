@@ -83,6 +83,8 @@ object SessionPalette {
     val danger = Color(0xFFC9303B)
     val dangerSoft = Color(0xFF3A1B20)
     val dangerText = Color(0xFFFF8C94)
+    val success = Color(0xFF22C55E)
+    val warning = Color(0xFFF59E0B)
     val scrim = Color(0x99000000)
 }
 

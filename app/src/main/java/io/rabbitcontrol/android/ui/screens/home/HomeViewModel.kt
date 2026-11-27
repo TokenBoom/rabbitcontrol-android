@@ -70,6 +70,7 @@ class HomeViewModel(
     val proxyConfig: StateFlow<ProxyConfigModel> = proxyStore.state
     val activeSession: StateFlow<ActiveSessionState> = sessionManager.state
     val hostState: StateFlow<HostUiState> = hostManager.state
+    val upnpStatus = accountRepo.upnpStatus
     val wallpaperVersion: StateFlow<Long> = wallpaperCache.version
     val kickedNotice: StateFlow<String?> = accountRepo.kickedNotice
 
@@ -213,6 +214,12 @@ class HomeViewModel(
     }
 
     fun dismissKicked() = accountRepo.dismissKickedNotice()
+
+    fun refreshUpnpStatus() {
+        viewModelScope.launch {
+            accountRepo.refreshUpnpStatus()
+        }
+    }
 
     fun enableHostWithProjection(resultCode: Int, data: Intent) =
         hostManager.enableHostWithProjection(resultCode, data)

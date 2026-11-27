@@ -65,6 +65,8 @@ class HostManager(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var pollJob: Job? = null
     private var screenEncoder: HostScreenEncoder? = null
+    @Volatile
+    private var pendingStartEncoderCmd: JSONObject? = null
 
     private val _state = MutableStateFlow(
         HostUiState(
@@ -163,8 +165,20 @@ class HostManager(
     fun onMediaProjectionReady(projection: MediaProjection) {
         val (_, _, density) = queryDisplayMetrics()
         screenEncoder?.releaseAll()
-        screenEncoder = HostScreenEncoder(projection, density)
+        val enc = HostScreenEncoder(projection, density)
+        screenEncoder = enc
         Log.i("RC_DIAG", "HostManager MediaProjection ready density=$density")
+        val pending = pendingStartEncoderCmd
+        if (pending != null) {
+            pendingStartEncoderCmd = null
+            Log.i("RC_DIAG", "HostManager replaying early encoder start cmd")
+            enc.startOrReconfigure(
+                width = pending.optInt("width", 1080),
+                height = pending.optInt("height", 2400),
+                fps = pending.optInt("fps", 60),
+                bitrateBps = pending.optInt("bitrate_bps", 8_000_000),
+            )
+        }
     }
 
     fun onProjectionFailed(message: String) {
@@ -186,6 +200,7 @@ class HostManager(
 
     fun stopHost() {
         accountRepo.setBackgroundKeepAlive(false)
+        pendingStartEncoderCmd = null
         pollJob?.cancel()
         pollJob = null
         screenEncoder?.releaseAll()
@@ -408,15 +423,29 @@ class HostManager(
     }
 
     private fun handleEncoderCommand(cmd: JSONObject) {
-        val enc = screenEncoder ?: return
-        when (cmd.optString("kind")) {
-            "start" -> enc.startOrReconfigure(
-                width = cmd.optInt("width", 1080),
-                height = cmd.optInt("height", 2400),
-                fps = cmd.optInt("fps", 60),
-                bitrateBps = cmd.optInt("bitrate_bps", 8_000_000),
-            )
-            "stop" -> enc.pauseEncoder()
+        val kind = cmd.optString("kind")
+        val enc = screenEncoder
+        if (enc == null) {
+            when (kind) {
+                "start" -> pendingStartEncoderCmd = cmd
+                "stop" -> pendingStartEncoderCmd = null
+            }
+            return
+        }
+        when (kind) {
+            "start" -> {
+                pendingStartEncoderCmd = null
+                enc.startOrReconfigure(
+                    width = cmd.optInt("width", 1080),
+                    height = cmd.optInt("height", 2400),
+                    fps = cmd.optInt("fps", 60),
+                    bitrateBps = cmd.optInt("bitrate_bps", 8_000_000),
+                )
+            }
+            "stop" -> {
+                pendingStartEncoderCmd = null
+                enc.pauseEncoder()
+            }
             "set_bitrate" -> enc.setBitrate(cmd.optInt("bps", 8_000_000))
             "request_idr" -> enc.requestIdr()
         }

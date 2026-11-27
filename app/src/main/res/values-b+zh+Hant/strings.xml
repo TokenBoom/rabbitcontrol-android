@@ -842,4 +842,87 @@
     <string name="tool_permission_disabled_ft">遠端主機目前已停用檔案傳輸權限</string>
     <string name="tool_permission_disabled_term">遠端主機目前已停用遠端終端機權限</string>
     <string name="tool_permission_disabled_pm">遠端主機目前已停用連接埠轉發權限</string>
+
+    <string name="cp_video_codec">視訊編碼格式</string>
+    <string name="cp_codec_unsupported_hint">反灰選項表示遠端主機或本機目前不支援該編碼</string>
+    <string name="cp_decode_mode">解碼方式</string>
+    <string name="cp_decode_hw">硬解（硬體加速）</string>
+    <string name="cp_decode_sw">軟解（CPU 解碼）</string>
+    <string name="cp_decode_fallback_sw">軟解（已回退）</string>
+
+    <string name="home_menu_upnp">UPnP / NAT-PMP 連接埠映射</string>
+    <string name="upnp_title">UPnP / NAT-PMP 連接埠映射</string>
+    <string name="upnp_desc">自動向路由器申請公網 UDP 連接埠映射，提升跨網 P2P 直連成功率。</string>
+    <string name="upnp_badge_disabled">未開啟</string>
+    <string name="upnp_badge_discovering">正在偵測路由器…</string>
+    <string name="upnp_badge_discovering_short">偵測中…</string>
+    <string name="upnp_badge_mapped_short">已映射</string>
+    <string name="upnp_badge_mapped_addr">已映射 %1$s (%2$s)</string>
+    <string name="upnp_badge_mapped_proto">已映射 (%1$s)</string>
+    <string name="upnp_badge_unavailable">路由器不支援或處於多層 NAT</string>
+    <string name="upnp_badge_unavailable_short">無法使用</string>
+    <string name="upnp_reprobe_hint">切換網路或開啟路由器 UPnP 後可重新偵測</string>
+    <string name="upnp_reprobe_btn">重新偵測</string>
+    <string name="upnp_toast_enabled">已開啟 UPnP / NAT-PMP 連接埠映射</string>
+    <string name="upnp_toast_disabled">已關閉 UPnP / NAT-PMP 連接埠映射</string>
+    <string name="upnp_toast_failed">儲存 UPnP 設定失敗</string>
+
+    <string name="conn_mode_auto">自動</string>
+    <string name="conn_mode_p2p">僅 P2P</string>
+    <string name="conn_mode_relay">TCP 中繼</string>
+    <string name="cp_connection_mode">連線模式</string>
+    <string name="cp_connection_mode_hint">持久化儲存，切換後立即依新模式連線。</string>
+    <string name="conn_mode_settings_title">預設連線模式</string>
+    <string name="conn_mode_settings_desc">設定遠控工作階段的預設連線策略（遠控期間也可於控制面板即時切換）。</string>
+    <string name="conn_mode_saved">預設連線模式已儲存</string>
+
+    <string name="cp_advisory_h264_hevc">目前 H.264 在此解析度高更新率下受硬體編碼限制，追求滿幀建議切換至 HEVC 編碼。</string>
+    <string name="cp_advisory_h264_res">目前 H.264 在此解析度高更新率下受硬體編碼限制，追求滿幀建議切換至 %1$d×%2$d。</string>
+    <string name="cp_advisory_hevc_res">目前解析度超出高更新率滿幀編碼預算，追求滿幀建議切換至 %1$d×%2$d。</string>
+    <string name="cp_advisory_switch_hevc">切至 HEVC</string>
+    <string name="cp_advisory_switch_res">切至 %1$d×%2$d</string>
+
+    <string name="cp_displays">顯示器</string>
+    <string name="cp_display_virtual_tag">虛擬</string>
+    <string name="cp_add_virtual_display">+ 虛擬螢幕</string>
+    <string name="cp_vdisp_title">建立虛擬顯示器</string>
+    <string name="cp_vdisp_presets">常用預設</string>
+    <string name="cp_vdisp_match_phone">符合本機比例</string>
+    <string name="cp_vdisp_width">寬度</string>
+    <string name="cp_vdisp_height">高度</string>
+    <string name="cp_vdisp_hidpi">啟用 HiDPI (2x)</string>
+    <string name="cp_vdisp_create">建立</string>
+    <string name="cp_vdisp_invalid_size">寬度須介於 640–3840 之間，高度須介於 480–2160 之間</string>
+    <string name="cp_vdisp_remove_cd">移除虛擬顯示器</string>
+
+    <string name="cp_privacy_curtain">防窺隱私幕布</string>
+    <string name="cp_privacy_off">關閉</string>
+    <string name="cp_privacy_mode">防窺</string>
+    <string name="cp_privacy_black">黑畫面</string>
+    <string name="cp_host_mute_on">對方已靜音</string>
+    <string name="cp_host_mute_off">對方靜音</string>
+    <string name="cp_privacy_unsupported">目前被控端不支援防窺隱私幕布</string>
+    <string name="cp_host_mute_unsupported">目前被控端不支援遠端系統靜音</string>
+
+    <string name="cp_mtls_badge_cd">檢視 mTLS 加密憑證指紋</string>
+    <string name="cp_mtls_title">mTLS 端對端雙向加密</string>
+    <string name="cp_mtls_status_active">目前工作階段已啟用裝置憑證雙向驗證與傳輸加密。</string>
+    <string name="cp_mtls_transport_label">傳輸通道</string>
+    <string name="cp_mtls_fingerprint_label">對端裝置憑證 SHA-256 指紋</string>
+    <string name="cp_mtls_fingerprint_missing">暫無法取得對端憑證指紋</string>
+    <string name="cp_mtls_copy_fingerprint">複製指紋</string>
+    <string name="cp_mtls_fingerprint_copied">憑證指紋已複製</string>
+
+    <string name="ft_cd_more_actions">更多操作</string>
+    <string name="ft_action_rename">重新命名</string>
+    <string name="ft_action_delete">刪除</string>
+    <string name="ft_rename_title">重新命名</string>
+    <string name="ft_rename_hint">輸入新名稱</string>
+    <string name="ft_rename_confirm">確認重新命名</string>
+    <string name="ft_delete_title">確認刪除</string>
+    <string name="ft_delete_confirm_msg">確定要刪除遠端「%1$s」嗎？此操作無法復原。</string>
+    <string name="ft_notice_deleted">已刪除</string>
+    <string name="ft_notice_renamed">已重新命名</string>
+    <string name="ft_err_delete_failed">刪除失敗</string>
+    <string name="ft_err_rename_failed">重新命名失敗</string>
 </resources>

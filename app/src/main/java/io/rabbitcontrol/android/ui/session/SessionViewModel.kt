@@ -3,6 +3,7 @@ package io.rabbitcontrol.android.ui.session
 import android.view.Surface
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import io.rabbitcontrol.android.core.data.ConnectionModePref
 import io.rabbitcontrol.android.core.data.InteractionPrefs
 import io.rabbitcontrol.android.core.data.InteractionPrefsStore
 import io.rabbitcontrol.android.core.data.KeyMapState
@@ -14,7 +15,9 @@ import io.rabbitcontrol.android.core.data.SidebarConfig
 import io.rabbitcontrol.android.core.data.TouchInputMode
 import io.rabbitcontrol.android.core.data.VirtualKeyItem
 import io.rabbitcontrol.android.core.input.ScancodeMapper
+import io.rabbitcontrol.android.core.nativebridge.HardwareCodecProbe
 import io.rabbitcontrol.android.core.nativebridge.HudSnapshotModel
+import io.rabbitcontrol.android.core.nativebridge.LocalCodecSupport
 import io.rabbitcontrol.android.core.nativebridge.MediaDiagnosticsModel
 import io.rabbitcontrol.android.core.session.ActiveSessionState
 import io.rabbitcontrol.android.core.session.ClipboardSyncBridge
@@ -46,6 +49,9 @@ class SessionViewModel(
     val prefs: StateFlow<InteractionPrefs> = prefsStore.state
     val sidebarConfig: StateFlow<SidebarConfig> = layoutStore.sidebarConfig
     val keymapState: StateFlow<KeyMapState> = layoutStore.keymapState
+    val localCodecSupport: Map<String, LocalCodecSupport> by lazy {
+        HardwareCodecProbe.supportedCodecCapabilities()
+    }
 
     private val _stickyModifiers = MutableStateFlow(0)
     val stickyModifiers: StateFlow<Int> = _stickyModifiers.asStateFlow()
@@ -129,6 +135,16 @@ class SessionViewModel(
     fun setClipboardEnabled(enabled: Boolean) = sessionManager.setClipboardEnabled(enabled)
     fun setStreamParams(width: Int, height: Int, fps: Int) = sessionManager.setStreamParams(width, height, fps)
     fun setBitrate(bps: Int) = sessionManager.setBitrate(bps)
+    fun setCodec(codec: String) = sessionManager.setCodec(codec)
+    fun setPreferHardwareDecode(preferHardware: Boolean) = sessionManager.setPreferHardwareDecode(preferHardware)
+    fun setConnectionMode(mode: ConnectionModePref) = sessionManager.setConnectionMode(mode)
+    fun setPrivacyMode(mode: String) = sessionManager.setPrivacyMode(mode)
+    fun setHostMute(muted: Boolean) = sessionManager.setHostMute(muted, restoreOnExit = true)
+    fun listDisplays() = sessionManager.listDisplays()
+    fun switchDisplay(displayId: Int) = sessionManager.switchDisplay(displayId)
+    fun createVirtualDisplay(width: Int, height: Int, hidpi: Boolean) =
+        sessionManager.createVirtualDisplay(width, height, hidpi)
+    fun removeVirtualDisplay(displayId: Int) = sessionManager.removeVirtualDisplay(displayId)
     fun requestIdr() = sessionManager.requestIdr()
     fun lockRemoteScreen() = sessionManager.lockRemoteScreen()
 

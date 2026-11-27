@@ -3,7 +3,9 @@ package io.rabbitcontrol.android.core.session
 import org.json.JSONObject
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -35,6 +37,30 @@ class ToolEventParserTest {
         val mkdirEv = parseFileToolEvent(mkdirJson) as FileToolEvent.MkdirResult
         assertTrue(mkdirEv.ok)
         assertEquals("/Users/test/newdir", mkdirEv.path)
+
+        val deleteOkJson = JSONObject("""{"type":"deleteResult","path":"/Users/test/old.txt","ok":true,"error":null}""")
+        val deleteOk = parseFileToolEvent(deleteOkJson) as FileToolEvent.DeleteResult
+        assertTrue(deleteOk.ok)
+        assertEquals("/Users/test/old.txt", deleteOk.path)
+        assertNull(deleteOk.error)
+
+        val deleteErrJson = JSONObject("""{"type":"deleteResult","path":"/Users/test/locked.txt","ok":false,"error":"permission denied"}""")
+        val deleteErr = parseFileToolEvent(deleteErrJson) as FileToolEvent.DeleteResult
+        assertFalse(deleteErr.ok)
+        assertEquals("permission denied", deleteErr.error)
+
+        val renameOkJson = JSONObject("""{"type":"renameResult","path":"/Users/test/a.txt","newPath":"/Users/test/b.txt","ok":true,"error":null}""")
+        val renameOk = parseFileToolEvent(renameOkJson) as FileToolEvent.RenameResult
+        assertTrue(renameOk.ok)
+        assertEquals("/Users/test/a.txt", renameOk.path)
+        assertEquals("/Users/test/b.txt", renameOk.newPath)
+        assertNull(renameOk.error)
+
+        val renameErrJson = JSONObject("""{"type":"renameResult","path":"/Users/test/a.txt","newPath":null,"ok":false,"error":"already exists"}""")
+        val renameErr = parseFileToolEvent(renameErrJson) as FileToolEvent.RenameResult
+        assertFalse(renameErr.ok)
+        assertNull(renameErr.newPath)
+        assertEquals("already exists", renameErr.error)
 
         val uploadJson = JSONObject(
             """

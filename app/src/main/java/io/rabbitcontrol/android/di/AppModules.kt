@@ -24,11 +24,11 @@ import org.koin.core.module.dsl.viewModel
 import org.koin.dsl.module
 
 val dataModule = module {
-    single { AccountRepository(androidContext()) }
+    single { InteractionPrefsStore(androidContext()) }
+    single { AccountRepository(androidContext(), get()) }
     single { TargetHistoryStore(androidContext()) }
     single { ToolOrderStore(androidContext()) }
     single { WallpaperCache(androidContext()) }
-    single { InteractionPrefsStore(androidContext()) }
     single { ProxyConfigStore(androidContext()) }
     single { SessionLayoutStore(androidContext()) }
     single { AppUpdateManager(androidContext()) }

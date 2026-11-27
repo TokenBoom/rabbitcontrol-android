@@ -842,4 +842,87 @@
     <string name="tool_permission_disabled_ft">远端主机当前已禁止文件传输权限</string>
     <string name="tool_permission_disabled_term">远端主机当前已禁止远程终端权限</string>
     <string name="tool_permission_disabled_pm">远端主机当前已禁止端口映射权限</string>
+
+    <string name="cp_video_codec">视频编码格式</string>
+    <string name="cp_codec_unsupported_hint">置灰选项表示远端主机或本机暂不支持该编码</string>
+    <string name="cp_decode_mode">解码方式</string>
+    <string name="cp_decode_hw">硬解（硬件加速）</string>
+    <string name="cp_decode_sw">软解（CPU 解码）</string>
+    <string name="cp_decode_fallback_sw">软解（已回退）</string>
+
+    <string name="home_menu_upnp">UPnP / NAT-PMP 端口映射</string>
+    <string name="upnp_title">UPnP / NAT-PMP 端口映射</string>
+    <string name="upnp_desc">自动向路由器申请公网 UDP 端口映射，提升跨网 P2P 直连成功率。</string>
+    <string name="upnp_badge_disabled">未开启</string>
+    <string name="upnp_badge_discovering">正在探测路由器…</string>
+    <string name="upnp_badge_discovering_short">探测中…</string>
+    <string name="upnp_badge_mapped_short">已映射</string>
+    <string name="upnp_badge_mapped_addr">已映射 %1$s (%2$s)</string>
+    <string name="upnp_badge_mapped_proto">已映射 (%1$s)</string>
+    <string name="upnp_badge_unavailable">路由器不支持或处于多层 NAT</string>
+    <string name="upnp_badge_unavailable_short">不可用</string>
+    <string name="upnp_reprobe_hint">切换网络或开启路由器 UPnP 后可重新探测</string>
+    <string name="upnp_reprobe_btn">重新探测</string>
+    <string name="upnp_toast_enabled">已开启 UPnP / NAT-PMP 端口映射</string>
+    <string name="upnp_toast_disabled">已关闭 UPnP / NAT-PMP 端口映射</string>
+    <string name="upnp_toast_failed">保存 UPnP 设置失败</string>
+
+    <string name="conn_mode_auto">自动</string>
+    <string name="conn_mode_p2p">仅 P2P</string>
+    <string name="conn_mode_relay">TCP 中继</string>
+    <string name="cp_connection_mode">连接模式</string>
+    <string name="cp_connection_mode_hint">持久化保存，切换后立即按新模式连接。</string>
+    <string name="conn_mode_settings_title">默认连接模式</string>
+    <string name="conn_mode_settings_desc">设置远控会话的默认建连策略（远控过程中也可在操控面板随时切换）。</string>
+    <string name="conn_mode_saved">默认连接模式已保存</string>
+
+    <string name="cp_advisory_h264_hevc">当前 H.264 在此分辨率高刷下受硬编限制，追求满帧建议切至 HEVC 编码。</string>
+    <string name="cp_advisory_h264_res">当前 H.264 在此分辨率高刷下受硬编限制，追求满帧建议切至 %1$d×%2$d。</string>
+    <string name="cp_advisory_hevc_res">当前分辨率超出高刷满帧编码预算，追求满帧建议切至 %1$d×%2$d。</string>
+    <string name="cp_advisory_switch_hevc">切至 HEVC</string>
+    <string name="cp_advisory_switch_res">切至 %1$d×%2$d</string>
+
+    <string name="cp_displays">显示器</string>
+    <string name="cp_display_virtual_tag">虚拟</string>
+    <string name="cp_add_virtual_display">+ 虚拟屏</string>
+    <string name="cp_vdisp_title">创建虚拟显示器</string>
+    <string name="cp_vdisp_presets">常用预设</string>
+    <string name="cp_vdisp_match_phone">匹配本机比例</string>
+    <string name="cp_vdisp_width">宽度</string>
+    <string name="cp_vdisp_height">高度</string>
+    <string name="cp_vdisp_hidpi">启用 HiDPI (2x)</string>
+    <string name="cp_vdisp_create">创建</string>
+    <string name="cp_vdisp_invalid_size">宽度需在 640–3840 之间，高度需在 480–2160 之间</string>
+    <string name="cp_vdisp_remove_cd">销毁虚拟显示器</string>
+
+    <string name="cp_privacy_curtain">防窥隐私幕布</string>
+    <string name="cp_privacy_off">关闭</string>
+    <string name="cp_privacy_mode">防窥</string>
+    <string name="cp_privacy_black">黑屏</string>
+    <string name="cp_host_mute_on">对方已静音</string>
+    <string name="cp_host_mute_off">对方静音</string>
+    <string name="cp_privacy_unsupported">当前被控端不支持防窥隐私幕布</string>
+    <string name="cp_host_mute_unsupported">当前被控端不支持远端系统静音</string>
+
+    <string name="cp_mtls_badge_cd">查看 mTLS 加密证书指纹</string>
+    <string name="cp_mtls_title">mTLS 端到端双向加密</string>
+    <string name="cp_mtls_status_active">当前会话已启用设备证书双向鉴权与传输加密。</string>
+    <string name="cp_mtls_transport_label">传输通道</string>
+    <string name="cp_mtls_fingerprint_label">对端设备证书 SHA-256 指纹</string>
+    <string name="cp_mtls_fingerprint_missing">暂未获取到对端证书指纹</string>
+    <string name="cp_mtls_copy_fingerprint">复制指纹</string>
+    <string name="cp_mtls_fingerprint_copied">证书指纹已复制</string>
+
+    <string name="ft_cd_more_actions">更多操作</string>
+    <string name="ft_action_rename">重命名</string>
+    <string name="ft_action_delete">删除</string>
+    <string name="ft_rename_title">重命名</string>
+    <string name="ft_rename_hint">输入新名称</string>
+    <string name="ft_rename_confirm">确认重命名</string>
+    <string name="ft_delete_title">确认删除</string>
+    <string name="ft_delete_confirm_msg">确定要删除远端“%1$s”吗？此操作不可恢复。</string>
+    <string name="ft_notice_deleted">已删除</string>
+    <string name="ft_notice_renamed">已重命名</string>
+    <string name="ft_err_delete_failed">删除失败</string>
+    <string name="ft_err_rename_failed">重命名失败</string>
 </resources>

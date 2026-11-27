@@ -29,8 +29,11 @@ import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.InsertDriveFile
+import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.UploadFile
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.Icon
@@ -93,6 +96,9 @@ fun FileTransferScreen(
     var selectedTab by remember { mutableStateOf(FileTransferTab.Remote) }
     var showMkdirDialog by remember { mutableStateOf(false) }
     var newDirName by remember { mutableStateOf("") }
+    var renameTarget by remember { mutableStateOf<io.rabbitcontrol.android.core.nativebridge.RemoteFileEntry?>(null) }
+    var renameInput by remember { mutableStateOf("") }
+    var deleteTarget by remember { mutableStateOf<io.rabbitcontrol.android.core.nativebridge.RemoteFileEntry?>(null) }
 
     val pickFilesLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments(),
@@ -346,6 +352,40 @@ fun FileTransferScreen(
                                 if (!entry.isDir) {
                                     Icon(Icons.Rounded.Download, stringResource(R.string.ft_cd_download), tint = palette.primaryText, modifier = Modifier.size(20.dp))
                                 }
+                                var menuExpanded by remember(entry.path) { mutableStateOf(false) }
+                                Box {
+                                    IconButton(
+                                        onClick = { menuExpanded = true },
+                                        modifier = Modifier.size(36.dp),
+                                    ) {
+                                        Icon(
+                                            Icons.Rounded.MoreVert,
+                                            contentDescription = stringResource(R.string.ft_cd_more_actions),
+                                            tint = palette.muted,
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                    }
+                                    DropdownMenu(
+                                        expanded = menuExpanded,
+                                        onDismissRequest = { menuExpanded = false },
+                                    ) {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.ft_action_rename), color = palette.text) },
+                                            onClick = {
+                                                menuExpanded = false
+                                                renameTarget = entry
+                                                renameInput = entry.name
+                                            },
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.ft_action_delete), color = palette.danger) },
+                                            onClick = {
+                                                menuExpanded = false
+                                                deleteTarget = entry
+                                            },
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -444,6 +484,47 @@ fun FileTransferScreen(
                 value = newDirName,
                 onValueChange = { newDirName = it },
                 placeholder = stringResource(R.string.ft_mkdir_hint),
+            )
+        }
+    }
+
+    renameTarget?.let { target ->
+        RabbitDialog(
+            title = stringResource(R.string.ft_rename_title),
+            onDismissRequest = { renameTarget = null },
+            dismissLabel = stringResource(R.string.common_cancel),
+            confirmLabel = stringResource(R.string.ft_rename_confirm),
+            confirmEnabled = renameInput.trim().isNotEmpty() &&
+                !renameInput.contains('/') &&
+                !renameInput.contains('\\'),
+            onConfirm = {
+                viewModel.renameRemote(target, renameInput)
+                renameTarget = null
+            },
+        ) {
+            RabbitTextField(
+                value = renameInput,
+                onValueChange = { renameInput = it },
+                placeholder = stringResource(R.string.ft_rename_hint),
+            )
+        }
+    }
+
+    deleteTarget?.let { target ->
+        RabbitDialog(
+            title = stringResource(R.string.ft_delete_title),
+            onDismissRequest = { deleteTarget = null },
+            dismissLabel = stringResource(R.string.common_cancel),
+            confirmLabel = stringResource(R.string.ft_action_delete),
+            onConfirm = {
+                viewModel.deleteRemote(target)
+                deleteTarget = null
+            },
+        ) {
+            Text(
+                text = stringResource(R.string.ft_delete_confirm_msg, target.name),
+                fontSize = 14.sp,
+                color = palette.text,
             )
         }
     }

@@ -203,9 +203,25 @@ fun SessionKeyChip(
     label: String,
     highlighted: Boolean = false,
     compact: Boolean = false,
+    enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
     val shape = RoundedCornerShape(RabbitRadius.Sm)
+    val bgColor = when {
+        !enabled -> SessionPalette.surface.copy(alpha = 0.45f)
+        highlighted -> SessionPalette.accent
+        else -> SessionPalette.surface
+    }
+    val borderColor = when {
+        !enabled -> SessionPalette.border.copy(alpha = 0.45f)
+        highlighted -> SessionPalette.accent
+        else -> SessionPalette.border
+    }
+    val textColor = when {
+        !enabled -> SessionPalette.muted.copy(alpha = 0.55f)
+        highlighted -> Color.White
+        else -> SessionPalette.text
+    }
     Box(
         modifier = Modifier
             .defaultMinSize(
@@ -213,13 +229,13 @@ fun SessionKeyChip(
                 minHeight = if (compact) 30.dp else 34.dp,
             )
             .clip(shape)
-            .background(if (highlighted) SessionPalette.accent else SessionPalette.surface)
+            .background(bgColor)
             .border(
                 width = 1.dp,
-                color = if (highlighted) SessionPalette.accent else SessionPalette.border,
+                color = borderColor,
                 shape = shape,
             )
-            .clickable(onClick = onClick)
+            .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(
                 horizontal = if (compact) 8.dp else 9.dp,
                 vertical = if (compact) 5.dp else 6.dp,
@@ -228,7 +244,7 @@ fun SessionKeyChip(
     ) {
         Text(
             text = label,
-            color = if (highlighted) Color.White else SessionPalette.text,
+            color = textColor,
             fontSize = if (compact) 11.sp else 12.sp,
             fontWeight = FontWeight.Medium,
             maxLines = 1,

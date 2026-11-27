@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -31,19 +32,23 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.rounded.VolumeOff
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Cable
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.HelpOutline
 import androidx.compose.material.icons.rounded.Keyboard
 import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.Monitor
 import androidx.compose.material.icons.rounded.Mouse
 import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.rounded.Refresh
@@ -53,6 +58,7 @@ import androidx.compose.material.icons.rounded.SportsEsports
 import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material.icons.rounded.TouchApp
 import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material.icons.rounded.VerifiedUser
 import androidx.compose.material.icons.rounded.ViewAgenda
 import androidx.compose.material.icons.rounded.ViewSidebar
 import androidx.compose.material.icons.rounded.Visibility
@@ -61,12 +67,15 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -77,14 +86,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.rabbitcontrol.android.R
+import io.rabbitcontrol.android.core.data.ConnectionModePref
 import io.rabbitcontrol.android.core.data.DeviceToolKind
 import io.rabbitcontrol.android.core.data.InteractionPrefs
 import io.rabbitcontrol.android.core.data.KeyMapState
@@ -94,7 +109,12 @@ import io.rabbitcontrol.android.core.data.QuickActionKind
 import io.rabbitcontrol.android.core.data.SidebarConfig
 import io.rabbitcontrol.android.core.data.TouchInputMode
 import io.rabbitcontrol.android.core.i18n.AppStrings
+import io.rabbitcontrol.android.core.nativebridge.LocalCodecSupport
+import io.rabbitcontrol.android.core.nativebridge.MediaDiagnosticsModel
+import io.rabbitcontrol.android.core.nativebridge.formatVideoCodecLabel
+import io.rabbitcontrol.android.core.nativebridge.normalizeVideoCodecId
 import io.rabbitcontrol.android.core.session.ActiveSessionState
+import io.rabbitcontrol.android.ui.components.RabbitToast
 import io.rabbitcontrol.android.ui.theme.RabbitElevation
 import io.rabbitcontrol.android.ui.theme.RabbitRadius
 import io.rabbitcontrol.android.ui.theme.SessionPalette
@@ -135,12 +155,23 @@ fun SessionControlPanel(
     val sidebarConfig by viewModel.sidebarConfig.collectAsStateWithLifecycle()
     val keymapState by viewModel.keymapState.collectAsStateWithLifecycle()
     var activeTab by remember(initialTab) { mutableStateOf(initialTab) }
+    var showEncryptionDialog by remember { mutableStateOf(false) }
 
     val neg = state.negotiated
     val devTitle = state.deviceName.ifBlank { stringResource(R.string.cp_title_default) }
     val telemetry = if (neg != null) {
-        val hwTag = stringResource(if (diag.hardware) R.string.cp_hw_decode else R.string.cp_sw_decode)
-        "${neg.width}×${neg.height} · ${neg.fps}fps · ${neg.transport} · $hwTag"
+        val decoderActive = diag.codecName.isNotBlank() || diag.decodedFrames > 0L || diag.renderedFrames > 0L
+        val useHw = if (decoderActive) diag.hardware else prefs.preferHardwareDecode
+        val hwTag = stringResource(if (useHw) R.string.cp_hw_decode else R.string.cp_sw_decode)
+        val codecTag = formatVideoCodecLabel(
+            diag.streamCodec.ifBlank { state.displayConfig?.codec },
+            diag.codecName,
+        )
+        if (codecTag != null) {
+            "${neg.width}×${neg.height} · ${neg.fps}fps · $codecTag $hwTag · ${neg.transport}"
+        } else {
+            "${neg.width}×${neg.height} · ${neg.fps}fps · ${neg.transport} · $hwTag"
+        }
     } else {
         stringResource(R.string.cp_ready)
     }
@@ -198,7 +229,7 @@ fun SessionControlPanel(
                 )
             }
 
-            // Unified Header Row: Device Title + Telemetry + Guide + Lock + Close
+            // Unified Header Row: Device Title + Telemetry + mTLS Badge + Guide + Lock + Close
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -224,6 +255,24 @@ fun SessionControlPanel(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                }
+                if (neg?.mtlsActive == true) {
+                    Box(
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(SessionPalette.success.copy(alpha = 0.14f))
+                            .border(1.dp, SessionPalette.success.copy(alpha = 0.45f), RoundedCornerShape(8.dp))
+                            .clickable { showEncryptionDialog = true },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            Icons.Rounded.VerifiedUser,
+                            stringResource(R.string.cp_mtls_badge_cd),
+                            tint = SessionPalette.success,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
                 }
                 Box(
                     modifier = Modifier
@@ -308,7 +357,9 @@ fun SessionControlPanel(
                     activeTab = activeTab,
                     isPortrait = isPortrait,
                     state = state,
+                    diag = diag,
                     prefs = prefs,
+                    localCodecSupport = viewModel.localCodecSupport,
                     sidebarConfig = sidebarConfig,
                     keymapState = keymapState,
                     viewModel = viewModel,
@@ -323,6 +374,14 @@ fun SessionControlPanel(
             }
         }
     }
+
+    if (showEncryptionDialog && neg != null) {
+        MtlsFingerprintDialog(
+            transport = neg.transport,
+            fingerprint = neg.peerCertFingerprint,
+            onDismiss = { showEncryptionDialog = false },
+        )
+    }
 }
 
 @Composable
@@ -330,7 +389,9 @@ private fun ControlCenterTabBody(
     activeTab: ControlPanelTab,
     isPortrait: Boolean,
     state: ActiveSessionState,
+    diag: MediaDiagnosticsModel,
     prefs: InteractionPrefs,
+    localCodecSupport: Map<String, LocalCodecSupport>,
     sidebarConfig: SidebarConfig,
     keymapState: KeyMapState,
     viewModel: SessionViewModel,
@@ -354,7 +415,9 @@ private fun ControlCenterTabBody(
         )
         ControlPanelTab.Display -> DisplayTabBody(
             state = state,
+            diag = diag,
             prefs = prefs,
+            localCodecSupport = localCodecSupport,
             viewModel = viewModel,
         )
         ControlPanelTab.Keymap -> KeymapTabBody(
@@ -385,78 +448,106 @@ private fun ControlsTabBody(
     onQuickAction: (QuickActionKind) -> Unit,
 ) {
     val cols = 3
-    val tiles = listOf(
-        TileSpec(
-            icon = if (prefs.touchMode == TouchInputMode.Trackpad) Icons.Rounded.Mouse else Icons.Rounded.TouchApp,
-            label = prefs.touchMode.label,
-            active = true,
-            onClick = {
-                val next = if (prefs.touchMode == TouchInputMode.Trackpad) TouchInputMode.DirectTouch else TouchInputMode.Trackpad
-                viewModel.setTouchMode(next)
-            },
-        ),
-        TileSpec(
-            icon = if (state.audioMuted) Icons.AutoMirrored.Rounded.VolumeOff else Icons.AutoMirrored.Rounded.VolumeUp,
-            label = stringResource(if (state.audioMuted) R.string.cp_sound_muted else R.string.cp_sound_on),
-            active = !state.audioMuted,
-            onClick = { viewModel.setAudioMuted(!state.audioMuted) },
-        ),
-        TileSpec(
-            icon = Icons.Rounded.ContentPaste,
-            label = stringResource(if (state.clipboardEnabled) R.string.cp_clipboard_on else R.string.cp_clipboard_off),
-            active = state.clipboardEnabled,
-            onClick = { viewModel.setClipboardEnabled(!state.clipboardEnabled) },
-        ),
-        TileSpec(
-            icon = Icons.Rounded.Visibility,
-            label = stringResource(if (state.watchOnly) R.string.tool_watch_mode else R.string.cp_mode_control),
-            active = state.watchOnly,
-            onClick = { viewModel.setWatchOnly(!state.watchOnly) },
-        ),
-        TileSpec(
-            icon = Icons.Rounded.ScreenRotation,
-            label = when (prefs.orientationPref) {
-                OrientationPreference.AutoSensor -> stringResource(R.string.orientation_auto)
-                OrientationPreference.LandscapeFirst -> stringResource(R.string.orientation_landscape)
-                OrientationPreference.PortraitTrackpad -> stringResource(R.string.orientation_portrait)
-            },
-            active = prefs.orientationPref != OrientationPreference.AutoSensor,
-            onClick = {
-                val entries = OrientationPreference.entries
-                viewModel.setOrientationPref(entries[(prefs.orientationPref.ordinal + 1) % entries.size])
-            },
-        ),
-        if (isPortrait) {
+    val tiles = buildList {
+        add(
             TileSpec(
-                icon = Icons.Rounded.ViewAgenda,
-                label = stringResource(R.string.cp_portrait_prefix, prefs.portraitLayoutMode.label),
-                active = prefs.portraitLayoutMode != PortraitLayoutMode.Auto,
+                icon = if (prefs.touchMode == TouchInputMode.Trackpad) Icons.Rounded.Mouse else Icons.Rounded.TouchApp,
+                label = prefs.touchMode.label,
+                active = true,
                 onClick = {
-                    val modes = PortraitLayoutMode.entries
-                    viewModel.setPortraitLayoutMode(modes[(prefs.portraitLayoutMode.ordinal + 1) % modes.size])
+                    val next = if (prefs.touchMode == TouchInputMode.Trackpad) TouchInputMode.DirectTouch else TouchInputMode.Trackpad
+                    viewModel.setTouchMode(next)
                 },
+            ),
+        )
+        add(
+            TileSpec(
+                icon = if (state.audioMuted) Icons.AutoMirrored.Rounded.VolumeOff else Icons.AutoMirrored.Rounded.VolumeUp,
+                label = stringResource(if (state.audioMuted) R.string.cp_sound_muted else R.string.cp_sound_on),
+                active = !state.audioMuted,
+                onClick = { viewModel.setAudioMuted(!state.audioMuted) },
+            ),
+        )
+        add(
+            TileSpec(
+                icon = Icons.Rounded.ContentPaste,
+                label = stringResource(if (state.clipboardEnabled) R.string.cp_clipboard_on else R.string.cp_clipboard_off),
+                active = state.clipboardEnabled,
+                onClick = { viewModel.setClipboardEnabled(!state.clipboardEnabled) },
+            ),
+        )
+        add(
+            TileSpec(
+                icon = Icons.Rounded.Visibility,
+                label = stringResource(if (state.watchOnly) R.string.tool_watch_mode else R.string.cp_mode_control),
+                active = state.watchOnly,
+                onClick = { viewModel.setWatchOnly(!state.watchOnly) },
+            ),
+        )
+        add(
+            TileSpec(
+                icon = Icons.Rounded.ScreenRotation,
+                label = when (prefs.orientationPref) {
+                    OrientationPreference.AutoSensor -> stringResource(R.string.orientation_auto)
+                    OrientationPreference.LandscapeFirst -> stringResource(R.string.orientation_landscape)
+                    OrientationPreference.PortraitTrackpad -> stringResource(R.string.orientation_portrait)
+                },
+                active = prefs.orientationPref != OrientationPreference.AutoSensor,
+                onClick = {
+                    val entries = OrientationPreference.entries
+                    viewModel.setOrientationPref(entries[(prefs.orientationPref.ordinal + 1) % entries.size])
+                },
+            ),
+        )
+        if (isPortrait) {
+            add(
+                TileSpec(
+                    icon = Icons.Rounded.ViewAgenda,
+                    label = stringResource(R.string.cp_portrait_prefix, prefs.portraitLayoutMode.label),
+                    active = prefs.portraitLayoutMode != PortraitLayoutMode.Auto,
+                    onClick = {
+                        val modes = PortraitLayoutMode.entries
+                        viewModel.setPortraitLayoutMode(modes[(prefs.portraitLayoutMode.ordinal + 1) % modes.size])
+                    },
+                ),
             )
         } else {
-            TileSpec(
-                icon = Icons.Rounded.ViewSidebar,
-                label = stringResource(if (sidebarConfig.showLandscapeSidebars) R.string.cp_sidebars_on else R.string.cp_sidebars_off),
-                active = sidebarConfig.showLandscapeSidebars,
-                onClick = { viewModel.setShowLandscapeSidebars(!sidebarConfig.showLandscapeSidebars) },
+            add(
+                TileSpec(
+                    icon = Icons.Rounded.ViewSidebar,
+                    label = stringResource(if (sidebarConfig.showLandscapeSidebars) R.string.cp_sidebars_on else R.string.cp_sidebars_off),
+                    active = sidebarConfig.showLandscapeSidebars,
+                    onClick = { viewModel.setShowLandscapeSidebars(!sidebarConfig.showLandscapeSidebars) },
+                ),
             )
-        },
-        TileSpec(
-            icon = Icons.Rounded.SportsEsports,
-            label = stringResource(if (keymapState.enabled) R.string.cp_keymap_on else R.string.cp_keymap_off),
-            active = keymapState.enabled,
-            onClick = { viewModel.setKeymapEnabled(!keymapState.enabled) },
-        ),
-        TileSpec(
-            icon = Icons.Rounded.Speed,
-            label = stringResource(if (prefs.showHud) R.string.cp_hud_on else R.string.cp_hud_off),
-            active = prefs.showHud,
-            onClick = { viewModel.setShowHud(!prefs.showHud) },
-        ),
-    )
+        }
+        add(
+            TileSpec(
+                icon = Icons.Rounded.SportsEsports,
+                label = stringResource(if (keymapState.enabled) R.string.cp_keymap_on else R.string.cp_keymap_off),
+                active = keymapState.enabled,
+                onClick = { viewModel.setKeymapEnabled(!keymapState.enabled) },
+            ),
+        )
+        add(
+            TileSpec(
+                icon = Icons.Rounded.Speed,
+                label = stringResource(if (prefs.showHud) R.string.cp_hud_on else R.string.cp_hud_off),
+                active = prefs.showHud,
+                onClick = { viewModel.setShowHud(!prefs.showHud) },
+            ),
+        )
+        if (state.hostMute.supported) {
+            add(
+                TileSpec(
+                    icon = if (state.hostMute.muted) Icons.AutoMirrored.Rounded.VolumeOff else Icons.AutoMirrored.Rounded.VolumeUp,
+                    label = stringResource(if (state.hostMute.muted) R.string.cp_host_mute_on else R.string.cp_host_mute_off),
+                    active = state.hostMute.muted,
+                    onClick = { viewModel.setHostMute(!state.hostMute.muted) },
+                ),
+            )
+        }
+    }
 
     tiles.chunked(cols).forEach { rowTiles ->
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
@@ -464,6 +555,40 @@ private fun ControlsTabBody(
                 ControlTile(t.icon, t.label, t.active, Modifier.weight(1f), t.onClick)
             }
             repeat(cols - rowTiles.size) { Spacer(modifier = Modifier.weight(1f)) }
+        }
+    }
+
+    if (state.privacy.supported) {
+        HorizontalDivider(color = SessionPalette.border, thickness = 1.dp)
+        val privacyModeLabel = when (state.privacy.mode) {
+            "privacy" -> stringResource(R.string.cp_privacy_mode)
+            "black" -> stringResource(R.string.cp_privacy_black)
+            else -> stringResource(R.string.cp_privacy_off)
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(stringResource(R.string.cp_privacy_curtain), color = SessionPalette.muted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+            Text(privacyModeLabel, color = SessionPalette.accentText, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            listOf(
+                "off" to stringResource(R.string.cp_privacy_off),
+                "privacy" to stringResource(R.string.cp_privacy_mode),
+                "black" to stringResource(R.string.cp_privacy_black),
+            ).forEach { (modeId, label) ->
+                SessionKeyChip(
+                    label = label,
+                    highlighted = state.privacy.mode == modeId,
+                ) {
+                    viewModel.setPrivacyMode(modeId)
+                }
+            }
         }
     }
 
@@ -526,7 +651,9 @@ private fun ControlsTabBody(
 @Composable
 private fun DisplayTabBody(
     state: ActiveSessionState,
+    diag: MediaDiagnosticsModel,
     prefs: InteractionPrefs,
+    localCodecSupport: Map<String, LocalCodecSupport>,
     viewModel: SessionViewModel,
 ) {
     val dc = state.displayConfig
@@ -534,10 +661,19 @@ private fun DisplayTabBody(
     val curH = dc?.height ?: state.negotiated?.height ?: 0
     val curFps = dc?.fps ?: state.negotiated?.fps ?: 60
     val activeBps = state.targetBitrateBps ?: state.negotiated?.bitrateBps
+    val activeCodecId = normalizeVideoCodecId(diag.streamCodec)
+        ?: normalizeVideoCodecId(dc?.codec)
+        ?: normalizeVideoCodecId(diag.codecName)
+    val activeCodecLabel = formatVideoCodecLabel(activeCodecId) ?: "--"
+    val remoteSupported = remember(dc?.supportedCodecs) {
+        dc?.supportedCodecs?.mapNotNull { normalizeVideoCodecId(it) }?.toSet().orEmpty()
+    }
+    val decoderActive = diag.codecName.isNotBlank() || diag.decodedFrames > 0L || diag.renderedFrames > 0L
     val presetSelection = remember(dc?.presets, curW, curH) {
         selectCommonResolutionPresets(dc?.presets.orEmpty(), curW, curH, maxCommon = 5)
     }
     var showMoreResolutions by remember { mutableStateOf(false) }
+    var showCreateVirtualDisplay by remember { mutableStateOf(false) }
 
     SessionSwitchRow(stringResource(R.string.cp_floating_hud), prefs.showHud, viewModel::setShowHud)
     Row(
@@ -555,6 +691,266 @@ private fun DisplayTabBody(
         Spacer(modifier = Modifier.width(8.dp))
         Text(stringResource(R.string.cp_request_idr), color = SessionPalette.text, fontSize = 13.sp, modifier = Modifier.weight(1f))
         Text(stringResource(R.string.cp_request_now), color = SessionPalette.accentText, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+    }
+
+    HorizontalDivider(color = SessionPalette.border, thickness = 1.dp)
+    Text(
+        text = stringResource(R.string.cp_connection_mode),
+        color = SessionPalette.muted,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.Medium,
+    )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(SessionPalette.surface)
+            .border(1.dp, SessionPalette.border, RoundedCornerShape(10.dp))
+            .padding(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        ConnectionModePref.entries.forEach { modeOption ->
+            val selected = prefs.connectionMode == modeOption
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(34.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(if (selected) SessionPalette.accent else Color.Transparent)
+                    .clickable {
+                        if (!selected) {
+                            viewModel.setConnectionMode(modeOption)
+                        }
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = modeOption.label,
+                    color = if (selected) Color.White else SessionPalette.muted,
+                    fontSize = 12.sp,
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+    Text(
+        text = stringResource(R.string.cp_connection_mode_hint),
+        color = SessionPalette.muted,
+        fontSize = 11.sp,
+    )
+
+    val adv = dc?.advisory
+    if (adv != null && adv.level != "optimal") {
+        val recW = adv.recommendedWidth
+        val recH = adv.recommendedHeight
+        val advisoryText = when {
+            adv.reason == "h264_suggest_hevc" || adv.canEnableHevc ->
+                stringResource(R.string.cp_advisory_h264_hevc)
+            adv.reason == "h264_no_hevc" && recW != null && recH != null ->
+                stringResource(R.string.cp_advisory_h264_res, recW, recH)
+            recW != null && recH != null ->
+                stringResource(R.string.cp_advisory_hevc_res, recW, recH)
+            else -> null
+        }
+        if (advisoryText != null) {
+            HorizontalDivider(color = SessionPalette.border, thickness = 1.dp)
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    text = advisoryText,
+                    color = SessionPalette.warning,
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp,
+                )
+                if (adv.canEnableHevc) {
+                    SessionKeyChip(stringResource(R.string.cp_advisory_switch_hevc)) {
+                        viewModel.setCodec("hevc")
+                    }
+                } else if (recW != null && recH != null) {
+                    SessionKeyChip(stringResource(R.string.cp_advisory_switch_res, recW, recH)) {
+                        viewModel.setStreamParams(recW, recH, curFps)
+                    }
+                }
+            }
+        }
+    }
+
+    if (state.displays.isNotEmpty() || !state.deviceOs.equals("android", ignoreCase = true)) {
+        HorizontalDivider(color = SessionPalette.border, thickness = 1.dp)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(stringResource(R.string.cp_displays), color = SessionPalette.muted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+            Icon(
+                imageVector = Icons.Rounded.Refresh,
+                contentDescription = stringResource(R.string.common_refresh),
+                tint = SessionPalette.muted,
+                modifier = Modifier
+                    .size(20.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .clickable(onClick = viewModel::listDisplays)
+                    .padding(2.dp),
+            )
+        }
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            state.displays.forEach { disp ->
+                val isActive = disp.id == state.activeDisplayId
+                val title = disp.name.ifBlank { "#${disp.id}" }
+                val shape = RoundedCornerShape(8.dp)
+                Row(
+                    modifier = Modifier
+                        .heightIn(min = 32.dp)
+                        .clip(shape)
+                        .background(if (isActive) SessionPalette.accent else SessionPalette.surface)
+                        .border(
+                            1.dp,
+                            if (isActive) SessionPalette.accent else SessionPalette.border,
+                            shape,
+                        )
+                        .clickable { viewModel.switchDisplay(disp.id) }
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Monitor,
+                        contentDescription = null,
+                        tint = if (isActive) Color.White else SessionPalette.accentText,
+                        modifier = Modifier.size(14.dp),
+                    )
+                    Text(
+                        text = "$title · ${disp.width}×${disp.height}",
+                        color = if (isActive) Color.White else SessionPalette.text,
+                        fontSize = 11.sp,
+                        fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (disp.isVirtual) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(
+                                    if (isActive) Color.White.copy(alpha = 0.22f)
+                                    else SessionPalette.surfaceActive,
+                                )
+                                .padding(horizontal = 4.dp, vertical = 1.dp),
+                        ) {
+                            Text(
+                                text = stringResource(R.string.cp_display_virtual_tag),
+                                color = if (isActive) Color.White else SessionPalette.muted,
+                                fontSize = 9.sp,
+                            )
+                        }
+                        Icon(
+                            imageVector = Icons.Rounded.Close,
+                            contentDescription = stringResource(R.string.cp_vdisp_remove_cd),
+                            tint = if (isActive) Color.White else SessionPalette.muted,
+                            modifier = Modifier
+                                .size(16.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                                .clickable { viewModel.removeVirtualDisplay(disp.id) }
+                                .padding(1.dp),
+                        )
+                    }
+                }
+            }
+            SessionKeyChip(stringResource(R.string.cp_add_virtual_display)) {
+                showCreateVirtualDisplay = true
+            }
+        }
+    }
+
+    HorizontalDivider(color = SessionPalette.border, thickness = 1.dp)
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(stringResource(R.string.cp_video_codec), color = SessionPalette.muted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        Text(activeCodecLabel, color = SessionPalette.accentText, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+    }
+    val codecChoices = listOf(
+        "h264" to "H.264",
+        "hevc" to "HEVC",
+        "av1" to "AV1",
+    )
+    var hasDisabledCodec = false
+    FlowRow(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        codecChoices.forEach { (codecId, label) ->
+            val hostSupported = if (remoteSupported.isNotEmpty()) {
+                codecId in remoteSupported
+            } else {
+                codecId == "h264"
+            }
+            val localSupported = when (codecId) {
+                "h264" -> true
+                "hevc" -> dc?.clientSupportsHevc == true || localCodecSupport["hevc"]?.hasHardware == true
+                "av1" -> localCodecSupport["av1"]?.hasHardware == true
+                else -> false
+            }
+            val enabled = (hostSupported && localSupported) || (activeCodecId == codecId)
+            if (!enabled) hasDisabledCodec = true
+            SessionKeyChip(
+                label = label,
+                highlighted = activeCodecId == codecId,
+                enabled = enabled,
+            ) {
+                viewModel.setCodec(codecId)
+            }
+        }
+    }
+    if (hasDisabledCodec) {
+        Text(
+            text = stringResource(R.string.cp_codec_unsupported_hint),
+            color = SessionPalette.muted,
+            fontSize = 11.sp,
+        )
+    }
+
+    HorizontalDivider(color = SessionPalette.border, thickness = 1.dp)
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(stringResource(R.string.cp_decode_mode), color = SessionPalette.muted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        val statusLabel = when {
+            prefs.preferHardwareDecode && decoderActive && !diag.hardware -> stringResource(R.string.cp_decode_fallback_sw)
+            decoderActive && diag.hardware -> stringResource(R.string.cp_hw_decode)
+            decoderActive && !diag.hardware -> stringResource(R.string.cp_sw_decode)
+            prefs.preferHardwareDecode -> stringResource(R.string.cp_hw_decode)
+            else -> stringResource(R.string.cp_sw_decode)
+        }
+        Text(statusLabel, color = SessionPalette.accentText, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        SessionKeyChip(
+            label = stringResource(R.string.cp_decode_hw),
+            highlighted = prefs.preferHardwareDecode,
+        ) {
+            viewModel.setPreferHardwareDecode(true)
+        }
+        SessionKeyChip(
+            label = stringResource(R.string.cp_decode_sw),
+            highlighted = !prefs.preferHardwareDecode,
+        ) {
+            viewModel.setPreferHardwareDecode(false)
+        }
     }
 
     if (presetSelection.common.isNotEmpty()) {
@@ -659,6 +1055,16 @@ private fun DisplayTabBody(
                 viewModel.setBitrate(bps)
             }
         }
+    }
+
+    if (showCreateVirtualDisplay) {
+        CreateVirtualDisplayDialog(
+            onDismiss = { showCreateVirtualDisplay = false },
+            onCreate = { w, h, hidpi ->
+                viewModel.createVirtualDisplay(w, h, hidpi)
+                showCreateVirtualDisplay = false
+            },
+        )
     }
 }
 
@@ -891,5 +1297,281 @@ private fun SessionToolRow(
             tint = SessionPalette.muted,
             modifier = Modifier.size(18.dp),
         )
+    }
+}
+
+@Composable
+private fun MtlsFingerprintDialog(
+    transport: String,
+    fingerprint: String?,
+    onDismiss: () -> Unit,
+) {
+    val clipboard = LocalClipboardManager.current
+    val copiedMsg = stringResource(R.string.cp_mtls_fingerprint_copied)
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(RabbitRadius.Lg),
+            color = SessionPalette.chromeElevated,
+            border = BorderStroke(1.dp, SessionPalette.border),
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 360.dp),
+        ) {
+            Column(
+                modifier = Modifier.padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.VerifiedUser,
+                        contentDescription = null,
+                        tint = SessionPalette.success,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Text(
+                        text = stringResource(R.string.cp_mtls_title),
+                        color = SessionPalette.text,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+                Text(
+                    text = stringResource(R.string.cp_mtls_status_active),
+                    color = SessionPalette.muted,
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp,
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        text = stringResource(R.string.cp_mtls_transport_label),
+                        color = SessionPalette.muted,
+                        fontSize = 12.sp,
+                    )
+                    Text(
+                        text = transport,
+                        color = SessionPalette.accentText,
+                        fontSize = 12.sp,
+                        fontFamily = FontFamily.Monospace,
+                    )
+                }
+                Text(
+                    text = stringResource(R.string.cp_mtls_fingerprint_label),
+                    color = SessionPalette.muted,
+                    fontSize = 12.sp,
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(SessionPalette.surface)
+                        .border(1.dp, SessionPalette.border, RoundedCornerShape(10.dp))
+                        .padding(10.dp),
+                ) {
+                    Text(
+                        text = fingerprint?.takeIf { it.isNotBlank() }
+                            ?: stringResource(R.string.cp_mtls_fingerprint_missing),
+                        color = SessionPalette.text,
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
+                        lineHeight = 16.sp,
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    if (!fingerprint.isNullOrBlank()) {
+                        TextButton(
+                            onClick = {
+                                clipboard.setText(AnnotatedString(fingerprint))
+                                RabbitToast.success(copiedMsg)
+                            },
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.ContentCopy,
+                                contentDescription = null,
+                                tint = SessionPalette.accentText,
+                                modifier = Modifier.size(15.dp),
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = stringResource(R.string.cp_mtls_copy_fingerprint),
+                                color = SessionPalette.accentText,
+                                fontSize = 12.sp,
+                            )
+                        }
+                    }
+                    TextButton(onClick = onDismiss) {
+                        Text(
+                            text = stringResource(R.string.common_close),
+                            color = SessionPalette.text,
+                            fontSize = 12.sp,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun CreateVirtualDisplayDialog(
+    onDismiss: () -> Unit,
+    onCreate: (width: Int, height: Int, hidpi: Boolean) -> Unit,
+) {
+    val context = LocalContext.current
+    val dm = context.resources.displayMetrics
+    val phoneRatioSize = remember(dm.widthPixels, dm.heightPixels) {
+        val longSide = maxOf(dm.widthPixels, dm.heightPixels).coerceAtLeast(1)
+        val shortSide = minOf(dm.widthPixels, dm.heightPixels).coerceAtLeast(1)
+        val targetW = 1920
+        val rawH = ((1920.0 * shortSide.toDouble()) / longSide.toDouble()).roundToInt().coerceIn(720, 1440)
+        val evenH = (rawH / 2) * 2
+        targetW to evenH
+    }
+    var widthText by remember { mutableStateOf("1920") }
+    var heightText by remember { mutableStateOf("1080") }
+    var hidpi by remember { mutableStateOf(false) }
+
+    val parsedW = widthText.trim().toIntOrNull()
+    val parsedH = heightText.trim().toIntOrNull()
+    val validSize = parsedW != null && parsedW in 640..3840 && parsedH != null && parsedH in 480..2160
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(RabbitRadius.Lg),
+            color = SessionPalette.chromeElevated,
+            border = BorderStroke(1.dp, SessionPalette.border),
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 360.dp),
+        ) {
+            Column(
+                modifier = Modifier.padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.cp_vdisp_title),
+                    color = SessionPalette.text,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = stringResource(R.string.cp_vdisp_presets),
+                    color = SessionPalette.muted,
+                    fontSize = 12.sp,
+                )
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    SessionKeyChip(
+                        label = "1920×1080",
+                        highlighted = widthText == "1920" && heightText == "1080",
+                    ) {
+                        widthText = "1920"
+                        heightText = "1080"
+                    }
+                    SessionKeyChip(
+                        label = "2560×1440",
+                        highlighted = widthText == "2560" && heightText == "1440",
+                    ) {
+                        widthText = "2560"
+                        heightText = "1440"
+                    }
+                    SessionKeyChip(
+                        label = stringResource(R.string.cp_vdisp_match_phone) +
+                            " (${phoneRatioSize.first}×${phoneRatioSize.second})",
+                        highlighted = widthText == phoneRatioSize.first.toString() &&
+                            heightText == phoneRatioSize.second.toString(),
+                    ) {
+                        widthText = phoneRatioSize.first.toString()
+                        heightText = phoneRatioSize.second.toString()
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    val fieldColors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = SessionPalette.text,
+                        unfocusedTextColor = SessionPalette.text,
+                        focusedBorderColor = SessionPalette.accent,
+                        unfocusedBorderColor = SessionPalette.border,
+                        focusedLabelColor = SessionPalette.accentText,
+                        unfocusedLabelColor = SessionPalette.muted,
+                    )
+                    OutlinedTextField(
+                        value = widthText,
+                        onValueChange = { next -> if (next.length <= 4 && next.all { it.isDigit() }) widthText = next },
+                        label = { Text(stringResource(R.string.cp_vdisp_width), fontSize = 11.sp) },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        colors = fieldColors,
+                        modifier = Modifier.weight(1f),
+                    )
+                    OutlinedTextField(
+                        value = heightText,
+                        onValueChange = { next -> if (next.length <= 4 && next.all { it.isDigit() }) heightText = next },
+                        label = { Text(stringResource(R.string.cp_vdisp_height), fontSize = 11.sp) },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        colors = fieldColors,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                if (!validSize) {
+                    Text(
+                        text = stringResource(R.string.cp_vdisp_invalid_size),
+                        color = SessionPalette.dangerText,
+                        fontSize = 11.sp,
+                    )
+                }
+                SessionSwitchRow(
+                    label = stringResource(R.string.cp_vdisp_hidpi),
+                    checked = hidpi,
+                    onCheckedChange = { hidpi = it },
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text(
+                            text = stringResource(R.string.common_cancel),
+                            color = SessionPalette.muted,
+                            fontSize = 12.sp,
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    TextButton(
+                        enabled = validSize,
+                        onClick = {
+                            val w = (((parsedW ?: 1920).coerceIn(640, 3840)) / 2) * 2
+                            val h = (((parsedH ?: 1080).coerceIn(480, 2160)) / 2) * 2
+                            onCreate(w, h, hidpi)
+                        },
+                        colors = ButtonDefaults.textButtonColors(
+                            contentColor = SessionPalette.accentText,
+                            disabledContentColor = SessionPalette.muted,
+                        ),
+                    ) {
+                        Text(
+                            text = stringResource(R.string.cp_vdisp_create),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
+            }
+        }
     }
 }

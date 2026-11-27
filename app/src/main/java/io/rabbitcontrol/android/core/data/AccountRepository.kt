@@ -1,6 +1,7 @@
 package io.rabbitcontrol.android.core.data
 
 import android.content.Context
+import android.net.wifi.WifiManager
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
@@ -13,7 +14,9 @@ import io.rabbitcontrol.android.core.nativebridge.NativeRuntimeBootstrap
 import io.rabbitcontrol.android.core.nativebridge.RemoteDevice
 import io.rabbitcontrol.android.core.nativebridge.ServerConfigModel
 import io.rabbitcontrol.android.core.nativebridge.SignalStatusSnapshot
+import io.rabbitcontrol.android.core.nativebridge.UpnpStatusModel
 import io.rabbitcontrol.android.core.nativebridge.UserProfile
+import io.rabbitcontrol.android.core.nativebridge.parseUpnpStatusPayload
 import io.rabbitcontrol.android.session.Core
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -42,7 +45,10 @@ data class ServerProbeCheck(
     val status: String,
 )
 
-class AccountRepository(context: Context) {
+class AccountRepository(
+    context: Context,
+    private val prefsStore: InteractionPrefsStore = InteractionPrefsStore(context.applicationContext),
+) {
     private val appContext = context.applicationContext
     private val prefs = appContext.getSharedPreferences("rabbitcontrol_account", Context.MODE_PRIVATE)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -50,6 +56,8 @@ class AccountRepository(context: Context) {
     private var tokens: JSONObject? = null
     @Volatile
     private var pendingNativeRestoreJob: Job? = null
+    private var upnpMulticastReleaseJob: Job? = null
+    private var upnpMulticastLock: WifiManager.MulticastLock? = null
     private val appInForeground = MutableStateFlow(true)
     private val backgroundKeepAlive = MutableStateFlow(false)
     private val shouldPollSignal = MutableStateFlow(true)
@@ -70,6 +78,9 @@ class AccountRepository(context: Context) {
 
     private val _signalStatus = MutableStateFlow(SignalStatusSnapshot())
     val signalStatus: StateFlow<SignalStatusSnapshot> = _signalStatus.asStateFlow()
+
+    private val _upnpStatus = MutableStateFlow(UpnpStatusModel(enabled = prefsStore.state.value.upnpEnabled))
+    val upnpStatus: StateFlow<UpnpStatusModel> = _upnpStatus.asStateFlow()
 
     private val _kickedNotice = MutableStateFlow<String?>(null)
     val kickedNotice: StateFlow<String?> = _kickedNotice.asStateFlow()
@@ -121,6 +132,14 @@ class AccountRepository(context: Context) {
                             val prev = _signalStatus.value
                             if (snap != prev) {
                                 _signalStatus.value = snap
+                                if (snap.state == "connected" || snap.state == "disabled") {
+                                    if (prefsStore.state.value.upnpEnabled && snap.state == "connected") {
+                                        acquireUpnpMulticastLockTemporarily()
+                                    }
+                                    scope.launch {
+                                        refreshUpnpStatus()
+                                    }
+                                }
                             }
                             val active = _server.value
                             if (!snap.deviceId.isNullOrBlank() && active != null) {
@@ -160,13 +179,28 @@ class AccountRepository(context: Context) {
                                         val alias = ev.optString("alias")
                                         val hostname = ev.optString("hostname")
                                         val os = ev.optString("os")
+                                        val osNorm = os.lowercase()
+                                        val defaultControl = !osNorm.contains("android") && !osNorm.contains("ios")
+                                        val allowControl = if (ev.has("allow_remote_control") && !ev.isNull("allow_remote_control")) {
+                                            ev.optBoolean("allow_remote_control", defaultControl)
+                                        } else {
+                                            defaultControl
+                                        }
                                         _devices.value = _devices.value.map { d ->
                                             if (d.id == did) {
+                                                val effOs = os.ifBlank { d.os }
                                                 d.copy(
                                                     online = online,
                                                     allowRemoteAssist = allowAssist,
+                                                    allowRemoteControl = if (ev.has("allow_remote_control") && !ev.isNull("allow_remote_control")) {
+                                                        allowControl
+                                                    } else if (os.isNotBlank()) {
+                                                        allowControl
+                                                    } else {
+                                                        d.allowRemoteControl
+                                                    },
                                                     name = alias.ifBlank { hostname.ifBlank { d.name } },
-                                                    os = os.ifBlank { d.os },
+                                                    os = effOs,
                                                 )
                                             } else {
                                                 d
@@ -394,6 +428,60 @@ class AccountRepository(context: Context) {
         }
     }
 
+    suspend fun refreshUpnpStatus(): UpnpStatusModel = withContext(Dispatchers.IO) {
+        NativeRuntimeBootstrap.ensureReady(appContext)
+        val parsed = runCatching {
+            parseUpnpStatusPayload(Core.getUpnpStatus())
+        }.getOrElse {
+            UpnpStatusModel(enabled = prefsStore.state.value.upnpEnabled)
+        }
+        _upnpStatus.value = parsed
+        parsed
+    }
+
+    suspend fun setUpnpEnabled(enabled: Boolean): Result<UpnpStatusModel> = withContext(Dispatchers.IO) {
+        runCatching {
+            NativeRuntimeBootstrap.ensureReady(appContext)
+            prefsStore.update { it.copy(upnpEnabled = enabled) }
+            if (enabled) {
+                acquireUpnpMulticastLockTemporarily()
+            } else {
+                releaseUpnpMulticastLock()
+            }
+            val parsed = parseUpnpStatusPayload(Core.setUpnpEnabled(enabled))
+            _upnpStatus.value = parsed
+            parsed
+        }
+    }
+
+    private fun acquireUpnpMulticastLockTemporarily() {
+        upnpMulticastReleaseJob?.cancel()
+        runCatching {
+            val wm = appContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager ?: return@runCatching
+            val lock = upnpMulticastLock ?: wm.createMulticastLock("rabbitcontrol:upnp").apply {
+                setReferenceCounted(false)
+                upnpMulticastLock = this
+            }
+            if (!lock.isHeld) {
+                lock.acquire()
+            }
+        }
+        upnpMulticastReleaseJob = scope.launch {
+            delay(8_000L)
+            releaseUpnpMulticastLock()
+        }
+    }
+
+    private fun releaseUpnpMulticastLock() {
+        upnpMulticastReleaseJob?.cancel()
+        upnpMulticastReleaseJob = null
+        runCatching {
+            upnpMulticastLock?.let { lock ->
+                if (lock.isHeld) lock.release()
+            }
+        }
+    }
+
     suspend fun probeServer(
         address: String,
         expectedPin: String,
@@ -615,14 +703,23 @@ class AccountRepository(context: Context) {
         val list = List(raw.length()) { index ->
             val item = raw.getJSONObject(index)
             val id = item.getString("device_id")
+            val os = item.optString("os")
+            val osNorm = os.lowercase()
+            val defaultControl = !osNorm.contains("android") && !osNorm.contains("ios")
+            val allowControl = if (item.has("allow_remote_control") && !item.isNull("allow_remote_control")) {
+                item.optBoolean("allow_remote_control", defaultControl)
+            } else {
+                defaultControl
+            }
             RemoteDevice(
                 id = id,
                 name = item.optString("alias").ifBlank { item.optString("hostname").ifBlank { id } },
-                os = item.optString("os"),
+                os = os,
                 online = item.optBoolean("online"),
                 busy = item.optBoolean("in_session"),
                 disabled = item.optBoolean("disabled"),
                 allowRemoteAssist = item.optBoolean("allow_remote_assist"),
+                allowRemoteControl = allowControl,
                 wolCapable = item.optBoolean("wol_capable", false),
             )
         }.filter { it.id != selfId }

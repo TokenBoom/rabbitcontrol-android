@@ -47,6 +47,7 @@ pub struct CodecCandidate {
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MediaDiagnostics {
+    pub stream_codec: String,
     pub codec_name: String,
     pub hardware: bool,
     pub low_latency: bool,
@@ -57,6 +58,7 @@ pub struct MediaDiagnostics {
 }
 
 static CODEC_CANDIDATES: OnceLock<Mutex<Vec<CodecCandidate>>> = OnceLock::new();
+static DIAG_STREAM_CODEC: OnceLock<Mutex<String>> = OnceLock::new();
 static DIAG_CODEC_NAME: OnceLock<Mutex<String>> = OnceLock::new();
 static DIAG_HARDWARE: AtomicBool = AtomicBool::new(false);
 static DIAG_LOW_LATENCY: AtomicBool = AtomicBool::new(false);
@@ -65,6 +67,54 @@ static DIAG_RENDERED: AtomicU64 = AtomicU64::new(0);
 static DIAG_DROPPED: AtomicU64 = AtomicU64::new(0);
 static FIRST_FRAME_REPORTED: AtomicBool = AtomicBool::new(false);
 static FORCE_KEYFRAME: AtomicBool = AtomicBool::new(false);
+static PREFER_HARDWARE_DECODE: AtomicBool = AtomicBool::new(true);
+static DECODE_PREF_GEN: AtomicU64 = AtomicU64::new(0);
+
+pub fn prefer_hardware_decode() -> bool {
+    PREFER_HARDWARE_DECODE.load(Ordering::Acquire)
+}
+
+pub fn set_prefer_hardware_decode(prefer_hardware: bool) {
+    let prev = PREFER_HARDWARE_DECODE.swap(prefer_hardware, Ordering::AcqRel);
+    if prev != prefer_hardware {
+        DECODE_PREF_GEN.fetch_add(1, Ordering::AcqRel);
+        FORCE_KEYFRAME.store(true, Ordering::Release);
+    }
+}
+
+pub fn select_decoder_candidates(
+    codec_kind: Codec,
+    all: &[CodecCandidate],
+    prefer_hardware: bool,
+) -> Vec<CodecCandidate> {
+    let mut matched: Vec<CodecCandidate> = all
+        .iter()
+        .filter(|c| Codec::parse_lossy(&c.codec) == Some(codec_kind))
+        .cloned()
+        .collect();
+    if prefer_hardware {
+        matched.sort_by_key(|c| {
+            std::cmp::Reverse((
+                c.hardware,
+                c.low_latency,
+                u64::from(c.max_width) * u64::from(c.max_height),
+            ))
+        });
+        return matched;
+    }
+    let mut sw_only: Vec<CodecCandidate> =
+        matched.iter().filter(|c| !c.hardware).cloned().collect();
+    if !sw_only.is_empty() {
+        sw_only.sort_by_key(|c| {
+            std::cmp::Reverse((
+                c.low_latency,
+                u64::from(c.max_width) * u64::from(c.max_height),
+            ))
+        });
+        return sw_only;
+    }
+    matched
+}
 
 pub fn set_codec_candidates(candidates: Vec<CodecCandidate>) {
     let lock = CODEC_CANDIDATES.get_or_init(|| Mutex::new(Vec::new()));
@@ -79,6 +129,7 @@ fn get_codec_candidates() -> Vec<CodecCandidate> {
         .clone()
 }
 
+#[allow(dead_code)]
 pub fn supports_hardware_hevc() -> bool {
     get_codec_candidates()
         .iter()
@@ -160,6 +211,9 @@ pub fn request_keyframe() {
 }
 
 pub fn reset_media_diagnostics() {
+    if let Some(m) = DIAG_STREAM_CODEC.get() {
+        *m.lock().unwrap_or_else(|e| e.into_inner()) = String::new();
+    }
     if let Some(m) = DIAG_CODEC_NAME.get() {
         *m.lock().unwrap_or_else(|e| e.into_inner()) = String::new();
     }
@@ -186,12 +240,18 @@ pub fn media_diagnostics() -> MediaDiagnostics {
     if rendered > 0 {
         FIRST_FRAME_REPORTED.store(true, Ordering::Release);
     }
+    let stream_codec = DIAG_STREAM_CODEC
+        .get_or_init(|| Mutex::new(String::new()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     let codec_name = DIAG_CODEC_NAME
         .get_or_init(|| Mutex::new(String::new()))
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .clone();
     MediaDiagnostics {
+        stream_codec,
         codec_name,
         hardware: DIAG_HARDWARE.load(Ordering::Acquire),
         low_latency: DIAG_LOW_LATENCY.load(Ordering::Acquire),
@@ -202,7 +262,13 @@ pub fn media_diagnostics() -> MediaDiagnostics {
     }
 }
 
-fn set_diag_codec(name: String, hardware: bool, low_latency: bool) {
+fn set_diag_stream_codec(stream_codec: &str) {
+    let lock = DIAG_STREAM_CODEC.get_or_init(|| Mutex::new(String::new()));
+    *lock.lock().unwrap_or_else(|e| e.into_inner()) = stream_codec.to_string();
+}
+
+fn set_diag_codec(stream_codec: &str, name: String, hardware: bool, low_latency: bool) {
+    set_diag_stream_codec(stream_codec);
     let lock = DIAG_CODEC_NAME.get_or_init(|| Mutex::new(String::new()));
     *lock.lock().unwrap_or_else(|e| e.into_inner()) = name;
     DIAG_HARDWARE.store(hardware, Ordering::Release);
@@ -552,6 +618,7 @@ pub struct AndroidSurfaceDecoder {
     codec: *mut sys::AMediaCodec,
     drainer: Option<CodecOutputDrainer>,
     active_generation: u64,
+    active_pref_gen: u64,
     last_vps: Option<Vec<u8>>,
     last_sps: Option<Vec<u8>>,
     last_pps: Option<Vec<u8>>,
@@ -565,6 +632,7 @@ unsafe impl Send for AndroidSurfaceDecoder {}
 #[cfg(target_os = "android")]
 impl AndroidSurfaceDecoder {
     pub fn new(width: u32, height: u32, codec_kind: Codec) -> Self {
+        set_diag_stream_codec(codec_kind.as_str());
         Self {
             width: width.max(2),
             height: height.max(2),
@@ -572,6 +640,7 @@ impl AndroidSurfaceDecoder {
             codec: std::ptr::null_mut(),
             drainer: None,
             active_generation: 0,
+            active_pref_gen: DECODE_PREF_GEN.load(Ordering::Acquire),
             last_vps: None,
             last_sps: None,
             last_pps: None,
@@ -608,16 +677,15 @@ impl AndroidSurfaceDecoder {
             Codec::Av1 => "video/av01",
         };
         let mime = CString::new(mime_str).unwrap();
-        let mut candidates: Vec<CodecCandidate> = get_codec_candidates()
-            .into_iter()
-            .filter(|c| Codec::parse_lossy(&c.codec) == Some(self.codec_kind))
-            .collect();
+        let prefer_hw = prefer_hardware_decode();
+        let mut candidates: Vec<CodecCandidate> =
+            select_decoder_candidates(self.codec_kind, &get_codec_candidates(), prefer_hw);
         if candidates.is_empty() {
             candidates.push(CodecCandidate {
                 codec: self.codec_kind.as_str().to_string(),
                 name: String::new(),
-                hardware: true,
-                low_latency: true,
+                hardware: prefer_hw,
+                low_latency: prefer_hw,
                 max_width: 3840,
                 max_height: 2160,
             });
@@ -750,7 +818,13 @@ impl AndroidSurfaceDecoder {
 
                 self.codec = codec;
                 self.drainer = Some(CodecOutputDrainer::spawn(codec));
-                set_diag_codec(actual_name, cand.hardware, low_lat);
+                self.active_pref_gen = DECODE_PREF_GEN.load(Ordering::Acquire);
+                set_diag_codec(
+                    self.codec_kind.as_str(),
+                    actual_name,
+                    cand.hardware,
+                    low_lat,
+                );
                 return Ok(());
             }
         }
@@ -913,6 +987,13 @@ impl Decoder for AndroidSurfaceDecoder {
             self.needs_keyframe = true;
         }
 
+        let pref_gen = DECODE_PREF_GEN.load(Ordering::Acquire);
+        if self.active_pref_gen != pref_gen {
+            self.release_codec();
+            self.active_pref_gen = pref_gen;
+            self.needs_keyframe = true;
+        }
+
         if self.codec.is_null() || (is_idr && csd_changed) {
             match self.codec_kind {
                 Codec::H264 => {
@@ -1034,7 +1115,8 @@ pub struct AndroidSurfaceDecoder {
 
 #[cfg(not(target_os = "android"))]
 impl AndroidSurfaceDecoder {
-    pub fn new(width: u32, height: u32, _codec: Codec) -> Self {
+    pub fn new(width: u32, height: u32, codec: Codec) -> Self {
+        set_diag_stream_codec(codec.as_str());
         Self { width, height }
     }
 }
@@ -1084,4 +1166,83 @@ impl Renderer for AndroidSurfaceRenderer {
     fn set_vsync(&mut self, _on: bool) {}
 
     fn set_cursor(&mut self, _pos: (i32, i32), _visible: bool) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_candidates() -> Vec<CodecCandidate> {
+        vec![
+            CodecCandidate {
+                codec: "hevc".to_string(),
+                name: "c2.android.hevc.decoder".to_string(),
+                hardware: false,
+                low_latency: false,
+                max_width: 4096,
+                max_height: 4096,
+            },
+            CodecCandidate {
+                codec: "hevc".to_string(),
+                name: "c2.qti.hevc.decoder".to_string(),
+                hardware: true,
+                low_latency: false,
+                max_width: 4096,
+                max_height: 2176,
+            },
+            CodecCandidate {
+                codec: "hevc".to_string(),
+                name: "c2.qti.hevc.decoder.low_latency".to_string(),
+                hardware: true,
+                low_latency: true,
+                max_width: 4096,
+                max_height: 2176,
+            },
+            CodecCandidate {
+                codec: "h264".to_string(),
+                name: "c2.qti.avc.decoder.low_latency".to_string(),
+                hardware: true,
+                low_latency: true,
+                max_width: 4096,
+                max_height: 2176,
+            },
+        ]
+    }
+
+    #[test]
+    fn select_decoder_candidates_prefers_hw_with_sw_fallback() {
+        let selected = select_decoder_candidates(Codec::Hevc, &sample_candidates(), true);
+        let names: Vec<&str> = selected.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec![
+                "c2.qti.hevc.decoder.low_latency",
+                "c2.qti.hevc.decoder",
+                "c2.android.hevc.decoder",
+            ]
+        );
+    }
+
+    #[test]
+    fn select_decoder_candidates_forces_sw_only_when_preferred() {
+        let selected = select_decoder_candidates(Codec::Hevc, &sample_candidates(), false);
+        let names: Vec<&str> = selected.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["c2.android.hevc.decoder"]);
+
+        // If a codec only has hardware decoders on this device, falls back rather than returning empty.
+        let h264_fallback = select_decoder_candidates(Codec::H264, &sample_candidates(), false);
+        assert_eq!(h264_fallback.len(), 1);
+        assert_eq!(h264_fallback[0].name, "c2.qti.avc.decoder.low_latency");
+    }
+
+    #[test]
+    fn set_prefer_hardware_decode_updates_flag_and_generation() {
+        set_prefer_hardware_decode(true);
+        let g1 = DECODE_PREF_GEN.load(Ordering::Acquire);
+        set_prefer_hardware_decode(false);
+        assert!(!prefer_hardware_decode());
+        assert!(DECODE_PREF_GEN.load(Ordering::Acquire) > g1);
+        set_prefer_hardware_decode(true);
+        assert!(prefer_hardware_decode());
+    }
 }

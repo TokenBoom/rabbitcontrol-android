@@ -16,6 +16,8 @@ internal object Core {
     external fun resolveUiError(code: String, detail: String? = null): String
     external fun setProxyConfig(configJson: String): String
     external fun requestWol(deviceId: String): String
+    external fun getUpnpStatus(): String
+    external fun setUpnpEnabled(enabled: Boolean): String
 
     external fun initRuntime(
         filesDir: String,
@@ -36,8 +38,10 @@ internal object Core {
     external fun detachSurface()
 
     external fun pollSignalEvents(): String?
+    external fun onNetworkChanged()
     external fun openSession(requestJson: String): String
     external fun disconnectSession(lockRemote: Boolean)
+    external fun setPreferHardwareDecode(preferHardware: Boolean)
     external fun sendSessionCommand(commandJson: String)
     external fun pollSessionUpdates(includeMedia: Boolean): String?
 

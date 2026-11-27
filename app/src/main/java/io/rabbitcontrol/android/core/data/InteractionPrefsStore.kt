@@ -56,6 +56,27 @@ enum class AppThemeMode(
         get() = AppStrings.get(labelRes, defaultLabel)
 }
 
+enum class ConnectionModePref(
+    val wireValue: String,
+    @StringRes val labelRes: Int,
+    private val defaultLabel: String,
+) {
+    Auto("auto", R.string.conn_mode_auto, "自动"),
+    P2pOnly("p2p_only", R.string.conn_mode_p2p, "仅 P2P"),
+    TcpRelay("tcp_relay", R.string.conn_mode_relay, "TCP 中继");
+
+    val label: String
+        get() = AppStrings.get(labelRes, defaultLabel)
+
+    companion object {
+        fun fromWire(raw: String?): ConnectionModePref = when (raw?.trim()?.lowercase()) {
+            "p2p_only", "p2p" -> P2pOnly
+            "tcp_relay", "relay" -> TcpRelay
+            else -> Auto
+        }
+    }
+}
+
 @Immutable
 data class InteractionPrefs(
     val touchMode: TouchInputMode = TouchInputMode.Trackpad,
@@ -71,6 +92,9 @@ data class InteractionPrefs(
     val themeMode: AppThemeMode = AppThemeMode.System,
     val hostAllowRemoteAssist: Boolean = false,
     val hostAllowAssistFileTransfer: Boolean = true,
+    val preferHardwareDecode: Boolean = true,
+    val upnpEnabled: Boolean = false,
+    val connectionMode: ConnectionModePref = ConnectionModePref.Auto,
 )
 
 class InteractionPrefsStore(context: Context) {
@@ -89,6 +113,7 @@ class InteractionPrefsStore(context: Context) {
             ?: PortraitLayoutMode.Auto
         val themeMode = AppThemeMode.entries.getOrNull(prefs.getInt("theme_mode", 0))
             ?: AppThemeMode.System
+        val connectionMode = ConnectionModePref.fromWire(prefs.getString("connection_mode", null))
         return InteractionPrefs(
             touchMode = touchMode,
             pointerSensitivity = prefs.getFloat("sensitivity", 1.15f).coerceIn(0.4f, 3.0f),
@@ -103,6 +128,9 @@ class InteractionPrefsStore(context: Context) {
             themeMode = themeMode,
             hostAllowRemoteAssist = prefs.getBoolean("host_allow_remote_assist", false),
             hostAllowAssistFileTransfer = prefs.getBoolean("host_allow_assist_file_transfer", true),
+            preferHardwareDecode = prefs.getBoolean("prefer_hardware_decode", true),
+            upnpEnabled = prefs.getBoolean("upnp_enabled", false),
+            connectionMode = connectionMode,
         )
     }
 
@@ -123,6 +151,9 @@ class InteractionPrefsStore(context: Context) {
             .putInt("theme_mode", next.themeMode.ordinal)
             .putBoolean("host_allow_remote_assist", next.hostAllowRemoteAssist)
             .putBoolean("host_allow_assist_file_transfer", next.hostAllowAssistFileTransfer)
+            .putBoolean("prefer_hardware_decode", next.preferHardwareDecode)
+            .putBoolean("upnp_enabled", next.upnpEnabled)
+            .putString("connection_mode", next.connectionMode.wireValue)
             .apply()
     }
 }

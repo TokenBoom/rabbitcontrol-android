@@ -3,6 +3,7 @@ package io.rabbitcontrol.android.core.nativebridge
 import android.content.Context
 import android.os.Build
 import android.util.Log
+import io.rabbitcontrol.android.core.data.InteractionPrefsStore
 import io.rabbitcontrol.android.core.data.ProxyConfigStore
 import io.rabbitcontrol.android.session.Core
 import java.util.concurrent.CountDownLatch
@@ -50,6 +51,8 @@ internal object NativeRuntimeBootstrap {
             val codecsJson = HardwareCodecProbe.probeDecodersJson()
             Core.initRuntime(appContext.filesDir.absolutePath, deviceName, deviceKey, codecsJson)
             ProxyConfigStore(appContext).applySavedOnStartup()
+            val upnpEnabled = InteractionPrefsStore(appContext).state.value.upnpEnabled
+            runCatching { Core.setUpnpEnabled(upnpEnabled) }
             NativeLibraryLoader.onRuntimeVerified(rawInfo)
             Log.i("RC_DIAG", "initRuntime ok: stableKey=${deviceKey.isNotEmpty()}")
         } catch (err: Throwable) {

@@ -112,6 +112,8 @@ import io.rabbitcontrol.android.core.input.ImeInputBridge
 import io.rabbitcontrol.android.core.input.PrecisionTouchLayer
 import io.rabbitcontrol.android.core.input.ScancodeMapper
 import io.rabbitcontrol.android.core.nativebridge.HudSnapshotModel
+import io.rabbitcontrol.android.core.nativebridge.MediaDiagnosticsModel
+import io.rabbitcontrol.android.core.nativebridge.formatVideoCodecLabel
 import io.rabbitcontrol.android.core.session.SessionStatus
 import io.rabbitcontrol.android.core.video.NativeVideoStageView
 import io.rabbitcontrol.android.session.Core
@@ -362,6 +364,9 @@ fun DesktopSessionScreen(
                     if (prefs.showHud && state.negotiated != null) {
                         LiveMiniHudBadge(
                             hudFlow = viewModel.hud,
+                            mediaFlow = viewModel.media,
+                            displayCodec = state.displayConfig?.codec,
+                            preferHardware = prefs.preferHardwareDecode,
                             onClick = { openControlPanel(ControlPanelTab.Display) },
                             modifier = Modifier.align(Alignment.TopEnd).padding(10.dp),
                         )
@@ -609,6 +614,9 @@ fun DesktopSessionScreen(
                     if (prefs.showHud && state.negotiated != null) {
                         LiveMiniHudBadge(
                             hudFlow = viewModel.hud,
+                            mediaFlow = viewModel.media,
+                            displayCodec = state.displayConfig?.codec,
+                            preferHardware = prefs.preferHardwareDecode,
                             onClick = { openControlPanel(ControlPanelTab.Display) },
                             modifier = Modifier.align(Alignment.TopEnd).padding(10.dp),
                         )
@@ -680,6 +688,9 @@ fun DesktopSessionScreen(
                 if (prefs.showHud && state.negotiated != null) {
                     LiveMiniHudBadge(
                         hudFlow = viewModel.hud,
+                        mediaFlow = viewModel.media,
+                        displayCodec = state.displayConfig?.codec,
+                        preferHardware = prefs.preferHardwareDecode,
                         onClick = { openControlPanel(ControlPanelTab.Display) },
                         modifier = Modifier.align(Alignment.TopEnd).systemBarsPadding().padding(14.dp),
                     )
@@ -1284,13 +1295,23 @@ private fun ZoomBadge(
 @Composable
 private fun LiveMiniHudBadge(
     hudFlow: StateFlow<HudSnapshotModel>,
+    mediaFlow: StateFlow<MediaDiagnosticsModel>,
+    displayCodec: String?,
+    preferHardware: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val hud by hudFlow.collectAsStateWithLifecycle()
+    val media by mediaFlow.collectAsStateWithLifecycle()
+    val codecLabel = formatVideoCodecLabel(media.streamCodec.ifBlank { displayCodec }, media.codecName)
+    val decoderActive = media.codecName.isNotBlank() || media.decodedFrames > 0L || media.renderedFrames > 0L
+    val useHwLabel = if (decoderActive) media.hardware else preferHardware
+    val decodeLabel = stringResource(if (useHwLabel) R.string.cp_hw_decode else R.string.cp_sw_decode)
+    val codecAndDecode = if (codecLabel != null) "$codecLabel $decodeLabel" else decodeLabel
     MiniHudBadge(
         fps = hud.fps,
         res = hud.resolution,
+        codecSummary = codecAndDecode,
         rtt = hud.rttMs,
         transport = hud.transport,
         onClick = onClick,
@@ -1302,6 +1323,7 @@ private fun LiveMiniHudBadge(
 private fun MiniHudBadge(
     fps: Double,
     res: String,
+    codecSummary: String,
     rtt: Double?,
     transport: String,
     onClick: () -> Unit,
@@ -1317,10 +1339,12 @@ private fun MiniHudBadge(
             .padding(horizontal = 10.dp, vertical = 5.dp),
     ) {
         Text(
-            text = "${fps.roundToInt()} fps · $res · $rttStr · $transport",
+            text = "${fps.roundToInt()} fps · $res · $codecSummary · $rttStr · $transport",
             color = SessionPalette.text,
             fontFamily = FontFamily.Monospace,
             fontSize = 11.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }

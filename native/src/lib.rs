@@ -238,6 +238,39 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_pollSignalEven
 }
 
 #[no_mangle]
+pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_onNetworkChanged(
+    _: JNIEnv,
+    _: JObject,
+) {
+    if let Some(rt) = runtime::global_runtime() {
+        rt.on_network_changed();
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_getUpnpStatus(
+    mut env: JNIEnv,
+    _: JObject,
+) -> jstring {
+    let Some(rt) = runtime::global_runtime() else {
+        return string_to_jstr(&mut env, r#"{"enabled":false,"status":{"state":"disabled"}}"#);
+    };
+    string_to_jstr(&mut env, &rt.upnp_status_payload().to_string())
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_setUpnpEnabled(
+    mut env: JNIEnv,
+    _: JObject,
+    enabled: jboolean,
+) -> jstring {
+    let Some(rt) = runtime::global_runtime() else {
+        return string_to_jstr(&mut env, r#"{"enabled":false,"status":{"state":"disabled"}}"#);
+    };
+    string_to_jstr(&mut env, &rt.set_upnp_enabled(enabled != 0).to_string())
+}
+
+#[no_mangle]
 pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_openSession(
     mut env: JNIEnv,
     _: JObject,
@@ -284,6 +317,15 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_disconnectSess
     if let Some(rt) = runtime::global_runtime() {
         rt.disconnect_session(lock_remote != 0);
     }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_setPreferHardwareDecode(
+    _: JNIEnv,
+    _: JObject,
+    prefer_hardware: jboolean,
+) {
+    crate::ndk_media::set_prefer_hardware_decode(prefer_hardware != 0);
 }
 
 #[no_mangle]

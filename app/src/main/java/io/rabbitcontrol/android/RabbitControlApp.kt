@@ -9,6 +9,7 @@ import io.rabbitcontrol.android.core.data.AccountRepository
 import io.rabbitcontrol.android.core.i18n.AppLocaleManager
 import io.rabbitcontrol.android.core.nativebridge.NativeLibraryLoader
 import io.rabbitcontrol.android.core.nativebridge.NativeRuntimeBootstrap
+import io.rabbitcontrol.android.core.session.NetworkRouteMonitor
 import io.rabbitcontrol.android.di.dataModule
 import io.rabbitcontrol.android.di.sessionModule
 import io.rabbitcontrol.android.di.viewModelModule
@@ -34,6 +35,7 @@ class RabbitControlApp : Application() {
         }
 
         registerForegroundTracker()
+        runCatching { NetworkRouteMonitor.start(this) }
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {

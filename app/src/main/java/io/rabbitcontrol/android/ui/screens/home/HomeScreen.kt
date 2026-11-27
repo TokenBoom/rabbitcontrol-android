@@ -54,6 +54,7 @@ import androidx.compose.material.icons.rounded.PhoneAndroid
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.rounded.Public
+import androidx.compose.material.icons.rounded.Router
 import androidx.compose.material.icons.rounded.ScreenShare
 import androidx.compose.material.icons.rounded.Sensors
 import androidx.compose.material.icons.rounded.SettingsRemote
@@ -119,6 +120,7 @@ import io.rabbitcontrol.android.core.i18n.AppLanguageMode
 import io.rabbitcontrol.android.core.i18n.AppLocaleManager
 import io.rabbitcontrol.android.core.i18n.AppStrings
 import io.rabbitcontrol.android.core.nativebridge.RemoteDevice
+import io.rabbitcontrol.android.core.nativebridge.UpnpState
 import io.rabbitcontrol.android.core.session.SessionStatus
 import io.rabbitcontrol.android.core.update.AppUpdateManager
 import io.rabbitcontrol.android.core.update.AppUpdateUiState
@@ -1178,7 +1180,12 @@ private fun ProfileTab(
     val prefs by viewModel.prefs.collectAsStateWithLifecycle()
     val proxyConfig by viewModel.proxyConfig.collectAsStateWithLifecycle()
     val hostState by viewModel.hostState.collectAsStateWithLifecycle()
+    val upnpStatus by viewModel.upnpStatus.collectAsStateWithLifecycle()
     val languageMode by AppLocaleManager.mode.collectAsStateWithLifecycle()
+
+    LaunchedEffect(Unit) {
+        viewModel.refreshUpnpStatus()
+    }
 
     var showThemeSheet by remember { mutableStateOf(false) }
     var showLanguageSheet by remember { mutableStateOf(false) }
@@ -1299,10 +1306,36 @@ private fun ProfileTab(
             HorizontalDivider(color = palette.line, thickness = 1.dp)
 
             ProfileMenuRow(
+                icon = Icons.Rounded.Sensors,
+                title = stringResource(R.string.cp_connection_mode),
+                trailingText = prefs.connectionMode.label,
+                onClick = { onOpenProfileRoute("settings/proxy") },
+            )
+            HorizontalDivider(color = palette.line, thickness = 1.dp)
+
+            ProfileMenuRow(
                 icon = Icons.Rounded.Public,
                 title = stringResource(R.string.home_menu_proxy),
                 trailingText = proxyConfig.summaryLabel(),
                 onClick = { onOpenProfileRoute("settings/proxy") },
+            )
+            HorizontalDivider(color = palette.line, thickness = 1.dp)
+
+            val (upnpPillLabel, upnpPillTone) = when {
+                !upnpStatus.enabled || upnpStatus.state == UpnpState.Disabled ->
+                    stringResource(R.string.upnp_badge_disabled) to StatusTone.Muted
+                upnpStatus.state == UpnpState.Mapped ->
+                    stringResource(R.string.upnp_badge_mapped_short) to StatusTone.Success
+                upnpStatus.state == UpnpState.Discovering ->
+                    stringResource(R.string.upnp_badge_discovering_short) to StatusTone.Primary
+                else ->
+                    stringResource(R.string.upnp_badge_unavailable_short) to StatusTone.Danger
+            }
+            ProfileMenuRow(
+                icon = Icons.Rounded.Router,
+                title = stringResource(R.string.home_menu_upnp),
+                trailingContent = { RabbitStatusPill(label = upnpPillLabel, tone = upnpPillTone) },
+                onClick = { onOpenProfileRoute("settings/upnp") },
             )
             HorizontalDivider(color = palette.line, thickness = 1.dp)
 

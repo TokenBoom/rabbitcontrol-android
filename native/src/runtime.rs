@@ -14,7 +14,7 @@ use rc_client_core::auth_client::{
 };
 use rc_client_core::cert_manager::{CertManager, RcOwnerTicketVerifier};
 use rc_client_core::config_paths::acquire_file_lock;
-use rc_client_core::display_ctrl::StreamCodec;
+use rc_client_core::display_ctrl::{DisplayControlMsg, StreamCodec};
 use rc_client_core::host_bridge::{
     generate_temp_code, HostHandle, UiHostConfig, DEFAULT_HOST_PORT,
 };
@@ -36,6 +36,7 @@ use rc_client_core::ui_error::{
     codes, classify_host_error, classify_signal_error, resolve_ui_error, ErrorPlatform,
     IntoUiError, UiError,
 };
+use rc_client_core::upnp::UpnpStatus;
 use rc_input::{InputEvent, MouseButton};
 use rc_session::auth::{OwnerTicketSigner, OwnerTicketVerifier};
 use serde::{Deserialize, Serialize};
@@ -44,8 +45,8 @@ use serde_json::{json, Value};
 use crate::host_android;
 
 use crate::ndk_media::{
-    check_unreported_first_frame, media_diagnostics, request_keyframe, reset_media_diagnostics,
-    set_codec_candidates, CodecCandidate,
+    check_unreported_first_frame, media_diagnostics, prefer_hardware_decode, request_keyframe,
+    reset_media_diagnostics, set_codec_candidates, set_prefer_hardware_decode, CodecCandidate,
 };
 use crate::platform_android::{
     drain_inbound_clipboard_texts, push_local_clipboard_text, push_silent_ime_text,
@@ -126,6 +127,7 @@ pub struct AndroidRuntime {
     last_host_running: AtomicBool,
     host_allow_remote_assist: AtomicBool,
     host_allow_assist_file_transfer: AtomicBool,
+    upnp_enabled: AtomicBool,
 }
 
 static RUNTIME: OnceLock<Arc<AndroidRuntime>> = OnceLock::new();
@@ -204,10 +206,26 @@ pub fn init_runtime(
         last_host_running: AtomicBool::new(false),
         host_allow_remote_assist: AtomicBool::new(false),
         host_allow_assist_file_transfer: AtomicBool::new(true),
+        upnp_enabled: AtomicBool::new(false),
     });
 
     let _ = RUNTIME.set(Arc::clone(&rt));
     Ok(RUNTIME.get().cloned().unwrap_or(rt))
+}
+
+fn resolve_connection_mode_and_relay(
+    raw_mode: Option<&str>,
+    req_force_relay: bool,
+) -> (ConnectionMode, bool) {
+    let mode = raw_mode
+        .and_then(ConnectionMode::parse_lossy)
+        .unwrap_or(if req_force_relay {
+            ConnectionMode::TcpRelay
+        } else {
+            ConnectionMode::Auto
+        });
+    let force_relay = req_force_relay || mode == ConnectionMode::TcpRelay;
+    (mode, force_relay)
 }
 
 impl AndroidRuntime {
@@ -296,9 +314,9 @@ impl AndroidRuntime {
             token_refresher: Some(token_refresher),
             device_pubkey: Some(self.cert_mgr.device_pubkey_hex()),
             allow_remote_assist: self.host_allow_remote_assist.load(Ordering::Acquire),
-            allow_remote_control: None,
+            allow_remote_control: Some(self.last_host_running.load(Ordering::Acquire)),
             dynamic_lan_discovery: true,
-            upnp_enabled: true,
+            upnp_enabled: self.upnp_enabled.load(Ordering::Acquire),
         };
 
         let events_tx = Arc::clone(&self.signal_events);
@@ -485,6 +503,8 @@ impl AndroidRuntime {
     pub fn open_session(&self, req: OpenSessionRequest) -> Result<Value, UiError> {
         let my_epoch = self.session_epoch.fetch_add(1, Ordering::AcqRel) + 1;
         let trimmed = req.target.trim();
+        let (connection_mode, force_relay) =
+            resolve_connection_mode_and_relay(req.connection_mode.as_deref(), req.force_relay);
 
         let (connect_addr, relay_grant, lan_direct_addr, target_device_id): (
             SocketAddr,
@@ -530,7 +550,7 @@ impl AndroidRuntime {
                 return Ok(json!({ "cancelled": true }));
             }
 
-            let lan_addr = if !req.force_relay {
+            let lan_addr = if !force_relay {
                 self.lan
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
@@ -625,16 +645,6 @@ impl AndroidRuntime {
             (1920, 1080, 60, 10_000_000)
         };
 
-        let connection_mode = req
-            .connection_mode
-            .as_deref()
-            .and_then(ConnectionMode::parse_lossy)
-            .unwrap_or(if req.force_relay {
-                ConnectionMode::TcpRelay
-            } else {
-                ConnectionMode::Auto
-            });
-
         let ui_cfg = UiSessionConfig {
             connect_addr,
             password: req.password.filter(|p| !p.is_empty()),
@@ -647,11 +657,11 @@ impl AndroidRuntime {
             } else {
                 default_bps
             },
-            prefer_hardware: true,
+            prefer_hardware: prefer_hardware_decode(),
             clipboard_enabled: req.clipboard_enabled,
             audio_enabled: req.audio_enabled,
             relay_grant,
-            force_relay: req.force_relay,
+            force_relay,
             connection_mode,
             tools_only: req.tools_only,
             encrypt_connection,
@@ -702,6 +712,25 @@ impl AndroidRuntime {
         self.close_active_session_only(lock_remote);
     }
 
+    pub fn on_network_changed(&self) {
+        if let Some(lan) = self.lan.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+            lan.clear_and_refresh();
+        }
+        let sig_opt = {
+            self.signal
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone()
+        };
+        if let Some(sig) = sig_opt {
+            sig.trigger_reconnect("network_route_changed");
+        }
+        let g = self.session.read().unwrap_or_else(|e| e.into_inner());
+        if let Some(handle) = g.as_ref() {
+            handle.send(SessionCommand::ProbeNow);
+        }
+    }
+
     pub fn send_command(&self, cmd_json: &Value) -> Result<(), String> {
         let g = self.session.read().unwrap_or_else(|e| e.into_inner());
         let Some(handle) = g.as_ref() else {
@@ -742,6 +771,11 @@ impl AndroidRuntime {
                     }
                 }
             }
+            "set_decode_mode" => {
+                let prefer_hw = cmd_json["preferHardware"].as_bool().unwrap_or(true);
+                set_prefer_hardware_decode(prefer_hw);
+                request_keyframe();
+            }
             "set_media_paused" => {
                 let paused = cmd_json["paused"].as_bool().unwrap_or(false);
                 handle.send(SessionCommand::SetMediaPaused { paused });
@@ -758,6 +792,47 @@ impl AndroidRuntime {
             }
             "request_idr" => {
                 request_keyframe();
+            }
+            "set_privacy_mode" => {
+                let mode = cmd_json["mode"].as_str().unwrap_or("off").to_string();
+                let preset = cmd_json["preset"]
+                    .as_str()
+                    .unwrap_or(if mode == "privacy" { "preset-1" } else { "" })
+                    .to_string();
+                handle.send_display_ctrl(DisplayControlMsg::SetPrivacyMode {
+                    mode,
+                    preset,
+                    custom_image_base64: None,
+                });
+            }
+            "set_host_mute" => {
+                let muted = cmd_json["muted"].as_bool().unwrap_or(false);
+                let restore_on_exit = cmd_json["restoreOnExit"].as_bool().unwrap_or(true);
+                handle.send_display_ctrl(DisplayControlMsg::SetHostMute {
+                    muted,
+                    restore_on_exit,
+                });
+            }
+            "list_displays" => {
+                handle.send_display_ctrl(DisplayControlMsg::ListDisplays);
+            }
+            "switch_display" => {
+                let display_id = cmd_json["displayId"].as_u64().unwrap_or(0) as u32;
+                handle.send_display_ctrl(DisplayControlMsg::SwitchDisplay { display_id });
+            }
+            "create_virtual_display" => {
+                let width = cmd_json["width"].as_u64().unwrap_or(1920) as u32;
+                let height = cmd_json["height"].as_u64().unwrap_or(1080) as u32;
+                let hidpi = cmd_json["hidpi"].as_bool().unwrap_or(false);
+                handle.send_display_ctrl(DisplayControlMsg::CreateVirtualDisplay {
+                    width,
+                    height,
+                    hidpi,
+                });
+            }
+            "remove_virtual_display" => {
+                let display_id = cmd_json["displayId"].as_u64().unwrap_or(0) as u32;
+                handle.send_display_ctrl(DisplayControlMsg::RemoveVirtualDisplay { display_id });
             }
             other => return Err(format!("未知会话指令: {other}")),
         }
@@ -907,6 +982,21 @@ impl AndroidRuntime {
                 let name = req["name"].as_str().unwrap_or("").to_string();
                 tools
                     .file_mkdir_remote(parent, name)
+                    .map_err(|e| Self::map_tool_error(e, codes::TOOL_FILE_TRANSFER_FAILED))?;
+                Ok(json!({ "ok": true }))
+            }
+            "file_delete_remote" => {
+                let path = req["path"].as_str().unwrap_or("").to_string();
+                tools
+                    .file_delete_remote(path)
+                    .map_err(|e| Self::map_tool_error(e, codes::TOOL_FILE_TRANSFER_FAILED))?;
+                Ok(json!({ "ok": true }))
+            }
+            "file_rename_remote" => {
+                let path = req["path"].as_str().unwrap_or("").to_string();
+                let new_name = req["newName"].as_str().unwrap_or("").to_string();
+                tools
+                    .file_rename_remote(path, new_name)
                     .map_err(|e| Self::map_tool_error(e, codes::TOOL_FILE_TRANSFER_FAILED))?;
                 Ok(json!({ "ok": true }))
             }
@@ -1141,9 +1231,6 @@ impl AndroidRuntime {
             .store(req.allow_remote_assist, Ordering::Release);
         self.host_allow_assist_file_transfer
             .store(req.allow_assist_file_transfer, Ordering::Release);
-        if let Some(sig) = self.signal.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
-            let _ = sig.set_allow_remote_assist(req.allow_remote_assist);
-        }
 
         let password = if let Some(custom) = req.password.filter(|p| !p.trim().is_empty()) {
             Some(custom)
@@ -1177,6 +1264,11 @@ impl AndroidRuntime {
         let listen_addr = handle.listen_addr().to_string();
         *self.host.lock().unwrap_or_else(|e| e.into_inner()) = Some(handle);
         self.last_host_running.store(true, Ordering::Release);
+        self.ensure_signal_started();
+        if let Some(sig) = self.signal.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+            let _ = sig.set_allow_remote_control(true);
+            let _ = sig.set_allow_remote_assist(req.allow_remote_assist);
+        }
 
         Ok(json!({
             "started": true,
@@ -1192,6 +1284,7 @@ impl AndroidRuntime {
         self.host_allow_remote_assist.store(false, Ordering::Release);
         self.last_host_running.store(false, Ordering::Release);
         if let Some(sig) = self.signal.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+            let _ = sig.set_allow_remote_control(false);
             let _ = sig.set_allow_remote_assist(false);
         }
         let old = self.host.lock().unwrap_or_else(|e| e.into_inner()).take();
@@ -1272,6 +1365,33 @@ impl AndroidRuntime {
         }
     }
 
+    pub fn upnp_status_payload(&self) -> Value {
+        let enabled = self.upnp_enabled.load(Ordering::Acquire);
+        let status = if !enabled {
+            UpnpStatus::Disabled
+        } else {
+            let sig_guard = self.signal.lock().unwrap_or_else(|e| e.into_inner());
+            match sig_guard.as_ref() {
+                Some(sig) => sig.upnp_status(),
+                None => UpnpStatus::Unavailable {
+                    reason: "信令服务器未连接".to_string(),
+                },
+            }
+        };
+        json!({
+            "enabled": enabled,
+            "status": status,
+        })
+    }
+
+    pub fn set_upnp_enabled(&self, enabled: bool) -> Value {
+        self.upnp_enabled.store(enabled, Ordering::Release);
+        if let Some(sig) = self.signal.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+            sig.set_upnp_enabled(enabled);
+        }
+        self.upnp_status_payload()
+    }
+
     pub fn set_proxy_config(&self, cfg: ProxyConfig) -> Result<Value, UiError> {
         cfg.validate()
             .map_err(|e| e.to_ui_error(ErrorPlatform::Android))?;
@@ -1329,6 +1449,13 @@ impl AndroidRuntime {
         let encoder_cmds = host_android::drain_host_encoder_commands();
         let input_events = host_android::drain_host_input_events();
         let prev_running = self.last_host_running.swap(running, Ordering::AcqRel);
+        if prev_running && !running {
+            self.host_allow_remote_assist.store(false, Ordering::Release);
+            if let Some(sig) = self.signal.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+                let _ = sig.set_allow_remote_control(false);
+                let _ = sig.set_allow_remote_assist(false);
+            }
+        }
         if prev_running == running
             && updates.is_empty()
             && encoder_cmds.is_empty()
@@ -1441,6 +1568,7 @@ mod tests {
             last_host_running: AtomicBool::new(false),
             host_allow_remote_assist: AtomicBool::new(false),
             host_allow_assist_file_transfer: AtomicBool::new(true),
+            upnp_enabled: AtomicBool::new(false),
         };
 
         let stored = StoredAuthSession {
@@ -1486,5 +1614,84 @@ mod tests {
         let ui_err = err.to_ui_error(ErrorPlatform::Android);
         let serialized = serde_json::to_string(&ui_err).unwrap();
         assert!(!serialized.contains("super-secret-password"));
+    }
+
+    #[test]
+    fn upnp_status_payload_reflects_disabled_and_unconnected_states() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "rc-android-upnp-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let cert_mgr = Arc::new(CertManager::load_or_init(temp_dir.join("certs")).unwrap());
+        let auth_path = temp_dir.join("auth.json");
+        let auth = AuthSessionManager::new(
+            ServerConfig::default(),
+            auth_path.clone(),
+            Arc::clone(&cert_mgr),
+        );
+        let rt = AndroidRuntime {
+            device_name: Mutex::new("test-android".to_string()),
+            device_key: "key".to_string(),
+            auth_path,
+            auth,
+            cert_mgr,
+            signal: Mutex::new(None),
+            signal_events: Arc::new(Mutex::new(VecDeque::new())),
+            signal_snapshot: Arc::new(Mutex::new(ServerConfig::default().disabled_snapshot())),
+            signal_dirty: Arc::new(AtomicBool::new(true)),
+            last_reported_refresh: Mutex::new(String::new()),
+            lan: Mutex::new(None),
+            session: RwLock::new(None),
+            last_session_running: AtomicBool::new(false),
+            session_epoch: AtomicU64::new(0),
+            host: Mutex::new(None),
+            last_host_running: AtomicBool::new(false),
+            host_allow_remote_assist: AtomicBool::new(false),
+            host_allow_assist_file_transfer: AtomicBool::new(true),
+            upnp_enabled: AtomicBool::new(false),
+        };
+
+        let off = rt.upnp_status_payload();
+        assert_eq!(off["enabled"], json!(false));
+        assert_eq!(off["status"]["state"], json!("disabled"));
+
+        let on_unconnected = rt.set_upnp_enabled(true);
+        assert_eq!(on_unconnected["enabled"], json!(true));
+        assert_eq!(on_unconnected["status"]["state"], json!("unavailable"));
+        assert!(!on_unconnected["status"]["reason"].as_str().unwrap_or("").is_empty());
+
+        let off_again = rt.set_upnp_enabled(false);
+        assert_eq!(off_again["enabled"], json!(false));
+        assert_eq!(off_again["status"]["state"], json!("disabled"));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn resolve_connection_mode_and_relay_maps_modes_and_skips_lan_for_relay() {
+        assert_eq!(
+            resolve_connection_mode_and_relay(Some("auto"), false),
+            (ConnectionMode::Auto, false)
+        );
+        assert_eq!(
+            resolve_connection_mode_and_relay(Some("p2p_only"), false),
+            (ConnectionMode::P2pOnly, false)
+        );
+        assert_eq!(
+            resolve_connection_mode_and_relay(Some("tcp_relay"), false),
+            (ConnectionMode::TcpRelay, true)
+        );
+        assert_eq!(
+            resolve_connection_mode_and_relay(None, true),
+            (ConnectionMode::TcpRelay, true)
+        );
+        assert_eq!(
+            resolve_connection_mode_and_relay(None, false),
+            (ConnectionMode::Auto, false)
+        );
     }
 }

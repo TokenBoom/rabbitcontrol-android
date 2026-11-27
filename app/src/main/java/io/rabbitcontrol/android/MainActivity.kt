@@ -64,6 +64,7 @@ import io.rabbitcontrol.android.ui.screens.settings.AboutScreen
 import io.rabbitcontrol.android.ui.screens.settings.HostSettingsScreen
 import io.rabbitcontrol.android.ui.screens.settings.InteractionSettingsScreen
 import io.rabbitcontrol.android.ui.screens.settings.ProxySettingsScreen
+import io.rabbitcontrol.android.ui.screens.settings.UpnpSettingsScreen
 import io.rabbitcontrol.android.ui.screens.tools.FileTransferScreen
 import io.rabbitcontrol.android.ui.screens.tools.PortMapScreen
 import io.rabbitcontrol.android.ui.screens.tools.TerminalScreen
@@ -386,6 +387,12 @@ private fun RabbitControlNavRoot(
 
         composable("settings/proxy") {
             ProxySettingsScreen(
+                onBack = { navController.popBackStack() },
+            )
+        }
+
+        composable("settings/upnp") {
+            UpnpSettingsScreen(
                 onBack = { navController.popBackStack() },
             )
         }

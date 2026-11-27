@@ -140,6 +140,37 @@ class FileTransferViewModel(
         }
     }
 
+    fun deleteRemote(entry: RemoteFileEntry) {
+        if (entry.path.isBlank()) return
+        viewModelScope.launch {
+            sessionManager.callTool(
+                JSONObject()
+                    .put("action", "file_delete_remote")
+                    .put("path", entry.path),
+            ).onFailure(::reportToolFailure)
+        }
+    }
+
+    fun renameRemote(entry: RemoteFileEntry, newName: String) {
+        val clean = newName.trim()
+        if (entry.path.isBlank() || clean.isEmpty() || clean.contains('/') || clean.contains('\\')) {
+            _notice.value = Notice(
+                AppStrings.get(R.string.ft_err_rename_failed, "重命名失败"),
+                isError = true,
+            )
+            return
+        }
+        if (clean == entry.name) return
+        viewModelScope.launch {
+            sessionManager.callTool(
+                JSONObject()
+                    .put("action", "file_rename_remote")
+                    .put("path", entry.path)
+                    .put("newName", clean),
+            ).onFailure(::reportToolFailure)
+        }
+    }
+
     fun downloadFile(entry: RemoteFileEntry) {
         if (entry.isDir) return
         viewModelScope.launch {
@@ -241,6 +272,36 @@ class FileTransferViewModel(
                     _notice.value = Notice(
                         ev.error?.let(NativeErrorLocalizer::localize)
                             ?: AppStrings.get(R.string.ft_err_mkdir_failed, "创建目录失败"),
+                        isError = true,
+                    )
+                }
+            }
+            is FileToolEvent.DeleteResult -> {
+                if (ev.ok) {
+                    _notice.value = Notice(
+                        AppStrings.get(R.string.ft_notice_deleted, "已删除"),
+                        isSuccess = true,
+                    )
+                    listRemoteDir(_currentPath.value.ifBlank { null })
+                } else {
+                    _notice.value = Notice(
+                        ev.error?.let(NativeErrorLocalizer::localize)
+                            ?: AppStrings.get(R.string.ft_err_delete_failed, "删除失败"),
+                        isError = true,
+                    )
+                }
+            }
+            is FileToolEvent.RenameResult -> {
+                if (ev.ok) {
+                    _notice.value = Notice(
+                        AppStrings.get(R.string.ft_notice_renamed, "已重命名"),
+                        isSuccess = true,
+                    )
+                    listRemoteDir(_currentPath.value.ifBlank { null })
+                } else {
+                    _notice.value = Notice(
+                        ev.error?.let(NativeErrorLocalizer::localize)
+                            ?: AppStrings.get(R.string.ft_err_rename_failed, "重命名失败"),
                         isError = true,
                     )
                 }

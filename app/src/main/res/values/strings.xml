@@ -842,4 +842,87 @@
     <string name="tool_permission_disabled_ft">Remote device has disabled file transfer for this session</string>
     <string name="tool_permission_disabled_term">Remote device has disabled remote terminal for this session</string>
     <string name="tool_permission_disabled_pm">Remote device has disabled port mapping for this session</string>
+
+    <string name="cp_video_codec">Video Codec</string>
+    <string name="cp_codec_unsupported_hint">Disabled codecs are unsupported by the remote host or local device</string>
+    <string name="cp_decode_mode">Decode Mode</string>
+    <string name="cp_decode_hw">Hardware Decode</string>
+    <string name="cp_decode_sw">Software Decode</string>
+    <string name="cp_decode_fallback_sw">SW (Fallback)</string>
+
+    <string name="home_menu_upnp">UPnP / NAT-PMP Mapping</string>
+    <string name="upnp_title">UPnP / NAT-PMP Port Mapping</string>
+    <string name="upnp_desc">Automatically request a public UDP port mapping from your router to improve cross-network P2P direct connection success.</string>
+    <string name="upnp_badge_disabled">Off</string>
+    <string name="upnp_badge_discovering">Probing router…</string>
+    <string name="upnp_badge_discovering_short">Probing…</string>
+    <string name="upnp_badge_mapped_short">Mapped</string>
+    <string name="upnp_badge_mapped_addr">Mapped %1$s (%2$s)</string>
+    <string name="upnp_badge_mapped_proto">Mapped (%1$s)</string>
+    <string name="upnp_badge_unavailable">Router unsupported or behind multi-layer NAT</string>
+    <string name="upnp_badge_unavailable_short">Unavailable</string>
+    <string name="upnp_reprobe_hint">Retry after switching Wi-Fi or enabling UPnP on router</string>
+    <string name="upnp_reprobe_btn">Re-probe</string>
+    <string name="upnp_toast_enabled">UPnP / NAT-PMP port mapping enabled</string>
+    <string name="upnp_toast_disabled">UPnP / NAT-PMP port mapping disabled</string>
+    <string name="upnp_toast_failed">Failed to save UPnP settings</string>
+
+    <string name="conn_mode_auto">Auto</string>
+    <string name="conn_mode_p2p">P2P Only</string>
+    <string name="conn_mode_relay">TCP Relay</string>
+    <string name="cp_connection_mode">Connection Mode</string>
+    <string name="cp_connection_mode_hint">Saved persistently; reconnects immediately using the new mode.</string>
+    <string name="conn_mode_settings_title">Default Connection Mode</string>
+    <string name="conn_mode_settings_desc">Choose how remote sessions connect to hosts by default (can also be switched live inside a session).</string>
+    <string name="conn_mode_saved">Default connection mode saved</string>
+
+    <string name="cp_advisory_h264_hevc">Current H.264 is hardware-limited at this high resolution/refresh rate; switching to HEVC is recommended for full frame rate.</string>
+    <string name="cp_advisory_h264_res">Current H.264 is hardware-limited at this high refresh rate; for full frame rate consider switching to %1$d×%2$d.</string>
+    <string name="cp_advisory_hevc_res">Current resolution exceeds the host encoder high-refresh budget; for full frame rate consider switching to %1$d×%2$d.</string>
+    <string name="cp_advisory_switch_hevc">Switch to HEVC</string>
+    <string name="cp_advisory_switch_res">Switch to %1$d×%2$d</string>
+
+    <string name="cp_displays">Displays</string>
+    <string name="cp_display_virtual_tag">Virtual</string>
+    <string name="cp_add_virtual_display">+ Virtual Display</string>
+    <string name="cp_vdisp_title">Create Virtual Display</string>
+    <string name="cp_vdisp_presets">Presets</string>
+    <string name="cp_vdisp_match_phone">Match Phone Ratio</string>
+    <string name="cp_vdisp_width">Width</string>
+    <string name="cp_vdisp_height">Height</string>
+    <string name="cp_vdisp_hidpi">HiDPI (2x Retina)</string>
+    <string name="cp_vdisp_create">Create</string>
+    <string name="cp_vdisp_invalid_size">Width must be 640–3840 and height 480–2160</string>
+    <string name="cp_vdisp_remove_cd">Remove virtual display</string>
+
+    <string name="cp_privacy_curtain">Privacy Curtain</string>
+    <string name="cp_privacy_off">Off</string>
+    <string name="cp_privacy_mode">Privacy</string>
+    <string name="cp_privacy_black">Black Screen</string>
+    <string name="cp_host_mute_on">Host Muted</string>
+    <string name="cp_host_mute_off">Mute Host</string>
+    <string name="cp_privacy_unsupported">Remote host does not support Privacy Curtain</string>
+    <string name="cp_host_mute_unsupported">Remote host does not support system mute</string>
+
+    <string name="cp_mtls_badge_cd">View mTLS encryption certificate fingerprint</string>
+    <string name="cp_mtls_title">mTLS End-to-End Encrypted</string>
+    <string name="cp_mtls_status_active">Mutual TLS authentication and transport encryption are active.</string>
+    <string name="cp_mtls_transport_label">Transport</string>
+    <string name="cp_mtls_fingerprint_label">Peer Device Certificate SHA-256</string>
+    <string name="cp_mtls_fingerprint_missing">Fingerprint unavailable for this session</string>
+    <string name="cp_mtls_copy_fingerprint">Copy Fingerprint</string>
+    <string name="cp_mtls_fingerprint_copied">Certificate fingerprint copied</string>
+
+    <string name="ft_cd_more_actions">More actions</string>
+    <string name="ft_action_rename">Rename</string>
+    <string name="ft_action_delete">Delete</string>
+    <string name="ft_rename_title">Rename Item</string>
+    <string name="ft_rename_hint">Enter new name</string>
+    <string name="ft_rename_confirm">Rename</string>
+    <string name="ft_delete_title">Confirm Delete</string>
+    <string name="ft_delete_confirm_msg">Delete remote item “%1$s”? This cannot be undone.</string>
+    <string name="ft_notice_deleted">Deleted</string>
+    <string name="ft_notice_renamed">Renamed</string>
+    <string name="ft_err_delete_failed">Failed to delete item</string>
+    <string name="ft_err_rename_failed">Failed to rename item</string>
 </resources>
