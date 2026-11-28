@@ -14,6 +14,23 @@ All notable user-facing changes to **RabbitControl Android** are documented in t
 
 ---
 
+## [v0.2.5] - 2026-11-28
+
+This release migrates the Android application ID and package namespace to `com.rabbitcontrol.android`, bundles `rabbitcontrol-core v0.2.7` with full P2P signaling lifecycle synchronization, and bumps the APK version to `0.2.5`.
+
+### Breaking Changes
+- **Package & Application ID Migration (`com.rabbitcontrol.android`)**: Migrated Android `applicationId`, Kotlin source/test packages, ProGuard keep rules, and all 33 Rust JNI exported symbols from `io.rabbitcontrol.android` to `com.rabbitcontrol.android`.
+  - Installs as a new application alongside legacy `io.rabbitcontrol.android` installs (in-place upgrade is not supported; sign in again after installing and remove the legacy app manually if desired).
+  - Future dynamic core hot-updates target `com.rabbitcontrol.android` and are not backward-compatible with legacy `io.rabbitcontrol.android` builds.
+
+### Changed & Fixed
+- **Bundled Core v0.2.7 & P2P Signaling Lifecycle Sync**:
+  - Upgraded the bundled core baseline to `rabbitcontrol-core v0.2.7` (`UiSessionConfig` signal client & target device binding for P2P cross-site LAN fallback, symmetric punch lock, and live `P2pReprobe`).
+  - Synchronized `HostHandle::set_signal_client` across the full signal lifecycle (`ensure_signal_started`, `on_network_changed`, `start_host`, `stop_host`, `stop_signal_and_session`) with lock-order safety and verified `dynamic_lan_discovery == true`.
+- **Version Bump**: Bumped release metadata to `0.2.5` (`versionCode = 7`).
+
+---
+
 ## [v0.2.4] - 2026-11-27
 
 This release introduces full layered adaptive support for Android tablets, foldables, and multi-window/split-screen layouts while keeping phone layouts unchanged, refines tablet modal dialogs and remote session ergonomics, and resolves the Port Mapping dialog crash.

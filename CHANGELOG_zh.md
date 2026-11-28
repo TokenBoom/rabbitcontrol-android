@@ -14,6 +14,23 @@
 
 ---
 
+## [v0.2.5] - 2026-11-28
+
+本次更新将 Android 应用包名正式迁移至 `com.rabbitcontrol.android`，内置升级至 `rabbitcontrol-core v0.2.7` 并补齐 P2P 信令全生命周期同步，同时将客户端版本升级为 `0.2.5`。
+
+### 破坏性变更
+- **包名与 `applicationId` 迁移（`com.rabbitcontrol.android`）**：将 Android `applicationId`、`namespace`、全部 Kotlin 源码/测试包名、混淆保留规则与 33 个 Rust JNI 导出符号统一从 `io.rabbitcontrol.android` 迁移为 `com.rabbitcontrol.android`。
+  - 由于应用包名变更，安装 `v0.2.5` 将作为全新应用安装（不支持覆盖旧版 `io.rabbitcontrol.android`），需重新登录服务端并可按需手动卸载旧包。
+  - 后续发布的动态内核热更新仅适配 `com.rabbitcontrol.android`，不再向下兼容旧版 `io.rabbitcontrol.android`。
+
+### 改进与修复
+- **内置核心 v0.2.7 与 P2P 信令生命周期同步**：
+  - 内置 `rabbitcontrol-core` 升级至 `v0.2.7`（补齐 `UiSessionConfig` 信令句柄与目标设备 ID 绑定，支持 P2P 跨站局域网兜底、对称打洞锁及实时 `P2pReprobe`）。
+  - 补全 `HostHandle::set_signal_client` 在信令启动、复用、网络切换重连、启停被控端及退出/断开全生命周期内的同步与锁序安全，并确认启用多网卡/IPv6 动态局域网发现（`dynamic_lan_discovery == true`）。
+- **版本升级**：客户端版本升级为 `0.2.5`（`versionCode = 7`）。
+
+---
+
 ## [v0.2.4] - 2026-11-27
 
 本次更新正式带来面向 Android 平板、折叠屏与分屏多窗口的全量自适应分层布局（手机端体验保持不变），优化平板端弹窗、气泡菜单与远程桌面会话交互，并修复端口映射新增规则弹窗闪退问题。
