@@ -30,7 +30,7 @@ use rc_client_core::session_bridge::{
 };
 use rc_client_core::signal_client::{
     ConnectGrant, DeviceStatusEvent, DeviceWolCapabilityEvent, SignalClientHandle,
-    SignalClientOptions,
+    SignalClientOptions, TokenProvider, TokenRefresher,
 };
 use rc_client_core::ui_error::{
     codes, classify_host_error, classify_signal_error, resolve_ui_error, ErrorPlatform,
@@ -267,6 +267,30 @@ impl AndroidRuntime {
         self.signal_dirty.store(true, Ordering::Release);
     }
 
+    fn build_signal_client_options(
+        &self,
+        token_provider: Option<TokenProvider>,
+        token_refresher: Option<TokenRefresher>,
+    ) -> SignalClientOptions {
+        SignalClientOptions {
+            token_provider,
+            token_refresher,
+            device_pubkey: Some(self.cert_mgr.device_pubkey_hex()),
+            allow_remote_assist: self.host_allow_remote_assist.load(Ordering::Acquire),
+            allow_remote_control: Some(self.last_host_running.load(Ordering::Acquire)),
+            dynamic_lan_discovery: true,
+            upnp_enabled: self.upnp_enabled.load(Ordering::Acquire),
+        }
+    }
+
+    /// Synchronizes the active signal handle into any running `HostHandle`.
+    /// Callers MUST NOT hold `self.signal` when calling this to preserve lock ordering.
+    fn sync_host_signal_client(&self, signal: Option<Arc<SignalClientHandle>>) {
+        if let Some(host) = self.host.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+            host.set_signal_client(signal);
+        }
+    }
+
     pub fn ensure_signal_started(&self) {
         let cfg = self.auth.server_config();
         if !cfg.is_configured() {
@@ -279,103 +303,111 @@ impl AndroidRuntime {
             return;
         }
 
-        let mut sig_guard = self.signal.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(existing) = sig_guard.as_ref() {
-            let st = existing.status();
-            if st.enabled
-                && st.server_host == cfg.server_host
-                && st.signal_port == cfg.signal_port
-                && st.relay_port == cfg.relay_port
-                && matches!(
-                    st.state,
-                    ServerConnectionState::Connected | ServerConnectionState::Connecting
-                )
-            {
-                return;
+        let mut active_sig: Option<Arc<SignalClientHandle>> = None;
+        let mut spawned = false;
+        {
+            let mut sig_guard = self.signal.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(existing) = sig_guard.as_ref() {
+                let st = existing.status();
+                if st.enabled
+                    && st.server_host == cfg.server_host
+                    && st.signal_port == cfg.signal_port
+                    && st.relay_port == cfg.relay_port
+                    && matches!(
+                        st.state,
+                        ServerConnectionState::Connected | ServerConnectionState::Connecting
+                    )
+                {
+                    active_sig = Some(Arc::clone(existing));
+                }
+            }
+
+            if active_sig.is_none() {
+                if let Some(old) = sig_guard.take() {
+                    old.request_stop();
+                }
+
+                let preferred: Vec<SocketAddr> = cfg
+                    .signal_addr()
+                    .and_then(|s| s.parse::<SocketAddr>().ok())
+                    .into_iter()
+                    .collect();
+                let lan_addrs: Vec<String> = discover_local_lan_ipv4s(&preferred)
+                    .into_iter()
+                    .map(|ip| ip.to_string())
+                    .collect();
+
+                // Clone an Arc-backed token provider that queries the singleton runtime.
+                let token_provider: TokenProvider = Arc::new(|| {
+                    let rt = global_runtime().ok_or_else(|| "runtime uninitialized".to_string())?;
+                    rt.auth
+                        .ensure_valid_access_token()
+                        .map_err(|e| e.to_string())
+                });
+                let token_refresher: TokenRefresher = Arc::new(|failed_token: &str| {
+                    let rt = global_runtime().ok_or_else(|| "runtime uninitialized".to_string())?;
+                    rt.auth
+                        .refresh_after_unauthorized(failed_token)
+                        .map_err(|e| e.to_string())
+                });
+
+                let opts =
+                    self.build_signal_client_options(Some(token_provider), Some(token_refresher));
+
+                let events_tx = Arc::clone(&self.signal_events);
+                let snap_store = Arc::clone(&self.signal_snapshot);
+                let dirty_flag = Arc::clone(&self.signal_dirty);
+                let handle = Arc::new(SignalClientHandle::spawn_with_options(
+                    cfg,
+                    self.device_name(),
+                    lan_addrs,
+                    opts,
+                    move |snapshot| {
+                        *snap_store.lock().unwrap_or_else(|e| e.into_inner()) = snapshot.clone();
+                        dirty_flag.store(true, Ordering::Release);
+                        if snapshot.state == ServerConnectionState::Connected {
+                            if let Some(ref did) = snapshot.device_id {
+                                let did_bg = did.clone();
+                                let _ = std::thread::Builder::new()
+                                    .name("rc-cert-ensure".to_string())
+                                    .spawn(move || {
+                                        if let Some(rt) = global_runtime() {
+                                            let _ = rt.auth.ensure_device_cert(&did_bg);
+                                        }
+                                    });
+                            }
+                        }
+                        let mut q = events_tx.lock().unwrap_or_else(|e| e.into_inner());
+                        if q.len() >= 128 {
+                            q.pop_front();
+                        }
+                        q.push_back(SignalUiEvent::Status(snapshot));
+                    },
+                ));
+                *sig_guard = Some(Arc::clone(&handle));
+                active_sig = Some(handle);
+                spawned = true;
             }
         }
-        if let Some(old) = sig_guard.take() {
-            old.request_stop();
+        if spawned {
+            self.signal_dirty.store(true, Ordering::Release);
         }
-
-        let preferred: Vec<SocketAddr> = cfg
-            .signal_addr()
-            .and_then(|s| s.parse::<SocketAddr>().ok())
-            .into_iter()
-            .collect();
-        let lan_addrs: Vec<String> = discover_local_lan_ipv4s(&preferred)
-            .into_iter()
-            .map(|ip| ip.to_string())
-            .collect();
-
-        // Clone an Arc-backed token provider that queries the singleton runtime.
-        let token_provider = Arc::new(|| {
-            let rt = global_runtime().ok_or_else(|| "runtime uninitialized".to_string())?;
-            rt.auth
-                .ensure_valid_access_token()
-                .map_err(|e| e.to_string())
-        });
-        let token_refresher = Arc::new(|failed_token: &str| {
-            let rt = global_runtime().ok_or_else(|| "runtime uninitialized".to_string())?;
-            rt.auth
-                .refresh_after_unauthorized(failed_token)
-                .map_err(|e| e.to_string())
-        });
-
-        let opts = SignalClientOptions {
-            token_provider: Some(token_provider),
-            token_refresher: Some(token_refresher),
-            device_pubkey: Some(self.cert_mgr.device_pubkey_hex()),
-            allow_remote_assist: self.host_allow_remote_assist.load(Ordering::Acquire),
-            allow_remote_control: Some(self.last_host_running.load(Ordering::Acquire)),
-            dynamic_lan_discovery: true,
-            upnp_enabled: self.upnp_enabled.load(Ordering::Acquire),
-        };
-
-        let events_tx = Arc::clone(&self.signal_events);
-        let snap_store = Arc::clone(&self.signal_snapshot);
-        let dirty_flag = Arc::clone(&self.signal_dirty);
-        let handle = SignalClientHandle::spawn_with_options(
-            cfg,
-            self.device_name(),
-            lan_addrs,
-            opts,
-            move |snapshot| {
-                *snap_store.lock().unwrap_or_else(|e| e.into_inner()) = snapshot.clone();
-                dirty_flag.store(true, Ordering::Release);
-                if snapshot.state == ServerConnectionState::Connected {
-                    if let Some(ref did) = snapshot.device_id {
-                        let did_bg = did.clone();
-                        let _ = std::thread::Builder::new()
-                            .name("rc-cert-ensure".to_string())
-                            .spawn(move || {
-                                if let Some(rt) = global_runtime() {
-                                    let _ = rt.auth.ensure_device_cert(&did_bg);
-                                }
-                            });
-                    }
-                }
-                let mut q = events_tx.lock().unwrap_or_else(|e| e.into_inner());
-                if q.len() >= 128 {
-                    q.pop_front();
-                }
-                q.push_back(SignalUiEvent::Status(snapshot));
-            },
-        );
-        *sig_guard = Some(Arc::new(handle));
-        self.signal_dirty.store(true, Ordering::Release);
+        if active_sig.is_some() {
+            self.sync_host_signal_client(active_sig);
+        }
     }
 
     pub fn stop_signal_and_session(&self) {
         self.stop_host();
         self.disconnect_session(false);
-        let mut sig_guard = self.signal.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(old) = sig_guard.take() {
+        let old = self.signal.lock().unwrap_or_else(|e| e.into_inner()).take();
+        if let Some(old) = old {
             old.request_stop();
         }
         *self.signal_snapshot.lock().unwrap_or_else(|e| e.into_inner()) =
             ServerConfig::default().disabled_snapshot();
         self.signal_dirty.store(true, Ordering::Release);
+        self.sync_host_signal_client(None);
     }
 
     fn pump_incoming_relay(&self) {
@@ -744,6 +776,9 @@ impl AndroidRuntime {
         };
         if let Some(sig) = sig_opt {
             sig.trigger_reconnect("network_route_changed");
+            self.sync_host_signal_client(Some(sig));
+        } else {
+            self.ensure_signal_started();
         }
         let g = self.session.read().unwrap_or_else(|e| e.into_inner());
         if let Some(handle) = g.as_ref() {
@@ -1364,9 +1399,7 @@ impl AndroidRuntime {
             let _ = sig.set_allow_remote_control(true);
             let _ = sig.set_allow_remote_assist(req.allow_remote_assist);
         }
-        if let Some(host) = self.host.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
-            host.set_signal_client(sig_opt);
-        }
+        self.sync_host_signal_client(sig_opt);
 
         Ok(json!({
             "started": true,
@@ -1387,6 +1420,7 @@ impl AndroidRuntime {
         }
         let old = self.host.lock().unwrap_or_else(|e| e.into_inner()).take();
         if let Some(mut handle) = old {
+            handle.set_signal_client(None);
             handle.stop();
         }
         host_android::reset_host_queues();
@@ -1841,5 +1875,93 @@ mod tests {
             resolve_connection_mode_and_relay(None, false),
             (ConnectionMode::Auto, false)
         );
+    }
+
+    fn build_isolated_test_runtime(tag: &str) -> (AndroidRuntime, PathBuf) {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "rc-android-{tag}-{}",
+            std::time::SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let cert_mgr = Arc::new(CertManager::load_or_init(temp_dir.join("certs")).unwrap());
+        let auth_path = temp_dir.join("auth.json");
+        let auth = AuthSessionManager::new(
+            ServerConfig::default(),
+            auth_path.clone(),
+            Arc::clone(&cert_mgr),
+        );
+        let rt = AndroidRuntime {
+            device_name: Mutex::new("test-android".to_string()),
+            device_key: "key".to_string(),
+            auth_path,
+            auth,
+            cert_mgr,
+            signal: Mutex::new(None),
+            signal_events: Arc::new(Mutex::new(VecDeque::new())),
+            signal_snapshot: Arc::new(Mutex::new(ServerConfig::default().disabled_snapshot())),
+            signal_dirty: Arc::new(AtomicBool::new(true)),
+            last_reported_refresh: Mutex::new(String::new()),
+            lan: Mutex::new(None),
+            session: RwLock::new(None),
+            last_session_running: AtomicBool::new(false),
+            session_epoch: AtomicU64::new(0),
+            host: Mutex::new(None),
+            last_host_running: AtomicBool::new(false),
+            host_allow_remote_assist: AtomicBool::new(false),
+            host_allow_assist_file_transfer: AtomicBool::new(true),
+            upnp_enabled: AtomicBool::new(false),
+        };
+        (rt, temp_dir)
+    }
+
+    #[test]
+    fn build_signal_client_options_enables_dynamic_lan_discovery_and_reflects_runtime_flags() {
+        let (rt, temp_dir) = build_isolated_test_runtime("sig-opts");
+        rt.host_allow_remote_assist.store(true, Ordering::Release);
+        rt.last_host_running.store(true, Ordering::Release);
+        rt.upnp_enabled.store(true, Ordering::Release);
+
+        let opts = rt.build_signal_client_options(None, None);
+        assert!(opts.dynamic_lan_discovery);
+        assert!(opts.allow_remote_assist);
+        assert_eq!(opts.allow_remote_control, Some(true));
+        assert!(opts.upnp_enabled);
+        assert_eq!(
+            opts.device_pubkey.as_deref(),
+            Some(rt.cert_mgr.device_pubkey_hex().as_str())
+        );
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn signal_lifecycle_syncs_host_signal_client_without_deadlock() {
+        let (rt, temp_dir) = build_isolated_test_runtime("sig-lifecycle");
+        let host = HostHandle::spawn(UiHostConfig::default()).expect("spawn local host handle");
+        *rt.host.lock().unwrap_or_else(|e| e.into_inner()) = Some(host);
+        rt.last_host_running.store(true, Ordering::Release);
+
+        let sig = Arc::new(SignalClientHandle::spawn_with_options(
+            ServerConfig::default(),
+            "test-android".to_string(),
+            Vec::new(),
+            rt.build_signal_client_options(None, None),
+            |_| {},
+        ));
+        *rt.signal.lock().unwrap_or_else(|e| e.into_inner()) = Some(Arc::clone(&sig));
+
+        // Verify network change and full stop path release `self.signal` before locking `self.host`
+        // and terminate cleanly without deadlocking.
+        rt.sync_host_signal_client(Some(Arc::clone(&sig)));
+        rt.on_network_changed();
+        rt.stop_signal_and_session();
+
+        assert!(rt.signal.lock().unwrap_or_else(|e| e.into_inner()).is_none());
+        assert!(rt.host.lock().unwrap_or_else(|e| e.into_inner()).is_none());
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

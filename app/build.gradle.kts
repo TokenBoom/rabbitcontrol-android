@@ -55,7 +55,7 @@ val coreAbiVersion = 2
 val bundledCoreVersion = ((project.findProperty("coreVersion") as String?)?.takeIf { it.isNotBlank() }
     ?: System.getenv("RC_CORE_VERSION")?.takeIf { it.isNotBlank() }
     ?: runGitInCore("describe", "--tags", "--abbrev=0")
-    ?: "0.2.3")
+    ?: "0.2.7")
     .trim()
     .removePrefix("v")
     .removePrefix("V")
