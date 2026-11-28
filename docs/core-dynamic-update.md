@@ -60,7 +60,7 @@ git push origin core-v0.1.19
 
 - `CORE_ABI_VERSION` 同时定义在 [native/src/lib.rs](../native/src/lib.rs) 与 [app/build.gradle.kts](../app/build.gradle.kts)。
 - **仅修复/优化 `rabbitcontrol-core` 或 Rust 运行时内部逻辑**：保持 `abi_version = 1` 不变，旧版 App 可直接下载生效。
-- **修改了 [Core.kt](../app/src/main/java/io/rabbitcontrol/android/session/Core.kt) 的 JNI 签名或改变了 Kotlin 侧依赖的 JSON 结构**：必须递增 `CORE_ABI_VERSION`（如 `1 -> 2`），并在新内核的 `abi_version` 中声明为 `2`。旧版 App 会继续匹配最新的 ABI v1 内核，同时提示用户「另有更新内核，需升级 App 后可用」。
+- **修改了 [Core.kt](../app/src/main/java/com/rabbitcontrol/android/session/Core.kt) 的 JNI 签名或改变了 Kotlin 侧依赖的 JSON 结构**：必须递增 `CORE_ABI_VERSION`（如 `1 -> 2`），并在新内核的 `abi_version` 中声明为 `2`。旧版 App 会继续匹配最新的 ABI v1 内核，同时提示用户「另有更新内核，需升级 App 后可用」。
 
 ---
 

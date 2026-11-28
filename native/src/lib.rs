@@ -61,7 +61,7 @@ fn string_to_jstr(env: &mut JNIEnv, s: &str) -> jstring {
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_coreInfo(
+pub extern "system" fn Java_com_rabbitcontrol_android_session_Core_coreInfo(
     mut env: JNIEnv,
     _: JObject,
 ) -> jstring {
@@ -69,7 +69,7 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_coreInfo(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_resolveUiError(
+pub extern "system" fn Java_com_rabbitcontrol_android_session_Core_resolveUiError(
     mut env: JNIEnv,
     _: JObject,
     code: JString,
@@ -83,7 +83,7 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_resolveUiError
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_initRuntime(
+pub extern "system" fn Java_com_rabbitcontrol_android_session_Core_initRuntime(
     mut env: JNIEnv,
     _: JObject,
     files_dir: JString,
@@ -122,7 +122,7 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_initRuntime(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_deviceId(
+pub extern "system" fn Java_com_rabbitcontrol_android_session_Core_deviceId(
     mut env: JNIEnv,
     _: JObject,
     raw: JString,
@@ -136,7 +136,7 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_deviceId(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_pointer(
+pub extern "system" fn Java_com_rabbitcontrol_android_session_Core_pointer(
     _: JNIEnv,
     _: JObject,
     x: f32,
@@ -178,7 +178,7 @@ fn input(kind: jint, a: jint, b: jint) -> Option<InputEvent> {
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_encodeInput(
+pub extern "system" fn Java_com_rabbitcontrol_android_session_Core_encodeInput(
     mut env: JNIEnv,
     _: JObject,
     kind: jint,
@@ -198,7 +198,7 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_encodeInput(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_attachSurface(
+pub extern "system" fn Java_com_rabbitcontrol_android_session_Core_attachSurface(
     mut env: JNIEnv,
     _: JObject,
     surface: JObject,
@@ -216,7 +216,7 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_attachSurface(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_detachSurface(
+pub extern "system" fn Java_com_rabbitcontrol_android_session_Core_detachSurface(
     _: JNIEnv,
     _: JObject,
 ) {
@@ -224,7 +224,7 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_detachSurface(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_pollSignalEvents(
+pub extern "system" fn Java_com_rabbitcontrol_android_session_Core_pollSignalEvents(
     mut env: JNIEnv,
     _: JObject,
 ) -> jstring {
@@ -238,7 +238,7 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_pollSignalEven
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_onNetworkChanged(
+pub extern "system" fn Java_com_rabbitcontrol_android_session_Core_onNetworkChanged(
     _: JNIEnv,
     _: JObject,
 ) {
@@ -248,7 +248,7 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_onNetworkChang
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_getUpnpStatus(
+pub extern "system" fn Java_com_rabbitcontrol_android_session_Core_getUpnpStatus(
     mut env: JNIEnv,
     _: JObject,
 ) -> jstring {
@@ -259,7 +259,7 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_getUpnpStatus(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_setUpnpEnabled(
+pub extern "system" fn Java_com_rabbitcontrol_android_session_Core_setUpnpEnabled(
     mut env: JNIEnv,
     _: JObject,
     enabled: jboolean,
@@ -271,7 +271,7 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_setUpnpEnabled
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_openSession(
+pub extern "system" fn Java_com_rabbitcontrol_android_session_Core_openSession(
     mut env: JNIEnv,
     _: JObject,
     request_json: JString,
@@ -309,7 +309,7 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_openSession(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_disconnectSession(
+pub extern "system" fn Java_com_rabbitcontrol_android_session_Core_disconnectSession(
     _: JNIEnv,
     _: JObject,
     lock_remote: jboolean,
@@ -320,7 +320,7 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_disconnectSess
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_setPreferHardwareDecode(
+pub extern "system" fn Java_com_rabbitcontrol_android_session_Core_setPreferHardwareDecode(
     _: JNIEnv,
     _: JObject,
     prefer_hardware: jboolean,
@@ -329,7 +329,7 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_setPreferHardw
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_sendSessionCommand(
+pub extern "system" fn Java_com_rabbitcontrol_android_session_Core_sendSessionCommand(
     mut env: JNIEnv,
     _: JObject,
     command_json: JString,
@@ -346,7 +346,7 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_sendSessionCom
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_pollSessionUpdates(
+pub extern "system" fn Java_com_rabbitcontrol_android_session_Core_pollSessionUpdates(
     mut env: JNIEnv,
     _: JObject,
     include_media: jboolean,
@@ -361,7 +361,7 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_pollSessionUpd
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_sendMouseMove(
+pub extern "system" fn Java_com_rabbitcontrol_android_session_Core_sendMouseMove(
     _: JNIEnv,
     _: JObject,
     x: jint,
@@ -377,7 +377,7 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_sendMouseMove(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_sendMouseButton(
+pub extern "system" fn Java_com_rabbitcontrol_android_session_Core_sendMouseButton(
     _: JNIEnv,
     _: JObject,
     button: jint,
@@ -395,7 +395,7 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_sendMouseButto
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_sendMouseWheel(
+pub extern "system" fn Java_com_rabbitcontrol_android_session_Core_sendMouseWheel(
     _: JNIEnv,
     _: JObject,
     delta: jint,
@@ -413,7 +413,7 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_sendMouseWheel
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_sendKey(
+pub extern "system" fn Java_com_rabbitcontrol_android_session_Core_sendKey(
     _: JNIEnv,
     _: JObject,
     scancode: jint,
@@ -434,7 +434,7 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_sendKey(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_pushClipboardLocal(
+pub extern "system" fn Java_com_rabbitcontrol_android_session_Core_pushClipboardLocal(
     mut env: JNIEnv,
     _: JObject,
     text: JString,
@@ -445,7 +445,7 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_pushClipboardL
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_pushImeSilent(
+pub extern "system" fn Java_com_rabbitcontrol_android_session_Core_pushImeSilent(
     mut env: JNIEnv,
     _: JObject,
     text: JString,
@@ -456,7 +456,7 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_pushImeSilent(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_toolCall(
+pub extern "system" fn Java_com_rabbitcontrol_android_session_Core_toolCall(
     mut env: JNIEnv,
     _: JObject,
     request_json: JString,
@@ -494,7 +494,7 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_toolCall(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_setHostScreenMetrics(
+pub extern "system" fn Java_com_rabbitcontrol_android_session_Core_setHostScreenMetrics(
     _: JNIEnv,
     _: JObject,
     width: jint,
@@ -506,7 +506,7 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_setHostScreenM
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_startHost(
+pub extern "system" fn Java_com_rabbitcontrol_android_session_Core_startHost(
     mut env: JNIEnv,
     _: JObject,
     config_json: JString,
@@ -527,7 +527,7 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_startHost(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_stopHost(
+pub extern "system" fn Java_com_rabbitcontrol_android_session_Core_stopHost(
     _: JNIEnv,
     _: JObject,
 ) {
@@ -537,7 +537,7 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_stopHost(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_hostCommand(
+pub extern "system" fn Java_com_rabbitcontrol_android_session_Core_hostCommand(
     mut env: JNIEnv,
     _: JObject,
     command_json: JString,
@@ -575,7 +575,7 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_hostCommand(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_pollHostEvents(
+pub extern "system" fn Java_com_rabbitcontrol_android_session_Core_pollHostEvents(
     mut env: JNIEnv,
     _: JObject,
 ) -> jstring {
@@ -589,7 +589,7 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_pollHostEvents
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_pushHostEncodedFrame(
+pub extern "system" fn Java_com_rabbitcontrol_android_session_Core_pushHostEncodedFrame(
     env: JNIEnv,
     _: JObject,
     data: jni::objects::JByteArray,
@@ -604,7 +604,7 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_pushHostEncode
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_setProxyConfig(
+pub extern "system" fn Java_com_rabbitcontrol_android_session_Core_setProxyConfig(
     mut env: JNIEnv,
     _: JObject,
     config_json: JString,
@@ -649,7 +649,7 @@ pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_setProxyConfig
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_requestWol(
+pub extern "system" fn Java_com_rabbitcontrol_android_session_Core_requestWol(
     mut env: JNIEnv,
     _: JObject,
     device_id: JString,

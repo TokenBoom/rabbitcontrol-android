@@ -511,7 +511,7 @@ fn request(args: &Value) -> Result<Value, AuthClientError> {
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_rabbitcontrol_android_session_Core_account(
+pub extern "system" fn Java_com_rabbitcontrol_android_session_Core_account(
     mut env: JNIEnv,
     _: JObject,
     raw: JString,

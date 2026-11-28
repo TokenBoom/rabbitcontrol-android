@@ -93,8 +93,8 @@
 
 ## 5. 代码映射
 
-- 主题与 Token：`app/src/main/java/io/rabbitcontrol/android/ui/theme/RabbitTheme.kt`
-- 公共扁平组件：`app/src/main/java/io/rabbitcontrol/android/ui/components/RabbitComponents.kt`
-- 主题偏好持久化：`app/src/main/java/io/rabbitcontrol/android/core/data/InteractionPrefsStore.kt`
-- 远控会话：`app/src/main/java/io/rabbitcontrol/android/ui/session/`
-- 页面实现：`app/src/main/java/io/rabbitcontrol/android/ui/screens/`
+- 主题与 Token：`app/src/main/java/com/rabbitcontrol/android/ui/theme/RabbitTheme.kt`
+- 公共扁平组件：`app/src/main/java/com/rabbitcontrol/android/ui/components/RabbitComponents.kt`
+- 主题偏好持久化：`app/src/main/java/com/rabbitcontrol/android/core/data/InteractionPrefsStore.kt`
+- 远控会话：`app/src/main/java/com/rabbitcontrol/android/ui/session/`
+- 页面实现：`app/src/main/java/com/rabbitcontrol/android/ui/screens/`

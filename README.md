@@ -63,12 +63,12 @@ RabbitControl Android splits responsibilities cleanly between Kotlin/Compose and
 
 | Path | Responsibility |
 | --- | --- |
-| [`MainActivity.kt`](app/src/main/java/io/rabbitcontrol/android/MainActivity.kt) | Root Compose navigation, theme management, and session launch |
-| [`HomeScreen.kt`](app/src/main/java/io/rabbitcontrol/android/ui/screens/home/HomeScreen.kt) | Main 3-tab UI (Devices, Remote Assistance, Profile) |
-| [`DesktopSessionScreen.kt`](app/src/main/java/io/rabbitcontrol/android/ui/session/DesktopSessionScreen.kt) | Remote desktop stage, control panel, keyboard bar, and overlays |
-| [`NativeVideoStageView.kt`](app/src/main/java/io/rabbitcontrol/android/core/video/NativeVideoStageView.kt) | `SurfaceView` lifecycle and native video rendering stage |
-| [`PrecisionTouchLayer.kt`](app/src/main/java/io/rabbitcontrol/android/core/input/PrecisionTouchLayer.kt) | Touch/trackpad gesture recognition and pointer normalization |
-| [`SessionManager.kt`](app/src/main/java/io/rabbitcontrol/android/core/session/SessionManager.kt) | Session lifecycle, state observation, and foreground service bridge |
+| [`MainActivity.kt`](app/src/main/java/com/rabbitcontrol/android/MainActivity.kt) | Root Compose navigation, theme management, and session launch |
+| [`HomeScreen.kt`](app/src/main/java/com/rabbitcontrol/android/ui/screens/home/HomeScreen.kt) | Main 3-tab UI (Devices, Remote Assistance, Profile) |
+| [`DesktopSessionScreen.kt`](app/src/main/java/com/rabbitcontrol/android/ui/session/DesktopSessionScreen.kt) | Remote desktop stage, control panel, keyboard bar, and overlays |
+| [`NativeVideoStageView.kt`](app/src/main/java/com/rabbitcontrol/android/core/video/NativeVideoStageView.kt) | `SurfaceView` lifecycle and native video rendering stage |
+| [`PrecisionTouchLayer.kt`](app/src/main/java/com/rabbitcontrol/android/core/input/PrecisionTouchLayer.kt) | Touch/trackpad gesture recognition and pointer normalization |
+| [`SessionManager.kt`](app/src/main/java/com/rabbitcontrol/android/core/session/SessionManager.kt) | Session lifecycle, state observation, and foreground service bridge |
 | [`native/src/lib.rs`](native/src/lib.rs) | Rust JNI entrypoints bridging Kotlin and `rabbitcontrol-core` |
 | [`docs/architecture.md`](docs/architecture.md) | Detailed architecture notes and integration design |
 | [`docs/ui-design.md`](docs/ui-design.md) | UI design specification, theme tokens, and gesture rules |

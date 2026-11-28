@@ -15,8 +15,8 @@ Android 负责界面、手势、生命周期与硬件解码，Rust 负责服务�
 
 | 层次 | 首版定案 | 实现位置 |
 | --- | --- | --- |
-| 界面与输入 | Kotlin、平台 Activity、原生 Views 与 XML 资源主题；MotionEvent 处理触控 | [Android 应用](../app/src/main/java/io/rabbitcontrol/android) · [界面规范](ui-design.md) |
-| 视频 | H.264 Annex-B、MediaCodec、SurfaceView；按能力选择硬解与低延迟模式 | [视频模块](../app/src/main/java/io/rabbitcontrol/android/video) |
+| 界面与输入 | Kotlin、平台 Activity、原生 Views 与 XML 资源主题；MotionEvent 处理触控 | [Android 应用](../app/src/main/java/com/rabbitcontrol/android) · [界面规范](ui-design.md) |
+| 视频 | H.264 Annex-B、MediaCodec、SurfaceView；按能力选择硬解与低延迟模式 | [视频模块](../app/src/main/java/com/rabbitcontrol/android/video) |
 | 协议与身份 | 本地路径依赖 Rust core，通过 JNI 向 Kotlin 暴露平台所需操作；会话采用现有 QUIC、信令和 mTLS 中继 | [JNI](../native/src/lib.rs) · [会话接线进度](#当前工程与真会话接线) |
 | 构建与设备 | Gradle 9.1.0、AGP 9.0.1、JDK 17、NDK 28.2.13676358、cargo-ndk；minSdk 29、targetSdk 36、arm64-v8a | [应用构建配置](../app/build.gradle.kts) |
 

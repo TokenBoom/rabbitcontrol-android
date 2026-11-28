@@ -1,5 +1,5 @@
 # Keep JNI bridge object and all native methods matching Rust #[no_mangle] exports
--keep class io.rabbitcontrol.android.session.Core {
+-keep class com.rabbitcontrol.android.session.Core {
     *;
 }
 

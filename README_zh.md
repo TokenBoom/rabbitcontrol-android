@@ -63,12 +63,12 @@ RabbitControl Android 将界面交互与核心协议清晰分层：
 
 | 路径 | 职责 |
 | --- | --- |
-| [`MainActivity.kt`](app/src/main/java/io/rabbitcontrol/android/MainActivity.kt) | Compose 根导航、主题切换与会话启动入口 |
-| [`HomeScreen.kt`](app/src/main/java/io/rabbitcontrol/android/ui/screens/home/HomeScreen.kt) | 主界面三栏导航（设备、远程协助、我的） |
-| [`DesktopSessionScreen.kt`](app/src/main/java/io/rabbitcontrol/android/ui/session/DesktopSessionScreen.kt) | 远程桌面会话画面、控制面板、键盘栏与浮层 |
-| [`NativeVideoStageView.kt`](app/src/main/java/io/rabbitcontrol/android/core/video/NativeVideoStageView.kt) | `SurfaceView` 生命周期与原生视频渲染舞台 |
-| [`PrecisionTouchLayer.kt`](app/src/main/java/io/rabbitcontrol/android/core/input/PrecisionTouchLayer.kt) | 触控/触控板手势识别与坐标归一化 |
-| [`SessionManager.kt`](app/src/main/java/io/rabbitcontrol/android/core/session/SessionManager.kt) | 会话生命周期、状态订阅与前台服务桥接 |
+| [`MainActivity.kt`](app/src/main/java/com/rabbitcontrol/android/MainActivity.kt) | Compose 根导航、主题切换与会话启动入口 |
+| [`HomeScreen.kt`](app/src/main/java/com/rabbitcontrol/android/ui/screens/home/HomeScreen.kt) | 主界面三栏导航（设备、远程协助、我的） |
+| [`DesktopSessionScreen.kt`](app/src/main/java/com/rabbitcontrol/android/ui/session/DesktopSessionScreen.kt) | 远程桌面会话画面、控制面板、键盘栏与浮层 |
+| [`NativeVideoStageView.kt`](app/src/main/java/com/rabbitcontrol/android/core/video/NativeVideoStageView.kt) | `SurfaceView` 生命周期与原生视频渲染舞台 |
+| [`PrecisionTouchLayer.kt`](app/src/main/java/com/rabbitcontrol/android/core/input/PrecisionTouchLayer.kt) | 触控/触控板手势识别与坐标归一化 |
+| [`SessionManager.kt`](app/src/main/java/com/rabbitcontrol/android/core/session/SessionManager.kt) | 会话生命周期、状态订阅与前台服务桥接 |
 | [`native/src/lib.rs`](native/src/lib.rs) | 连接 Kotlin 与 `rabbitcontrol-core` 的 Rust JNI 入口 |
 | [`docs/architecture.md`](docs/architecture.md) | 架构设计与端到端集成说明 |
 | [`docs/ui-design.md`](docs/ui-design.md) | 界面视觉规范、主题 Token 与手势规则 |

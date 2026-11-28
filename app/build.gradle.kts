@@ -71,16 +71,16 @@ val explicitCoreVersion = ((project.findProperty("coreVersion") as String?)?.tak
 val coreSigningPublicKeyB64 = readPublicKeyB64()
 
 android {
-    namespace = "io.rabbitcontrol.android"
+    namespace = "com.rabbitcontrol.android"
     compileSdk = 36
     ndkVersion = "28.2.13676358"
 
     defaultConfig {
-        applicationId = "io.rabbitcontrol.android"
+        applicationId = "com.rabbitcontrol.android"
         minSdk = 29
         targetSdk = 36
-        versionCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 6
-        versionName = (project.findProperty("versionName") as String?)?.takeIf { it.isNotBlank() } ?: "0.2.4"
+        versionCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 7
+        versionName = (project.findProperty("versionName") as String?)?.takeIf { it.isNotBlank() } ?: "0.2.5"
         ndk.abiFilters += "arm64-v8a"
         buildConfigField("int", "CORE_ABI_VERSION", coreAbiVersion.toString())
         buildConfigField("String", "BUNDLED_CORE_VERSION", "\"${escapeBuildConfigString(bundledCoreVersion)}\"")
